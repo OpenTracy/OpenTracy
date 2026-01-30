@@ -218,6 +218,49 @@ config = TrainingConfig(
 result = full_training_pipeline(train_data, val_data, clients, config)
 ```
 
+## MCP Integration (Claude Code / Claw)
+
+Lunar Router includes an MCP (Model Context Protocol) server for integration with Claude Code, Claw, and other MCP-compatible tools.
+
+### Setup for Claude Code
+
+Add to your `~/.claude/claude_code_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "lunar-router": {
+      "command": "python",
+      "args": ["-m", "lunar_router.mcp"]
+    }
+  }
+}
+```
+
+Or run manually:
+
+```bash
+lunar-router mcp
+```
+
+### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `lunar_route` | Route a prompt to the best model |
+| `lunar_generate` | Generate with a specific provider/model |
+| `lunar_smart_generate` | Auto-route and generate in one step |
+| `lunar_list_models` | List available models and costs |
+| `lunar_compare` | Compare responses from multiple models |
+
+### Example Usage in Claude Code
+
+Once configured, you can use natural language:
+
+- "Use lunar_route to find the best model for this coding task"
+- "Use lunar_smart_generate to answer this question cost-effectively"
+- "Use lunar_compare to test GPT-4 vs Claude on this prompt"
+
 ## API Server
 
 Run an OpenAI-compatible API server:
