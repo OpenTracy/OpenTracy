@@ -12,13 +12,19 @@ Lunar Router dynamically selects the best LLM for each prompt, optimizing the tr
 
 ## Features
 
-- **7 LLM Providers**: OpenAI, Anthropic, Google Gemini, Groq, Mistral, vLLM, Mock
-- **44+ Pre-configured Models**: With pricing information
-- **Semantic Routing**: K-Means clustering on prompt embeddings
+- **Go Engine**: High-performance inference backend (40-400x faster than pure Python)
+- **10 LLM Providers**: OpenAI, Anthropic, Groq, Mistral, DeepSeek, Perplexity, Cerebras, SambaNova, Together, Fireworks
+- **30+ Pre-configured Models**: With pricing information
+- **Semantic Routing**: K-Means clustering on prompt embeddings with ONNX MiniLM
+- **LRU Routing Cache**: With 5-minute TTL and singleflight for thundering herd protection
+- **Vision / Multimodal**: Send images (base64 or URL) to vision models via the gateway
+- **Computer Use**: `computer_use_preview` tool type with automatic OpenAI/Anthropic translation
+- **Tool Support**: Function calling and tool use with cross-provider format translation
 - **Cost-Quality Trade-off**: Adjustable cost weight parameter
 - **Hub System**: Download pre-trained weights like NLTK/spaCy/HuggingFace
 - **Training Pipeline**: Train custom routers on your data
-- **OpenAI-Compatible API**: Drop-in replacement for OpenAI API
+- **OpenAI-Compatible Gateway**: Drop-in replacement with automatic model routing
+- **MCP Integration**: Claude Code / Claw integration via Model Context Protocol
 
 ## Installation
 
@@ -62,7 +68,7 @@ lunar-router download weights-mmlu-v1
 ```python
 from lunar_router import load_router
 
-# Load the router
+# Load the router (auto-detects Go engine for best performance)
 router = load_router()
 
 # Route a prompt
@@ -72,7 +78,69 @@ print(f"Expected error: {decision.expected_error:.4f}")
 print(f"Cluster: {decision.cluster_id}")
 ```
 
-### 3. Use LLM Clients Directly
+### 3. Chat Gateway (OpenAI-Compatible)
+
+```python
+# Route and generate in one call
+response = router.chat(
+    messages=[{"role": "user", "content": "Hello!"}],
+    model="auto",  # semantic routing picks the best model
+)
+print(response["choices"][0]["message"]["content"])
+
+# Or use a specific model
+response = router.chat(
+    messages=[{"role": "user", "content": "Hello!"}],
+    model="gpt-4o-mini",
+)
+```
+
+### 4. Vision (Send Images)
+
+```python
+import base64
+
+with open("photo.jpg", "rb") as f:
+    img = base64.b64encode(f.read()).decode()
+
+# Convenience method
+response = router.vision(img, "What animal is this?", model="gpt-4o")
+print(response["choices"][0]["message"]["content"])
+
+# Or use multimodal messages directly
+response = router.chat(
+    messages=[{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Describe this image"},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}}
+        ]
+    }],
+    model="gpt-4o",
+)
+```
+
+### 5. Computer Use (Tool Support)
+
+```python
+response = router.chat(
+    messages=[{"role": "user", "content": "Click the submit button"}],
+    model="claude-sonnet-4-20250514",
+    tools=[{
+        "type": "computer_use_preview",
+        "display_width": 1024,
+        "display_height": 768,
+        "environment": "browser",
+    }],
+)
+
+# Tool calls are returned in the response
+tool_calls = response["choices"][0]["message"].get("tool_calls", [])
+for tc in tool_calls:
+    print(f"Action: {tc['action']}")
+```
+
+### 6. Use LLM Clients Directly
 
 ```python
 from lunar_router import create_client
@@ -90,15 +158,20 @@ print(f"Latency: {response.latency_ms}ms, Tokens: {response.tokens_used}")
 
 ## Supported Providers
 
-| Provider | Models | Example |
+| Provider | Models | Gateway |
 |----------|--------|---------|
-| **OpenAI** | gpt-4o, gpt-4o-mini, gpt-4-turbo, o1, o3-mini | `create_client("openai", "gpt-4o")` |
-| **Anthropic** | claude-3-5-sonnet, claude-3-5-haiku, claude-3-opus | `create_client("anthropic", "claude-3-5-sonnet-20241022")` |
-| **Google** | gemini-2.0-flash, gemini-1.5-pro, gemini-1.5-flash | `create_client("google", "gemini-1.5-flash")` |
-| **Groq** | llama-3.3-70b, llama-3.1-8b, mixtral-8x7b | `create_client("groq", "llama-3.1-8b-instant")` |
-| **Mistral** | mistral-large, mistral-small, codestral | `create_client("mistral", "mistral-large-latest")` |
-| **vLLM** | Any local model | `create_client("vllm", "meta-llama/Llama-2-7b")` |
-| **Mock** | For testing | `create_client("mock", "test-model")` |
+| **OpenAI** | gpt-4o, gpt-4o-mini, o1, o3, o4-mini | auto-routed |
+| **Anthropic** | claude-sonnet-4, claude-haiku-4.5, claude-opus-4 | auto-translated |
+| **Groq** | llama-3.3-70b, llama-3.1-8b, mixtral-8x7b, gemma | auto-routed |
+| **Mistral** | mistral-large, mistral-small, codestral, pixtral | auto-routed |
+| **DeepSeek** | deepseek-chat, deepseek-coder | auto-routed |
+| **Perplexity** | pplx-* models | auto-routed |
+| **Cerebras** | cerebras-* models | auto-routed |
+| **SambaNova** | sambanova-* models | auto-routed |
+| **Together** | together-* models | auto-routed |
+| **Fireworks** | fireworks-* models | auto-routed |
+
+The gateway automatically translates between OpenAI and Anthropic formats, including multimodal messages, tool calls, and computer use.
 
 ## Hub System
 
@@ -316,69 +389,150 @@ Once configured, you can use natural language:
 - "Use lunar_compare to test GPT-4 vs Claude on this prompt"
 - "Use lunar_list_models to show me OpenAI pricing"
 
+## Go Engine
+
+The Go engine is the high-performance backend that handles routing, embeddings (ONNX MiniLM), and provider proxying. Python auto-detects and uses it when available.
+
+### Build
+
+```bash
+cd go && make build
+```
+
+### Run Standalone
+
+```bash
+./go/bin/lunar-engine --weights /path/to/weights --port 8080
+```
+
+### Engine Selection
+
+```python
+router = load_router()                   # auto-detect (Go if available)
+router = load_router(engine="go")        # force Go engine
+router = load_router(engine="python")    # force pure Python
+```
+
+### Routing Cache
+
+The Go engine includes an LRU routing cache with 5-minute TTL:
+
+```python
+# Check cache stats
+print(router.cache_stats())
+# {"size": 42, "max_size": 10000, "hits": 156, "misses": 42, "hit_rate": 0.787, "ttl": "5m0s"}
+
+# Clear cache (e.g. after updating model profiles)
+router.cache_clear()
+```
+
 ## API Server
 
-Run an OpenAI-compatible API server:
+The Go engine runs an OpenAI-compatible API server:
+
+### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/v1/chat/completions` | Chat completion (use `model="auto"` for semantic routing) |
+| `POST` | `/v1/route` | Route a prompt without generating |
+| `GET`  | `/v1/models` | List available models |
+| `GET`  | `/v1/cache` | Cache statistics |
+| `POST` | `/v1/cache/clear` | Clear routing cache |
+| `GET`  | `/v1/metrics` | Aggregated request metrics |
+| `GET`  | `/health` | Health check |
+
+### Chat Completion with Auto-Routing
 
 ```bash
-cd lunar
-./run.sh
-```
-
-Server runs at `http://localhost:8000` with:
-- `/docs` - Swagger UI
-- `/v1/chat/completions` - OpenAI-compatible endpoint
-- `/semantic/route` - Semantic routing endpoint
-
-### OpenAI-Compatible Chat Completion
-
-```bash
-curl http://localhost:8000/v1/chat/completions \
+curl http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-api-key" \
   -d '{
-    "model": "gpt-4o-mini",
-    "messages": [{"role": "user", "content": "Hello!"}]
+    "model": "auto",
+    "messages": [{"role": "user", "content": "Explain machine learning"}]
   }'
 ```
+
+Response includes `X-Lunar-Selected-Model`, `X-Lunar-Routing-Ms` headers.
 
 ### Semantic Routing
 
 ```bash
-curl http://localhost:8000/semantic/route \
+curl http://localhost:8080/v1/route \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-api-key" \
   -d '{
-    "messages": [{"role": "user", "content": "Explain machine learning"}],
-    "models": ["gpt-4o", "gpt-4o-mini", "llama-3.1-70b"],
-    "cost_weight": 0.3,
-    "execute": true
+    "prompt": "Explain machine learning",
+    "cost_weight": 0.3
   }'
 ```
+
+### Vision Request
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4o",
+    "messages": [{
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "What is in this image?"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+      ]
+    }]
+  }'
+```
+
+### Computer Use
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "messages": [{"role": "user", "content": "Click the login button"}],
+    "tools": [{
+      "type": "computer_use_preview",
+      "display_width": 1024,
+      "display_height": 768,
+      "environment": "browser"
+    }]
+  }'
+```
+
+The gateway automatically translates `computer_use_preview` to Anthropic's `computer_20250124` format when routing to Claude models.
 
 ## Architecture
 
 ```
-lunar_router/
+go/                              # Go engine (production runtime, 40-400x faster)
+├── cmd/lunar-engine/            # Binary entry point
+├── internal/
+│   ├── router/                  # UniRoute algorithm + LRU cache + singleflight
+│   ├── embeddings/              # ONNX MiniLM embedder (384-dim)
+│   ├── clustering/              # K-Means + LearnedMap assignment
+│   ├── provider/                # OpenAI, Anthropic proxy with format translation
+│   │                            #   (multimodal, tools, computer_use_preview)
+│   ├── weights/                 # Model profile registry
+│   ├── metrics/                 # Request metrics (latency, tokens, cost)
+│   ├── server/                  # HTTP server & handlers
+│   └── config/                  # YAML configuration
+
+lunar_router/                    # Python SDK (thin HTTP wrapper + training)
+├── engine.py                    # GoEngine subprocess manager
+├── loader.py                    # load_router() + GoBackedRouter
 ├── core/
-│   ├── embeddings.py      # Prompt embeddings (SentenceTransformers, OpenAI)
-│   └── clustering.py      # K-Means cluster assignment
-├── models/
-│   ├── llm_client.py      # LLM provider clients (7 providers)
-│   ├── llm_profile.py     # Model performance profiles
-│   └── llm_registry.py    # Model registry
-├── router/
-│   └── uniroute.py        # Main routing logic
-├── training/
-│   ├── kmeans_trainer.py  # K-Means training
-│   └── pipeline.py        # Full training pipeline
-├── hub/
-│   ├── manager.py         # Download manager (like NLTK/spaCy)
-│   └── index.json         # Package registry
-├── mcp/
-│   └── server.py          # MCP server (Claude Code integration)
-└── cli.py                 # Command-line interface
+│   ├── embeddings.py            # Python embedder (dev/training)
+│   └── clustering.py            # Cluster assignment
+├── models/                      # LLM clients + profiles
+├── router/uniroute.py           # Python routing (training)
+├── training/                    # Training pipeline
+├── hub/                         # Weight download manager
+├── mcp/                         # Claude Code MCP server
+└── cli.py                       # CLI
 ```
+
+The Go engine handles all production inference. Python is a thin HTTP wrapper around it, plus the training pipeline.
 
 ## How It Works
 
@@ -421,18 +575,13 @@ Download from [HuggingFace Hub](https://huggingface.co/diogovieira/lunar-router-
 ## Development
 
 ```bash
-# Install dev dependencies
+# Python
 pip install -e ".[dev]"
+pytest                           # 125 tests
 
-# Run tests
-pytest
-
-# Format code
-black lunar_router/
-ruff check lunar_router/
-
-# Type check
-mypy lunar_router/
+# Go engine
+cd go && make build              # Build binary
+go test ./... -count=1           # Run all Go tests
 ```
 
 ## Contributing
