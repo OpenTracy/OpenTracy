@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -33,6 +34,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/config/keys", s.handleListKeys)
 	mux.HandleFunc("DELETE /v1/config/keys/{provider}", s.handleDeleteKey)
 	mux.HandleFunc("POST /v1/config/reload", s.handleReloadKeys)
+	mux.HandleFunc("POST /v1/traces", s.handleIngestTraces)
+	mux.HandleFunc("POST /v1/datasets/{runId}/{clusterId}/traces", s.handleAddTracesToDataset)
+	mux.HandleFunc("POST /v1/datasets/{runId}/{clusterId}/assign", s.handleAssignTracesToDataset)
 }
 
 // --- Health ---
@@ -320,6 +324,419 @@ func (s *Server) handleReloadKeys(w http.ResponseWriter, r *http.Request) {
 		"loaded":               loaded,
 		"configured_providers": s.Providers.ConfiguredProviders(),
 	})
+}
+
+// --- Trace Ingestion ---
+
+// ingestTrace is the flexible input format for manual trace import.
+type ingestTrace struct {
+	// Messages (OpenAI format) — the primary content
+	Messages []map[string]any `json:"messages,omitempty"`
+
+	// Simple input/output (alternative to messages)
+	Input  string `json:"input,omitempty"`
+	Output string `json:"output,omitempty"`
+
+	// Metadata (all optional, auto-enriched if missing)
+	Model     string  `json:"model,omitempty"`
+	Provider  string  `json:"provider,omitempty"`
+	TokensIn  *int    `json:"tokens_in,omitempty"`
+	TokensOut *int    `json:"tokens_out,omitempty"`
+	CostUSD   *float64 `json:"cost_usd,omitempty"`
+	LatencyMs *float64 `json:"latency_ms,omitempty"`
+	IsError   bool    `json:"is_error,omitempty"`
+	Source    string  `json:"source,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	Timestamp *string  `json:"timestamp,omitempty"` // ISO 8601
+}
+
+type ingestRequest struct {
+	// Single trace
+	*ingestTrace
+
+	// Batch of traces
+	Traces []ingestTrace `json:"traces,omitempty"`
+}
+
+func (s *Server) handleIngestTraces(w http.ResponseWriter, r *http.Request) {
+	if s.CHWriter == nil {
+		writeError(w, http.StatusServiceUnavailable, "ClickHouse not enabled. Start with: make start-full")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read body")
+		return
+	}
+
+	// Try to detect JSONL (newline-delimited JSON)
+	var traces []ingestTrace
+	if len(body) > 0 && body[0] == '{' && bytes.Contains(body, []byte("\n{")) {
+		// JSONL format
+		for _, line := range bytes.Split(body, []byte("\n")) {
+			line = bytes.TrimSpace(line)
+			if len(line) == 0 {
+				continue
+			}
+			var t ingestTrace
+			if err := json.Unmarshal(line, &t); err == nil {
+				traces = append(traces, t)
+			}
+		}
+	} else {
+		// JSON format — single object or {traces: [...]}
+		var req ingestRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			return
+		}
+		if len(req.Traces) > 0 {
+			traces = req.Traces
+		} else if req.ingestTrace != nil && (len(req.Messages) > 0 || req.Input != "") {
+			traces = []ingestTrace{*req.ingestTrace}
+		}
+	}
+
+	if len(traces) == 0 {
+		writeError(w, http.StatusBadRequest, "no traces found. Send {messages:[...]} or {traces:[...]} or JSONL")
+		return
+	}
+
+	ingested := 0
+	for _, t := range traces {
+		inputText, outputText, messagesJSON, outputMsgJSON := extractTraceContent(&t)
+
+		tokensIn := 0
+		if t.TokensIn != nil {
+			tokensIn = *t.TokensIn
+		} else {
+			tokensIn = estimateTokens(inputText)
+		}
+
+		tokensOut := 0
+		if t.TokensOut != nil {
+			tokensOut = *t.TokensOut
+		} else {
+			tokensOut = estimateTokens(outputText)
+		}
+
+		var totalCost float64
+		if t.CostUSD != nil {
+			totalCost = *t.CostUSD
+		} else if t.Model != "" {
+			pricing := provider.GetPricing(t.Model)
+			if pricing != nil {
+				_, _, totalCost = pricing.ComputeCost(tokensIn, tokensOut)
+			}
+		}
+
+		latency := 0.0
+		if t.LatencyMs != nil {
+			latency = *t.LatencyMs
+		}
+
+		source := t.Source
+		if source == "" {
+			source = "import"
+		}
+
+		reqType := source
+		if len(t.Tags) > 0 {
+			if b, err := json.Marshal(t.Tags); err == nil {
+				reqType = source + ":" + string(b)
+			}
+		}
+
+		var errVal float64
+		if t.IsError {
+			errVal = 1.0
+		}
+
+		m := metrics.RequestMetrics{
+			Provider:    t.Provider,
+			Model:       t.Model,
+			TokensIn:    tokensIn,
+			TokensOut:   tokensOut,
+			TotalTokens: tokensIn + tokensOut,
+			TotalCostUSD: totalCost,
+			LatencyMs:   latency,
+			Error:       errVal,
+			ClusterID:   -1,
+		}
+
+		extra := chw.TraceExtra{
+			RequestType:   reqType,
+			InputText:     inputText,
+			OutputText:    outputText,
+			InputMessages: messagesJSON,
+			OutputMessage: outputMsgJSON,
+		}
+
+		s.CHWriter.Record(m, extra)
+		ingested++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":  fmt.Sprintf("ingested %d traces", ingested),
+		"ingested": ingested,
+	})
+}
+
+// extractTraceContent normalizes messages or input/output into trace content fields.
+func extractTraceContent(t *ingestTrace) (inputText, outputText, messagesJSON, outputMsgJSON string) {
+	if len(t.Messages) > 0 {
+		// Extract last user message as input_text
+		for i := len(t.Messages) - 1; i >= 0; i-- {
+			if role, _ := t.Messages[i]["role"].(string); role == "user" {
+				if content, ok := t.Messages[i]["content"].(string); ok {
+					inputText = content
+				}
+				break
+			}
+		}
+		// Extract last assistant message as output_text
+		for i := len(t.Messages) - 1; i >= 0; i-- {
+			if role, _ := t.Messages[i]["role"].(string); role == "assistant" {
+				if content, ok := t.Messages[i]["content"].(string); ok {
+					outputText = content
+				}
+				outMsg := t.Messages[i]
+				if b, err := json.Marshal(outMsg); err == nil {
+					outputMsgJSON = string(b)
+				}
+				break
+			}
+		}
+		if b, err := json.Marshal(t.Messages); err == nil {
+			messagesJSON = string(b)
+		}
+	} else {
+		inputText = t.Input
+		outputText = t.Output
+		if t.Input != "" {
+			msgs := []map[string]string{{"role": "user", "content": t.Input}}
+			if t.Output != "" {
+				msgs = append(msgs, map[string]string{"role": "assistant", "content": t.Output})
+			}
+			if b, err := json.Marshal(msgs); err == nil {
+				messagesJSON = string(b)
+			}
+		}
+		if t.Output != "" {
+			outMsg := map[string]string{"role": "assistant", "content": t.Output}
+			if b, err := json.Marshal(outMsg); err == nil {
+				outputMsgJSON = string(b)
+			}
+		}
+	}
+	return
+}
+
+func estimateTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+	// Rough estimate: ~4 chars per token
+	return len(text) / 4
+}
+
+// --- Add Traces to Dataset ---
+
+func (s *Server) handleAddTracesToDataset(w http.ResponseWriter, r *http.Request) {
+	if s.CHWriter == nil {
+		writeError(w, http.StatusServiceUnavailable, "ClickHouse not enabled")
+		return
+	}
+
+	runId := r.PathValue("runId")
+	clusterIdStr := r.PathValue("clusterId")
+	clusterId, err := strconv.Atoi(clusterIdStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid cluster_id")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read body")
+		return
+	}
+
+	// Parse traces (same format as /v1/traces)
+	var traces []ingestTrace
+	if len(body) > 0 && body[0] == '{' && bytes.Contains(body, []byte("\n{")) {
+		for _, line := range bytes.Split(body, []byte("\n")) {
+			line = bytes.TrimSpace(line)
+			if len(line) == 0 {
+				continue
+			}
+			var t ingestTrace
+			if json.Unmarshal(line, &t) == nil {
+				traces = append(traces, t)
+			}
+		}
+	} else {
+		var req ingestRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			return
+		}
+		if len(req.Traces) > 0 {
+			traces = req.Traces
+		} else if req.ingestTrace != nil && (len(req.Messages) > 0 || req.Input != "") {
+			traces = []ingestTrace{*req.ingestTrace}
+		}
+	}
+
+	if len(traces) == 0 {
+		writeError(w, http.StatusBadRequest, "no traces provided")
+		return
+	}
+
+	// Insert each trace and map to the cluster
+	ingested := 0
+	var requestIDs []string
+
+	for _, t := range traces {
+		inputText, outputText, messagesJSON, outputMsgJSON := extractTraceContent(&t)
+
+		// Generate a deterministic request_id from content
+		reqID := fmt.Sprintf("manual-%x", sha256Short(inputText+outputText))
+
+		tokensIn := 0
+		if t.TokensIn != nil {
+			tokensIn = *t.TokensIn
+		} else {
+			tokensIn = estimateTokens(inputText)
+		}
+		tokensOut := 0
+		if t.TokensOut != nil {
+			tokensOut = *t.TokensOut
+		} else {
+			tokensOut = estimateTokens(outputText)
+		}
+
+		var totalCost float64
+		if t.CostUSD != nil {
+			totalCost = *t.CostUSD
+		} else if t.Model != "" {
+			if pricing := provider.GetPricing(t.Model); pricing != nil {
+				_, _, totalCost = pricing.ComputeCost(tokensIn, tokensOut)
+			}
+		}
+
+		latency := 0.0
+		if t.LatencyMs != nil {
+			latency = *t.LatencyMs
+		}
+
+		source := t.Source
+		if source == "" {
+			source = "manual"
+		}
+
+		var errVal float64
+		if t.IsError {
+			errVal = 1.0
+		}
+
+		m := metrics.RequestMetrics{
+			RequestID:    reqID,
+			Provider:     t.Provider,
+			Model:        t.Model,
+			TokensIn:     tokensIn,
+			TokensOut:    tokensOut,
+			TotalTokens:  tokensIn + tokensOut,
+			TotalCostUSD: totalCost,
+			LatencyMs:    latency,
+			Error:        errVal,
+			ClusterID:    clusterId,
+		}
+
+		extra := chw.TraceExtra{
+			RequestType:   source,
+			InputText:     inputText,
+			OutputText:    outputText,
+			InputMessages: messagesJSON,
+			OutputMessage: outputMsgJSON,
+		}
+
+		s.CHWriter.Record(m, extra)
+		requestIDs = append(requestIDs, reqID)
+		ingested++
+	}
+
+	// Insert mappings into trace_cluster_map
+	if err := s.CHWriter.InsertClusterMappings(runId, clusterId, requestIDs); err != nil {
+		// Traces are inserted, but mapping failed — log but don't fail
+		writeJSON(w, http.StatusOK, map[string]any{
+			"message":      fmt.Sprintf("ingested %d traces (mapping error: %v)", ingested, err),
+			"ingested":     ingested,
+			"run_id":       runId,
+			"cluster_id":   clusterId,
+			"mapping_error": err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":    fmt.Sprintf("added %d traces to dataset %s/%d", ingested, runId, clusterId),
+		"ingested":   ingested,
+		"run_id":     runId,
+		"cluster_id": clusterId,
+	})
+}
+
+// --- Assign Existing Traces to Dataset ---
+
+func (s *Server) handleAssignTracesToDataset(w http.ResponseWriter, r *http.Request) {
+	if s.CHWriter == nil {
+		writeError(w, http.StatusServiceUnavailable, "ClickHouse not enabled")
+		return
+	}
+
+	runId := r.PathValue("runId")
+	clusterIdStr := r.PathValue("clusterId")
+	clusterId, err := strconv.Atoi(clusterIdStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid cluster_id")
+		return
+	}
+
+	var req struct {
+		RequestIDs []string `json:"request_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+
+	if len(req.RequestIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "request_ids is required")
+		return
+	}
+
+	if err := s.CHWriter.InsertClusterMappings(runId, clusterId, req.RequestIDs); err != nil {
+		writeError(w, http.StatusInternalServerError, "mapping failed: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":    fmt.Sprintf("assigned %d traces to dataset %s/%d", len(req.RequestIDs), runId, clusterId),
+		"assigned":   len(req.RequestIDs),
+		"run_id":     runId,
+		"cluster_id": clusterId,
+	})
+}
+
+func sha256Short(s string) uint64 {
+	h := uint64(14695981039346656037) // FNV offset basis
+	for _, c := range s {
+		h ^= uint64(c)
+		h *= 1099511628211 // FNV prime
+	}
+	return h
 }
 
 // --- Chat Completions (Gateway / Proxy) ---
