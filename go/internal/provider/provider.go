@@ -17,6 +17,12 @@ type Provider interface {
 
 	// Name returns the provider name (e.g., "openai", "anthropic").
 	Name() string
+
+	// SetAPIKey updates the API key at runtime (for dynamic key management).
+	SetAPIKey(key string)
+
+	// HasAPIKey returns true if the provider has a configured API key.
+	HasAPIKey() bool
 }
 
 // ChatRequest is the OpenAI-compatible chat completion request.

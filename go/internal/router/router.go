@@ -72,6 +72,24 @@ func New(
 	}
 }
 
+// NewEmpty creates a Router with no semantic routing (gateway-only mode).
+func NewEmpty() *Router {
+	return &Router{
+		ClusterAssigner: &nullAssigner{},
+		Registry:        weights.NewRegistry(),
+		cache:           NewCache(defaultCacheMaxSize),
+		stats:           NewRoutingStats(),
+	}
+}
+
+// nullAssigner is a no-op cluster assigner for gateway mode.
+type nullAssigner struct{}
+
+func (n *nullAssigner) Assign(embedding []float64) *clustering.ClusterResult {
+	return &clustering.ClusterResult{ClusterID: 0, Probabilities: []float64{1.0}}
+}
+func (n *nullAssigner) NumClusters() int { return 0 }
+
 // Cache returns the routing cache.
 func (r *Router) Cache() *Cache {
 	return r.cache

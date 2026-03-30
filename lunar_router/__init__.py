@@ -123,6 +123,10 @@ except ImportError:
 # High-level convenience functions
 from .loader import load_router, create_router, load_router_from_state
 
+# SDK - Unified LLM interface (like LiteLLM / OpenRouter)
+from .sdk import completion, acompletion, Router, parse_model, ModelResponse, StreamChunk
+from .model_prices import model_cost, get_model_info, supported_models
+
 # Hub - Download manager (like NLTK, spaCy)
 from .hub import download, list_packages, info as package_info, remove, path, Hub, LUNAR_DATA_HOME
 
@@ -175,6 +179,16 @@ __all__ = [
     "load_router",
     "create_router",
     "load_router_from_state",
+    # SDK (LiteLLM-style)
+    "completion",
+    "acompletion",
+    "Router",
+    "parse_model",
+    "ModelResponse",
+    "StreamChunk",
+    "model_cost",
+    "get_model_info",
+    "supported_models",
     # Hub (like NLTK download)
     "download",
     "list_packages",

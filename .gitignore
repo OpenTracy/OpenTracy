@@ -1,3 +1,7 @@
+# Node
+node_modules/
+ui/dist/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -99,6 +103,16 @@ Thumbs.db
 *.log
 .env.local
 .env.*.local
+
+# Secrets (API keys stored at runtime)
+.lunar/
+secrets.json
+
+# Go build artifacts
+go/bin/
+
+# ONNX models
+*.onnx
 
 # Weights (download separately)
 weights/

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -25,6 +26,7 @@ func main() {
 		host        string
 		showVersion bool
 		noEmbedder  bool
+		gateway     bool
 	)
 
 	flag.StringVar(&configPath, "config", "", "path to config file (YAML)")
@@ -33,6 +35,7 @@ func main() {
 	flag.StringVar(&host, "host", "", "server host (overrides config)")
 	flag.BoolVar(&showVersion, "version", false, "show version")
 	flag.BoolVar(&noEmbedder, "no-embedder", false, "disable embedder (embedding-only mode)")
+	flag.BoolVar(&gateway, "gateway", false, "gateway-only mode: proxy to providers without semantic routing (no weights needed)")
 	flag.Parse()
 
 	if showVersion {
@@ -62,45 +65,93 @@ func main() {
 		cfg.Server.Host = host
 	}
 
-	// Load weights
-	log.Printf("Loading weights from: %s", cfg.Weights.Path)
-	loaded, err := weights.LoadWeights(cfg.Weights.Path)
-	if err != nil {
-		log.Fatalf("failed to load weights: %v", err)
-	}
-	log.Printf("Loaded %d models, %d clusters",
-		loaded.Registry.Len(),
-		loaded.ClusterAssigner.NumClusters())
+	// Initialize providers
+	providers := provider.NewRegistry(provider.DefaultProviders())
+	loadSecretsFile(providers)
+	log.Printf("Providers: %v (configured: %v)", providers.ProviderNames(), providers.ConfiguredProviders())
 
-	// Create router
-	r := router.New(
-		loaded.ClusterAssigner,
-		loaded.Registry,
-		cfg.Routing.CostWeight,
-		cfg.Routing.SoftAssignment,
-		cfg.Routing.AllowedModels,
-	)
+	var r *router.Router
+	var reg *weights.Registry
 
-	// Initialize embedder
-	if !noEmbedder {
-		embedder, err := initEmbedder(cfg)
+	if gateway {
+		// Gateway mode: proxy-only, no semantic routing
+		log.Println("Starting in gateway mode (no weights, no semantic routing)")
+		r = router.NewEmpty()
+		reg = weights.NewRegistry()
+	} else {
+		// Full mode: load weights for semantic routing
+		log.Printf("Loading weights from: %s", cfg.Weights.Path)
+		loaded, err := weights.LoadWeights(cfg.Weights.Path)
 		if err != nil {
-			log.Printf("WARNING: embedder init failed: %v", err)
-			log.Printf("Prompt-based routing disabled. Use --no-embedder to suppress this warning.")
-		} else {
-			r.Embedder = embedder
-			log.Printf("Embedder initialized: %s (dim=%d)", cfg.Embeddings.Backend, embedder.Dimension())
+			log.Fatalf("failed to load weights: %v", err)
+		}
+		log.Printf("Loaded %d models, %d clusters",
+			loaded.Registry.Len(),
+			loaded.ClusterAssigner.NumClusters())
+
+		r = router.New(
+			loaded.ClusterAssigner,
+			loaded.Registry,
+			cfg.Routing.CostWeight,
+			cfg.Routing.SoftAssignment,
+			cfg.Routing.AllowedModels,
+		)
+		reg = loaded.Registry
+
+		// Initialize embedder
+		if !noEmbedder {
+			embedder, err := initEmbedder(cfg)
+			if err != nil {
+				log.Printf("WARNING: embedder init failed: %v", err)
+				log.Printf("Prompt-based routing disabled. Use --no-embedder to suppress this warning.")
+			} else {
+				r.Embedder = embedder
+				log.Printf("Embedder initialized: %s (dim=%d)", cfg.Embeddings.Backend, embedder.Dimension())
+			}
 		}
 	}
 
-	// Initialize providers
-	providers := provider.NewRegistry(provider.DefaultProviders())
-	log.Printf("Providers: %v", providers.ProviderNames())
-
 	// Start server
-	srv := server.New(r, loaded.Registry, providers, cfg.Server.Host, cfg.Server.Port)
+	srv := server.New(r, reg, providers, cfg)
 	if err := srv.Run(); err != nil {
 		log.Fatalf("server error: %v", err)
+	}
+}
+
+// loadSecretsFile reads API keys from ~/.lunar/secrets.json (written by the UI/Python API)
+// and injects them into the provider registry.
+func loadSecretsFile(providers *provider.Registry) {
+	secretsPath := os.Getenv("LUNAR_SECRETS_FILE")
+	if secretsPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return
+		}
+		secretsPath = filepath.Join(home, ".lunar", "secrets.json")
+	}
+
+	data, err := os.ReadFile(secretsPath)
+	if err != nil {
+		return // file doesn't exist yet, that's fine
+	}
+
+	var secrets map[string]string
+	if err := json.Unmarshal(data, &secrets); err != nil {
+		log.Printf("WARNING: could not parse %s: %v", secretsPath, err)
+		return
+	}
+
+	loaded := 0
+	for providerName, apiKey := range secrets {
+		if apiKey == "" {
+			continue
+		}
+		if err := providers.SetProviderKey(providerName, apiKey); err == nil {
+			loaded++
+		}
+	}
+	if loaded > 0 {
+		log.Printf("Loaded %d API keys from %s", loaded, secretsPath)
 	}
 }
 

@@ -35,7 +35,9 @@ func NewAnthropicProvider(cfg ProviderConfig) *AnthropicProvider {
 	}
 }
 
-func (p *AnthropicProvider) Name() string { return p.name }
+func (p *AnthropicProvider) Name() string        { return p.name }
+func (p *AnthropicProvider) SetAPIKey(key string) { p.apiKey = key }
+func (p *AnthropicProvider) HasAPIKey() bool      { return p.apiKey != "" }
 
 // --- Anthropic native types ---
 
@@ -175,8 +177,8 @@ func (p *AnthropicProvider) SendStream(ctx context.Context, req *ChatRequest) (i
 		return nil, fmt.Errorf("anthropic error (status %d): %s", resp.StatusCode, body)
 	}
 
-	// TODO: translate Anthropic SSE format to OpenAI SSE format in a streaming adapter
-	return resp.Body, nil
+	// Translate Anthropic SSE → OpenAI SSE on the fly
+	return NewAnthropicStreamAdapter(resp.Body, req.Model), nil
 }
 
 // --- Request Translation ---

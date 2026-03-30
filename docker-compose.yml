@@ -1,0 +1,100 @@
+# ============================================================================
+# Lunar Router — Full Stack
+# ============================================================================
+#
+# Start everything:   docker compose up
+# Start background:   docker compose up -d
+# Just ClickHouse:    docker compose up clickhouse
+# View traces:        docker compose exec clickhouse clickhouse-client \
+#                       --database lunar_router --password lunar \
+#                       -q "SELECT * FROM llm_traces ORDER BY timestamp DESC LIMIT 10"
+# Tear down:          docker compose down -v
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # ClickHouse — trace storage
+  # --------------------------------------------------------------------------
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    ports:
+      - "8123:8123"   # HTTP
+      - "9000:9000"   # Native
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: lunar
+      CLICKHOUSE_DB: lunar_router
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--password", "lunar", "-q", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --------------------------------------------------------------------------
+  # Go Engine — routing + provider proxy
+  # --------------------------------------------------------------------------
+  lunar-engine:
+    build:
+      context: ./go
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      LUNAR_CH_ENABLED: "true"
+      LUNAR_CH_HOST: clickhouse
+      LUNAR_CH_PORT: "9000"
+      LUNAR_CH_DATABASE: lunar_router
+      LUNAR_CH_USERNAME: default
+      LUNAR_CH_PASSWORD: lunar
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - weights-data:/weights
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # --------------------------------------------------------------------------
+  # Python API — FastAPI wrapper + analytics endpoints
+  # --------------------------------------------------------------------------
+  lunar-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      LUNAR_CH_ENABLED: "true"
+      LUNAR_CH_HOST: clickhouse
+      LUNAR_CH_HTTP_PORT: "8123"
+      LUNAR_CH_DATABASE: lunar_router
+      LUNAR_CH_USERNAME: default
+      LUNAR_CH_PASSWORD: lunar
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  clickhouse-data:
+  weights-data:
