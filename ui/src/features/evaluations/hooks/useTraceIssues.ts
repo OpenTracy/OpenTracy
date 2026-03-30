@@ -1,0 +1,128 @@
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { useUser } from '@/contexts/UserContext';
+import { useEvaluationsService } from '../api/evaluationsService';
+import type { TraceIssue, TraceScan } from '../types/evaluationsTypes';
+
+const POLL_INTERVAL_MS = 1_000;
+
+function normalizeIssue(raw: Record<string, unknown>): TraceIssue {
+  return {
+    id: (raw.issue_id as string) || (raw.id as string),
+    trace_id: raw.trace_id,
+    type: raw.type,
+    severity: raw.severity,
+    title: raw.title,
+    description: raw.description,
+    ai_confidence: raw.ai_confidence,
+    model_id: raw.model_id,
+    trace_input: raw.trace_input,
+    trace_output: raw.trace_output,
+    detected_at: raw.detected_at,
+    resolved: raw.resolved,
+    suggested_action: raw.suggested_action,
+    suggested_eval_config: raw.suggested_eval_config,
+  } as TraceIssue;
+}
+
+export function useTraceIssues() {
+  const { accessToken } = useUser();
+  const service = useEvaluationsService();
+
+  const [issues, setIssues] = useState<TraceIssue[]>([]);
+  const [scanning, setScanning] = useState(false);
+  const [lastScan, setLastScan] = useState<TraceScan | null>(null);
+  const [loading, setLoading] = useState(true);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchIssues = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      const data = await service.listTraceIssues(accessToken);
+      setIssues((data.issues || []).map(normalizeIssue));
+    } catch (err) {
+      console.error('[useTraceIssues] fetch failed:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken, service]);
+
+  useEffect(() => {
+    fetchIssues();
+  }, [fetchIssues]);
+
+  const triggerScan = useCallback(async () => {
+    if (scanning || !accessToken) return;
+    setScanning(true);
+
+    try {
+      const { scan_id: scanId } = await service.triggerTraceScan(accessToken);
+
+      setLastScan({
+        id: scanId,
+        status: 'running',
+        traces_scanned: 0,
+        issues_found: 0,
+        started_at: new Date().toISOString(),
+      });
+
+      const poll = setInterval(async () => {
+        try {
+          const s = await service.getTraceScanStatus(accessToken, scanId);
+          const status = s.status as TraceScan['status'];
+
+          setLastScan({
+            id: s.scan_id || scanId,
+            status,
+            traces_scanned: s.traces_scanned ?? 0,
+            issues_found: s.issues_found ?? 0,
+            started_at: s.started_at,
+            completed_at: s.completed_at,
+          });
+
+          if (status === 'completed' || status === 'failed') {
+            clearInterval(poll);
+            pollRef.current = null;
+            setScanning(false);
+            fetchIssues();
+          }
+        } catch (err) {
+          console.error('[useTraceIssues] poll error:', err);
+          clearInterval(poll);
+          pollRef.current = null;
+          setScanning(false);
+        }
+      }, POLL_INTERVAL_MS);
+
+      pollRef.current = poll;
+    } catch (err) {
+      console.error('[useTraceIssues] scan trigger failed:', err);
+      setScanning(false);
+    }
+  }, [scanning, accessToken, service, fetchIssues]);
+
+  const resolveIssue = useCallback(
+    async (id: string) => {
+      if (!accessToken) return;
+      try {
+        await service.resolveTraceIssue(accessToken, id);
+        setIssues((prev) => prev.map((i) => (i.id === id ? { ...i, resolved: true } : i)));
+      } catch (err) {
+        console.error('[useTraceIssues] resolve failed:', err);
+      }
+    },
+    [accessToken, service]
+  );
+
+  const refresh = useCallback(() => {
+    setLoading(true);
+    fetchIssues();
+  }, [fetchIssues]);
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  return { issues, scanning, lastScan, triggerScan, resolveIssue, refresh, loading };
+}
