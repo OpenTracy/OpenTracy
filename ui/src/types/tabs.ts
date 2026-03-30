@@ -1,0 +1,24 @@
+export type TabKey =
+  // Core
+  | 'command-center'
+  // Data
+  | 'data-sources'
+  // Build
+  | 'distill-jobs'
+  | 'distill-datasets'
+  | 'distill-metrics'
+  // Ship
+  | 'production'
+  // Validate
+  | 'compare'
+  // Monitor
+  | 'observability'
+  | 'traces'
+  // Config
+  | 'api-keys'
+  | 'billing'
+  | 'documentation'
+  | 'community'
+  | 'fine-tuning'
+  | 'members'
+  | 'organizations';
