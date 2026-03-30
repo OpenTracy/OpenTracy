@@ -35,6 +35,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/config/keys/{provider}", s.handleDeleteKey)
 	mux.HandleFunc("POST /v1/config/reload", s.handleReloadKeys)
 	mux.HandleFunc("POST /v1/traces", s.handleIngestTraces)
+	mux.HandleFunc("POST /v1/datasets/{runId}/{clusterId}/traces", s.handleAddTracesToDataset)
 }
 
 // --- Health ---
@@ -537,6 +538,162 @@ func estimateTokens(text string) int {
 	}
 	// Rough estimate: ~4 chars per token
 	return len(text) / 4
+}
+
+// --- Add Traces to Dataset ---
+
+func (s *Server) handleAddTracesToDataset(w http.ResponseWriter, r *http.Request) {
+	if s.CHWriter == nil {
+		writeError(w, http.StatusServiceUnavailable, "ClickHouse not enabled")
+		return
+	}
+
+	runId := r.PathValue("runId")
+	clusterIdStr := r.PathValue("clusterId")
+	clusterId, err := strconv.Atoi(clusterIdStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid cluster_id")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read body")
+		return
+	}
+
+	// Parse traces (same format as /v1/traces)
+	var traces []ingestTrace
+	if len(body) > 0 && body[0] == '{' && bytes.Contains(body, []byte("\n{")) {
+		for _, line := range bytes.Split(body, []byte("\n")) {
+			line = bytes.TrimSpace(line)
+			if len(line) == 0 {
+				continue
+			}
+			var t ingestTrace
+			if json.Unmarshal(line, &t) == nil {
+				traces = append(traces, t)
+			}
+		}
+	} else {
+		var req ingestRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			return
+		}
+		if len(req.Traces) > 0 {
+			traces = req.Traces
+		} else if req.ingestTrace != nil && (len(req.Messages) > 0 || req.Input != "") {
+			traces = []ingestTrace{*req.ingestTrace}
+		}
+	}
+
+	if len(traces) == 0 {
+		writeError(w, http.StatusBadRequest, "no traces provided")
+		return
+	}
+
+	// Insert each trace and map to the cluster
+	ingested := 0
+	var requestIDs []string
+
+	for _, t := range traces {
+		inputText, outputText, messagesJSON, outputMsgJSON := extractTraceContent(&t)
+
+		// Generate a deterministic request_id from content
+		reqID := fmt.Sprintf("manual-%x", sha256Short(inputText+outputText))
+
+		tokensIn := 0
+		if t.TokensIn != nil {
+			tokensIn = *t.TokensIn
+		} else {
+			tokensIn = estimateTokens(inputText)
+		}
+		tokensOut := 0
+		if t.TokensOut != nil {
+			tokensOut = *t.TokensOut
+		} else {
+			tokensOut = estimateTokens(outputText)
+		}
+
+		var totalCost float64
+		if t.CostUSD != nil {
+			totalCost = *t.CostUSD
+		} else if t.Model != "" {
+			if pricing := provider.GetPricing(t.Model); pricing != nil {
+				_, _, totalCost = pricing.ComputeCost(tokensIn, tokensOut)
+			}
+		}
+
+		latency := 0.0
+		if t.LatencyMs != nil {
+			latency = *t.LatencyMs
+		}
+
+		source := t.Source
+		if source == "" {
+			source = "manual"
+		}
+
+		var errVal float64
+		if t.IsError {
+			errVal = 1.0
+		}
+
+		m := metrics.RequestMetrics{
+			RequestID:    reqID,
+			Provider:     t.Provider,
+			Model:        t.Model,
+			TokensIn:     tokensIn,
+			TokensOut:    tokensOut,
+			TotalTokens:  tokensIn + tokensOut,
+			TotalCostUSD: totalCost,
+			LatencyMs:    latency,
+			Error:        errVal,
+			ClusterID:    clusterId,
+		}
+
+		extra := chw.TraceExtra{
+			RequestType:   source,
+			InputText:     inputText,
+			OutputText:    outputText,
+			InputMessages: messagesJSON,
+			OutputMessage: outputMsgJSON,
+		}
+
+		s.CHWriter.Record(m, extra)
+		requestIDs = append(requestIDs, reqID)
+		ingested++
+	}
+
+	// Insert mappings into trace_cluster_map
+	if err := s.CHWriter.InsertClusterMappings(runId, clusterId, requestIDs); err != nil {
+		// Traces are inserted, but mapping failed — log but don't fail
+		writeJSON(w, http.StatusOK, map[string]any{
+			"message":      fmt.Sprintf("ingested %d traces (mapping error: %v)", ingested, err),
+			"ingested":     ingested,
+			"run_id":       runId,
+			"cluster_id":   clusterId,
+			"mapping_error": err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":    fmt.Sprintf("added %d traces to dataset %s/%d", ingested, runId, clusterId),
+		"ingested":   ingested,
+		"run_id":     runId,
+		"cluster_id": clusterId,
+	})
+}
+
+func sha256Short(s string) uint64 {
+	h := uint64(14695981039346656037) // FNV offset basis
+	for _, c := range s {
+		h ^= uint64(c)
+		h *= 1099511628211 // FNV prime
+	}
+	return h
 }
 
 // --- Chat Completions (Gateway / Proxy) ---

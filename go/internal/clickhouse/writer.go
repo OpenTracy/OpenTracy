@@ -218,6 +218,29 @@ func (w *Writer) flush(rows []traceRow) {
 	w.dropped.Add(int64(len(rows)))
 }
 
+// InsertClusterMappings inserts trace → cluster mappings into trace_cluster_map.
+func (w *Writer) InsertClusterMappings(runID string, clusterID int, requestIDs []string) error {
+	if w == nil || len(requestIDs) == 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	batch, err := w.conn.PrepareBatch(ctx, `INSERT INTO trace_cluster_map (run_id, request_id, cluster_id)`)
+	if err != nil {
+		return err
+	}
+
+	for _, reqID := range requestIDs {
+		if err := batch.Append(runID, reqID, uint32(clusterID)); err != nil {
+			return err
+		}
+	}
+
+	return batch.Send()
+}
+
 // insertBatch performs a single batch insert into llm_traces.
 func (w *Writer) insertBatch(rows []traceRow) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

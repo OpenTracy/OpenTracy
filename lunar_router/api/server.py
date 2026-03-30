@@ -640,6 +640,33 @@ async def import_traces_file(body: dict):
         raise HTTPException(status_code=502, detail=f"Engine unavailable: {e}")
 
 
+# --- Add Traces to Existing Dataset ---
+
+
+@app.post("/v1/clustering/datasets/{run_id}/{cluster_id}/traces", tags=["datasets"])
+async def add_traces_to_dataset(run_id: str, cluster_id: int, body: dict):
+    """Add manual traces to an existing cluster dataset.
+
+    Inserts traces into ClickHouse AND maps them to the specified cluster.
+    Accepts same format as /v1/traces: messages, input/output, or batch.
+    """
+    import httpx
+
+    engine_url = os.environ.get("LUNAR_ENGINE_URL", "http://localhost:8080")
+    try:
+        resp = httpx.post(
+            f"{engine_url}/v1/datasets/{run_id}/{cluster_id}/traces",
+            json=body,
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Engine unavailable: {e}")
+
+
 # --- Dataset Trace Import (Smart Import for UI) ---
 
 
