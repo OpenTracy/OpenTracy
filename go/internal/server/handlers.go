@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	chw "github.com/lunar-org-ai/lunar-router/go/internal/clickhouse"
 	"github.com/lunar-org-ai/lunar-router/go/internal/metrics"
 	"github.com/lunar-org-ai/lunar-router/go/internal/provider"
 	"github.com/lunar-org-ai/lunar-router/go/internal/router"
@@ -27,6 +29,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/cache/clear", s.handleCacheClear)
 	mux.HandleFunc("GET /stats", s.handleStats)
 	mux.HandleFunc("POST /stats/reset", s.handleStatsReset)
+	mux.HandleFunc("POST /v1/config/keys", s.handleSetKey)
+	mux.HandleFunc("GET /v1/config/keys", s.handleListKeys)
+	mux.HandleFunc("DELETE /v1/config/keys/{provider}", s.handleDeleteKey)
+	mux.HandleFunc("POST /v1/config/reload", s.handleReloadKeys)
 }
 
 // --- Health ---
@@ -118,14 +124,16 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		// Record failed routing request
-		s.Metrics.Record(metrics.RequestMetrics{
+		m := metrics.RequestMetrics{
 			LatencyMs:     routingMs,
 			EmbeddingMs:   embeddingMs,
 			RoutingMs:     routingMs,
 			Error:         1.0,
 			ErrorCategory: metrics.ErrCategoryInvalidReq,
 			ErrorMessage:  err.Error(),
-		})
+		}
+		s.Metrics.Record(m)
+		s.CHWriter.Record(m, chw.TraceExtra{RequestType: "route"})
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -136,7 +144,7 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request) {
 		tokensIn = metrics.EstimateTokensIn(req.Prompt)
 	}
 
-	s.Metrics.Record(metrics.RequestMetrics{
+	m := metrics.RequestMetrics{
 		LatencyMs:     routingMs,
 		EmbeddingMs:   embeddingMs,
 		RoutingMs:     routingMs,
@@ -144,6 +152,14 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request) {
 		Error:         0,
 		SelectedModel: decision.SelectedModel,
 		ClusterID:     decision.ClusterID,
+	}
+	s.Metrics.Record(m)
+	s.CHWriter.Record(m, chw.TraceExtra{
+		RequestType:       "route",
+		CacheHit:          cacheHit,
+		ExpectedError:     decision.ExpectedError,
+		CostAdjustedScore: decision.CostAdjustedScore,
+		AllScores:         decision.AllScores,
 	})
 
 	writeJSON(w, http.StatusOK, routeResponse{
@@ -258,10 +274,61 @@ func (s *Server) handleStatsReset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "statistics reset"})
 }
 
+// --- Runtime Key Management ---
+
+type setKeyRequest struct {
+	Provider string `json:"provider"`
+	APIKey   string `json:"api_key"`
+}
+
+func (s *Server) handleSetKey(w http.ResponseWriter, r *http.Request) {
+	var req setKeyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if req.Provider == "" || req.APIKey == "" {
+		writeError(w, http.StatusBadRequest, "provider and api_key are required")
+		return
+	}
+	if err := s.Providers.SetProviderKey(req.Provider, req.APIKey); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "key updated", "provider": req.Provider})
+}
+
+func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"configured_providers": s.Providers.ConfiguredProviders(),
+	})
+}
+
+func (s *Server) handleDeleteKey(w http.ResponseWriter, r *http.Request) {
+	provider := r.PathValue("provider")
+	if err := s.Providers.SetProviderKey(provider, ""); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "key removed", "provider": provider})
+}
+
+func (s *Server) handleReloadKeys(w http.ResponseWriter, r *http.Request) {
+	loaded := s.ReloadSecretsFile()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":              "keys reloaded",
+		"loaded":               loaded,
+		"configured_providers": s.Providers.ConfiguredProviders(),
+	})
+}
+
 // --- Chat Completions (Gateway / Proxy) ---
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+
+	// Internal calls (clustering pipeline, labeling) are not traced
+	isInternal := r.Header.Get("X-Lunar-Internal") == "true"
 
 	// Read raw body (for pass-through)
 	rawBody, err := io.ReadAll(r.Body)
@@ -323,11 +390,17 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Strip "provider/" prefix so upstream API gets the bare model name
+	if idx := strings.IndexByte(req.Model, '/'); idx > 0 {
+		req.Model = req.Model[idx+1:]
+		req.RawBody = nil // force re-serialization with the stripped model name
+	}
+
 	// Forward request
 	if req.Stream {
-		s.handleStreamingProxy(w, r, prov, &req, start, routingMs)
+		s.handleStreamingProxy(w, r, prov, &req, start, routingMs, isInternal)
 	} else {
-		s.handleNonStreamingProxy(w, prov, &req, start, routingMs)
+		s.handleNonStreamingProxy(w, prov, &req, start, routingMs, isInternal)
 	}
 }
 
@@ -337,13 +410,14 @@ func (s *Server) handleNonStreamingProxy(
 	req *provider.ChatRequest,
 	start time.Time,
 	routingMs float64,
+	isInternal bool,
 ) {
 	ctx := context.Background()
 	resp, err := prov.Send(ctx, req)
 	latencyMs := float64(time.Since(start).Microseconds()) / 1000.0
 
 	if err != nil {
-		s.Metrics.Record(metrics.RequestMetrics{
+		em := metrics.RequestMetrics{
 			LatencyMs:     latencyMs,
 			RoutingMs:     routingMs,
 			Error:         1.0,
@@ -351,7 +425,11 @@ func (s *Server) handleNonStreamingProxy(
 			ErrorMessage:  err.Error(),
 			Provider:      prov.Name(),
 			Model:         req.Model,
-		})
+		}
+		s.Metrics.Record(em)
+		if !isInternal {
+			s.CHWriter.Record(em, chw.TraceExtra{RequestType: "chat"})
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -370,7 +448,7 @@ func (s *Server) handleNonStreamingProxy(
 		inputCost, outputCost, totalCost = pricing.ComputeCost(tokensIn, tokensOut)
 	}
 
-	s.Metrics.Record(metrics.RequestMetrics{
+	sm := metrics.RequestMetrics{
 		LatencyMs:     latencyMs,
 		TTFTMs:        latencyMs,
 		RoutingMs:     routingMs,
@@ -383,7 +461,32 @@ func (s *Server) handleNonStreamingProxy(
 		Error:         0,
 		Provider:      prov.Name(),
 		Model:         req.Model,
-	})
+	}
+	s.Metrics.Record(sm)
+
+	// Extract content for trace storage
+	inputText := lastUserMessage(req.Messages)
+	var outputText, outputMsg string
+	if len(resp.Choices) > 0 && resp.Choices[0].Message != nil {
+		outputText = resp.Choices[0].Message.TextContent()
+		if b, err := json.Marshal(resp.Choices[0].Message); err == nil {
+			outputMsg = string(b)
+		}
+	}
+	inputMsgsJSON := ""
+	if b, err := json.Marshal(req.Messages); err == nil {
+		inputMsgsJSON = string(b)
+	}
+
+	if !isInternal {
+		s.CHWriter.Record(sm, chw.TraceExtra{
+			RequestType:   "chat",
+			InputText:     inputText,
+			OutputText:    outputText,
+			InputMessages: inputMsgsJSON,
+			OutputMessage: outputMsg,
+		})
+	}
 
 	// Inject cost into response
 	type costAwareResponse struct {
@@ -412,12 +515,13 @@ func (s *Server) handleStreamingProxy(
 	req *provider.ChatRequest,
 	start time.Time,
 	routingMs float64,
+	isInternal bool,
 ) {
 	ctx := r.Context()
 	stream, err := prov.SendStream(ctx, req)
 	if err != nil {
 		latencyMs := float64(time.Since(start).Microseconds()) / 1000.0
-		s.Metrics.Record(metrics.RequestMetrics{
+		sem := metrics.RequestMetrics{
 			LatencyMs:     latencyMs,
 			RoutingMs:     routingMs,
 			Error:         1.0,
@@ -425,7 +529,12 @@ func (s *Server) handleStreamingProxy(
 			ErrorMessage:  err.Error(),
 			Provider:      prov.Name(),
 			Model:         req.Model,
-		})
+			Stream:        true,
+		}
+		s.Metrics.Record(sem)
+		if !isInternal {
+			s.CHWriter.Record(sem, chw.TraceExtra{RequestType: "chat_stream"})
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -463,7 +572,7 @@ func (s *Server) handleStreamingProxy(
 	}
 
 	latencyMs := float64(time.Since(start).Microseconds()) / 1000.0
-	s.Metrics.Record(metrics.RequestMetrics{
+	ssm := metrics.RequestMetrics{
 		LatencyMs: latencyMs,
 		TTFTMs:    ttftMs,
 		RoutingMs: routingMs,
@@ -471,7 +580,11 @@ func (s *Server) handleStreamingProxy(
 		Provider:  prov.Name(),
 		Model:     req.Model,
 		Stream:    true,
-	})
+	}
+	s.Metrics.Record(ssm)
+	if !isInternal {
+		s.CHWriter.Record(ssm, chw.TraceExtra{RequestType: "chat_stream"})
+	}
 }
 
 func lastUserMessage(messages []provider.Message) string {

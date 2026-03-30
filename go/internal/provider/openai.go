@@ -33,7 +33,9 @@ func NewOpenAIProvider(cfg ProviderConfig) *OpenAIProvider {
 	}
 }
 
-func (p *OpenAIProvider) Name() string { return p.name }
+func (p *OpenAIProvider) Name() string        { return p.name }
+func (p *OpenAIProvider) SetAPIKey(key string) { p.apiKey = key }
+func (p *OpenAIProvider) HasAPIKey() bool      { return p.apiKey != "" }
 
 func (p *OpenAIProvider) Send(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	req.Stream = false

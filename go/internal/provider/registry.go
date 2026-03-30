@@ -19,6 +19,9 @@ func DefaultProviders() []ProviderConfig {
 		{Name: "sambanova", BaseURL: "https://api.sambanova.ai/v1", APIKeyEnv: "SAMBANOVA_API_KEY", Format: "openai"},
 		{Name: "together", BaseURL: "https://api.together.xyz/v1", APIKeyEnv: "TOGETHER_API_KEY", Format: "openai"},
 		{Name: "fireworks", BaseURL: "https://api.fireworks.ai/inference/v1", APIKeyEnv: "FIREWORKS_API_KEY", Format: "openai"},
+		{Name: "gemini", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", APIKeyEnv: "GEMINI_API_KEY", Format: "openai"},
+		{Name: "cohere", BaseURL: "https://api.cohere.com/compatibility/v1", APIKeyEnv: "COHERE_API_KEY", Format: "openai"},
+		{Name: "bedrock", BaseURL: "", APIKeyEnv: "AWS_ACCESS_KEY_ID", Format: "bedrock"},
 	}
 }
 
@@ -47,6 +50,18 @@ var ModelProviderMap = map[string]string{
 
 	// DeepSeek
 	"deepseek":   "deepseek",
+
+	// Gemini
+	"gemini":     "gemini",
+
+	// Cohere
+	"command":    "cohere",
+	"command-r":  "cohere",
+	"c4ai":       "cohere",
+
+	// Bedrock (Amazon-native models; other vendors via overrides)
+	"amazon.":    "bedrock",
+	"us.amazon.": "bedrock",
 }
 
 // Registry holds provider instances and routes models to providers.
@@ -68,6 +83,8 @@ func NewRegistry(configs []ProviderConfig) *Registry {
 		switch cfg.Format {
 		case "anthropic":
 			p = NewAnthropicProvider(cfg)
+		case "bedrock":
+			p = NewBedrockProvider(cfg)
 		default:
 			p = NewOpenAIProvider(cfg)
 		}
@@ -88,8 +105,16 @@ func (r *Registry) SetModelProvider(model, providerName string) {
 }
 
 // ForModel finds the provider for a given model name.
-// Checks: 1) explicit overrides, 2) prefix matching.
+// Checks: 1) "provider/model" format, 2) explicit overrides, 3) prefix matching.
 func (r *Registry) ForModel(model string) (Provider, error) {
+	// Check "provider/model" format (e.g., "openai/gpt-4o-mini")
+	if idx := strings.IndexByte(model, '/'); idx > 0 {
+		providerName := model[:idx]
+		if p, ok := r.providers[providerName]; ok {
+			return p, nil
+		}
+	}
+
 	// Check explicit overrides
 	if pName, ok := r.modelOverrides[model]; ok {
 		if p, ok := r.providers[pName]; ok {
@@ -108,6 +133,27 @@ func (r *Registry) ForModel(model string) (Provider, error) {
 	}
 
 	return nil, fmt.Errorf("no provider found for model %q", model)
+}
+
+// SetProviderKey updates the API key for a provider at runtime.
+func (r *Registry) SetProviderKey(providerName, apiKey string) error {
+	p, ok := r.providers[providerName]
+	if !ok {
+		return fmt.Errorf("provider %q not found", providerName)
+	}
+	p.SetAPIKey(apiKey)
+	return nil
+}
+
+// ConfiguredProviders returns names of providers that have API keys set.
+func (r *Registry) ConfiguredProviders() []string {
+	var result []string
+	for name, p := range r.providers {
+		if p.HasAPIKey() {
+			result = append(result, name)
+		}
+	}
+	return result
 }
 
 // ProviderNames returns all registered provider names.

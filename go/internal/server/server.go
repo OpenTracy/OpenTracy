@@ -2,14 +2,18 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/lunar-org-ai/lunar-router/go/internal/clickhouse"
+	"github.com/lunar-org-ai/lunar-router/go/internal/config"
 	"github.com/lunar-org-ai/lunar-router/go/internal/metrics"
 	"github.com/lunar-org-ai/lunar-router/go/internal/provider"
 	"github.com/lunar-org-ai/lunar-router/go/internal/router"
@@ -22,19 +26,35 @@ type Server struct {
 	Registry  *weights.Registry
 	Providers *provider.Registry
 	Metrics   *metrics.Collector
+	CHWriter  *clickhouse.Writer
 	Addr      string
 
 	httpServer *http.Server
 }
 
 // New creates a new Server.
-func New(r *router.Router, reg *weights.Registry, providers *provider.Registry, host string, port int) *Server {
+func New(r *router.Router, reg *weights.Registry, providers *provider.Registry, cfg *config.Config) *Server {
 	s := &Server{
 		Router:    r,
 		Registry:  reg,
 		Providers: providers,
 		Metrics:   metrics.NewCollector(10000),
-		Addr:      fmt.Sprintf("%s:%d", host, port),
+		Addr:      fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
+	}
+
+	// Initialize ClickHouse writer if enabled
+	if cfg.ClickHouse.Enabled {
+		w, err := clickhouse.NewWriter(cfg.ClickHouse)
+		if err != nil {
+			log.Printf("WARNING: ClickHouse writer init failed: %v (traces disabled)", err)
+		} else if w != nil {
+			// Run schema migrations
+			if err := clickhouse.RunMigrationsFromConfig(cfg.ClickHouse); err != nil {
+				log.Printf("WARNING: ClickHouse migrations failed: %v", err)
+			}
+			s.CHWriter = w
+			log.Println("ClickHouse trace writer enabled")
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -67,12 +87,50 @@ func (s *Server) Run() error {
 	select {
 	case <-stop:
 		log.Println("Shutting down...")
+		s.CHWriter.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return s.httpServer.Shutdown(ctx)
 	case err := <-errCh:
 		return err
 	}
+}
+
+// ReloadSecretsFile re-reads ~/.lunar/secrets.json and updates provider keys.
+// Returns the number of keys loaded.
+func (s *Server) ReloadSecretsFile() int {
+	secretsPath := os.Getenv("LUNAR_SECRETS_FILE")
+	if secretsPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return 0
+		}
+		secretsPath = filepath.Join(home, ".lunar", "secrets.json")
+	}
+
+	data, err := os.ReadFile(secretsPath)
+	if err != nil {
+		return 0
+	}
+
+	var secrets map[string]string
+	if err := json.Unmarshal(data, &secrets); err != nil {
+		return 0
+	}
+
+	loaded := 0
+	for providerName, apiKey := range secrets {
+		if apiKey == "" {
+			continue
+		}
+		if err := s.Providers.SetProviderKey(providerName, apiKey); err == nil {
+			loaded++
+		}
+	}
+	if loaded > 0 {
+		log.Printf("Reloaded %d API keys from %s", loaded, secretsPath)
+	}
+	return loaded
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

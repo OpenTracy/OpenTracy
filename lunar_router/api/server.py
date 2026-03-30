@@ -45,6 +45,12 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
     logger.info("UniRoute API starting up...")
+    try:
+        from ..storage.secrets import push_all_to_engine
+        push_all_to_engine()
+        logger.info("Pushed stored API keys to Go engine")
+    except Exception as e:
+        logger.debug(f"Could not push keys to engine on startup: {e}")
     yield
     # Shutdown
     logger.info("UniRoute API shutting down...")
@@ -288,6 +294,397 @@ async def set_cost_weight(cost_weight: float, r: UniRouteRouter = Depends(get_ro
         raise HTTPException(status_code=400, detail="cost_weight must be >= 0")
     r.cost_weight = cost_weight
     return {"message": f"Cost weight set to {cost_weight}"}
+
+
+# --- Harness (Agent System) ---
+
+
+@app.get("/v1/harness/agents", tags=["harness"])
+async def list_harness_agents():
+    """List all available harness agents."""
+    from ..harness.registry import AgentRegistry
+    registry = AgentRegistry()
+    return {"agents": [a.to_dict() for a in registry.list_agents()]}
+
+
+@app.get("/v1/harness/agents/{name}", tags=["harness"])
+async def get_harness_agent(name: str):
+    """Get a specific agent's config and prompt."""
+    from ..harness.registry import AgentRegistry
+    registry = AgentRegistry()
+    config = registry.get(name)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    return config.to_dict()
+
+
+@app.post("/v1/harness/run/{name}", tags=["harness"])
+async def run_harness_agent(name: str, body: dict):
+    """Run a harness agent with user_input and optional context."""
+    from ..harness.runner import AgentRunner
+    runner = AgentRunner()
+    user_input = body.get("input", body.get("user_input", ""))
+    context = body.get("context", {})
+    use_tools = body.get("use_tools", False)
+
+    if not user_input:
+        raise HTTPException(status_code=400, detail="input is required")
+
+    if use_tools:
+        result = await runner.run_with_tools(name, user_input)
+    else:
+        result = await runner.run(name, user_input, context)
+
+    return {"agent": name, "result": result}
+
+
+# --- Clustering (Domain Datasets) ---
+
+
+@app.post("/v1/clustering/run", tags=["clustering"])
+async def clustering_run(
+    days: int = 30,
+    min_traces: int = 50,
+    strategy: str = "auto",
+):
+    """Trigger a clustering pipeline run."""
+    from ..clustering.pipeline import ClusteringPipeline
+
+    pipeline = ClusteringPipeline(strategy=strategy)
+    result = await pipeline.run(days=days, min_traces=min_traces)
+    return result.to_dict()
+
+
+@app.get("/v1/clustering/runs", tags=["clustering"])
+async def list_clustering_runs():
+    """List past clustering runs."""
+    from ..storage.clickhouse_client import get_client
+
+    client = get_client()
+    if client is None:
+        return {"runs": []}
+
+    r = client.query(
+        "SELECT * FROM clustering_runs ORDER BY created_at DESC LIMIT 20"
+    )
+    columns = r.column_names
+    return {"runs": [dict(zip(columns, row)) for row in r.result_rows]}
+
+
+@app.get("/v1/clustering/runs/{run_id}", tags=["clustering"])
+async def get_clustering_run(run_id: str):
+    """Get a clustering run with all its datasets."""
+    from ..storage.clickhouse_client import get_client
+    import json
+
+    client = get_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="ClickHouse not available")
+
+    # Get run info
+    r = client.query(
+        "SELECT * FROM clustering_runs WHERE run_id = {rid:String}",
+        parameters={"rid": run_id},
+    )
+    if not r.result_rows:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    run = dict(zip(r.column_names, r.result_rows[0]))
+
+    # Get datasets
+    r = client.query(
+        "SELECT * FROM cluster_datasets WHERE run_id = {rid:String} ORDER BY cluster_id",
+        parameters={"rid": run_id},
+    )
+    datasets = []
+    for row in r.result_rows:
+        d = dict(zip(r.column_names, row))
+        for field in ("top_models", "top_providers", "sample_prompts"):
+            if isinstance(d.get(field), str):
+                try:
+                    d[field] = json.loads(d[field])
+                except Exception:
+                    pass
+        datasets.append(d)
+
+    return {"run": run, "datasets": datasets}
+
+
+@app.get("/v1/clustering/datasets", tags=["clustering"])
+async def list_clustering_datasets(status: Optional[str] = None):
+    """List domain datasets from the latest clustering run."""
+    from ..storage.clickhouse_client import get_client
+    import json
+
+    client = get_client()
+    if client is None:
+        return {"datasets": []}
+
+    # Get latest run_id
+    r = client.query("SELECT run_id FROM clustering_runs ORDER BY created_at DESC LIMIT 1")
+    if not r.result_rows:
+        return {"datasets": [], "run_id": None}
+
+    run_id = r.result_rows[0][0]
+
+    conditions = ["run_id = {rid:String}"]
+    params: dict = {"rid": run_id}
+    if status:
+        conditions.append("status = {status:String}")
+        params["status"] = status
+
+    where = " AND ".join(conditions)
+    r = client.query(
+        f"SELECT * FROM cluster_datasets WHERE {where} ORDER BY trace_count DESC",
+        parameters=params,
+    )
+    datasets = []
+    for row in r.result_rows:
+        d = dict(zip(r.column_names, row))
+        for field in ("top_models", "top_providers", "sample_prompts"):
+            if isinstance(d.get(field), str):
+                try:
+                    d[field] = json.loads(d[field])
+                except Exception:
+                    pass
+        datasets.append(d)
+
+    return {"datasets": datasets, "run_id": run_id}
+
+
+@app.get("/v1/clustering/datasets/{run_id}/{cluster_id}", tags=["clustering"])
+async def get_clustering_dataset_traces(
+    run_id: str,
+    cluster_id: int,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """Get traces belonging to a specific domain dataset."""
+    from ..storage.clickhouse_client import get_client
+
+    client = get_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="ClickHouse not available")
+
+    r = client.query(
+        "SELECT t.* FROM llm_traces t "
+        "INNER JOIN trace_cluster_map m ON t.input_text = m.input_text "
+        "WHERE m.run_id = {rid:String} AND m.cluster_id = {cid:UInt32} "
+        "ORDER BY t.timestamp DESC LIMIT {lim:UInt32} OFFSET {off:UInt32}",
+        parameters={"rid": run_id, "cid": cluster_id, "lim": limit, "off": offset},
+    )
+    columns = r.column_names
+    traces = [dict(zip(columns, row)) for row in r.result_rows]
+
+    # Get count
+    r2 = client.query(
+        "SELECT count() FROM trace_cluster_map WHERE run_id = {rid:String} AND cluster_id = {cid:UInt32}",
+        parameters={"rid": run_id, "cid": cluster_id},
+    )
+    total = int(r2.result_rows[0][0]) if r2.result_rows else 0
+
+    return {"traces": traces, "total": total, "run_id": run_id, "cluster_id": cluster_id}
+
+
+@app.post("/v1/clustering/datasets/{run_id}/{cluster_id}/export", tags=["clustering"])
+async def export_clustering_dataset(run_id: str, cluster_id: int):
+    """Export a domain dataset as JSONL (prompt/response pairs)."""
+    from ..storage.clickhouse_client import get_client
+    from fastapi.responses import StreamingResponse
+    import json
+
+    client = get_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="ClickHouse not available")
+
+    r = client.query(
+        "SELECT t.input_text, t.output_text, t.selected_model, t.provider, "
+        "t.tokens_in, t.tokens_out, t.total_cost_usd, t.is_error, t.input_messages, t.output_message "
+        "FROM llm_traces t "
+        "INNER JOIN trace_cluster_map m ON t.input_text = m.input_text "
+        "WHERE m.run_id = {rid:String} AND m.cluster_id = {cid:UInt32} "
+        "AND length(t.input_text) > 0 ORDER BY t.timestamp",
+        parameters={"rid": run_id, "cid": cluster_id},
+    )
+
+    def generate():
+        for row in r.result_rows:
+            messages = []
+            try:
+                msgs = json.loads(row[8]) if row[8] else None
+                if isinstance(msgs, list):
+                    messages = msgs
+            except Exception:
+                messages = [{"role": "user", "content": row[0]}]
+
+            if not messages:
+                messages = [{"role": "user", "content": row[0]}]
+
+            if row[1]:  # output_text
+                messages.append({"role": "assistant", "content": row[1]})
+
+            record = {
+                "messages": messages,
+                "metadata": {
+                    "model": row[2],
+                    "provider": row[3],
+                    "tokens_in": int(row[4]),
+                    "tokens_out": int(row[5]),
+                    "cost_usd": float(row[6]),
+                    "is_error": bool(row[7]),
+                },
+            }
+            yield json.dumps(record) + "\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Disposition": f"attachment; filename=dataset_{run_id}_{cluster_id}.jsonl"
+        },
+    )
+
+
+@app.post("/v1/clustering/datasets/{run_id}/{cluster_id}/qualify", tags=["clustering"])
+async def qualify_clustering_dataset(run_id: str, cluster_id: int, status: str = "qualified"):
+    """Manually qualify or reject a dataset."""
+    from ..storage.clickhouse_client import get_client
+
+    client = get_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="ClickHouse not available")
+
+    if status not in ("qualified", "rejected", "candidate"):
+        raise HTTPException(status_code=400, detail="status must be qualified, rejected, or candidate")
+
+    client.command(
+        f"ALTER TABLE cluster_datasets UPDATE status = '{status}' "
+        f"WHERE run_id = '{run_id}' AND cluster_id = {cluster_id}"
+    )
+    return {"message": f"Dataset {cluster_id} status set to {status}"}
+
+
+# --- Secrets (API Key Management) ---
+
+
+@app.get("/v1/secrets", tags=["secrets"])
+async def list_secrets():
+    """List configured providers."""
+    from ..storage.secrets import list_configured_providers
+    return {"configured_providers": list_configured_providers()}
+
+
+@app.post("/v1/secrets/{provider}", tags=["secrets"])
+async def save_secret(provider: str, body: dict):
+    """Save an API key for a provider."""
+    from ..storage.secrets import set_secret
+    api_key = body.get("api_key", "")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="api_key is required")
+    set_secret(provider, api_key)
+    return {"message": f"Key saved for {provider}"}
+
+
+@app.delete("/v1/secrets/{provider}", tags=["secrets"])
+async def remove_secret(provider: str):
+    """Remove an API key."""
+    from ..storage.secrets import delete_secret
+    if not delete_secret(provider):
+        raise HTTPException(status_code=404, detail=f"No key found for {provider}")
+    return {"message": f"Key removed for {provider}"}
+
+
+# --- Analytics (ClickHouse) ---
+
+
+@app.get("/v1/stats/{tenant_id}/analytics", tags=["analytics"])
+async def analytics_full(
+    tenant_id: str,
+    days: int = 30,
+    trace_limit: int = 100,
+    trace_offset: int = 0,
+    model_id: Optional[str] = None,
+    backend: Optional[str] = None,
+    is_success: Optional[bool] = None,
+    search: Optional[str] = None,
+):
+    """Full analytics response matching the UI's AnalyticsMetricsResponse shape."""
+    from ..storage.clickhouse_client import query_analytics
+
+    return query_analytics(
+        days=days,
+        trace_limit=trace_limit,
+        trace_offset=trace_offset,
+        model_id=model_id,
+        backend=backend,
+        is_success=is_success,
+        search=search,
+    )
+
+
+@app.get("/traces", tags=["analytics"])
+async def list_traces(
+    model: Optional[str] = None,
+    hours: int = 24,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """List recent traces from ClickHouse."""
+    from ..storage.clickhouse_client import query_traces, query_trace_count, get_client
+    from datetime import datetime, timedelta, timezone
+
+    if get_client() is None:
+        raise HTTPException(status_code=503, detail="ClickHouse not enabled")
+
+    start = datetime.now(timezone.utc) - timedelta(hours=hours)
+    traces = query_traces(model=model, start=start, limit=limit, offset=offset)
+    total = query_trace_count(model=model, start=start)
+    return {"traces": traces, "total": total, "limit": limit, "offset": offset}
+
+
+@app.get("/analytics/models", tags=["analytics"])
+async def analytics_models(
+    model: Optional[str] = None,
+    hours: int = 24,
+):
+    """Hourly model-level analytics from ClickHouse materialized view."""
+    from ..storage.clickhouse_client import query_model_hourly, get_client
+    from datetime import datetime, timedelta, timezone
+
+    if get_client() is None:
+        raise HTTPException(status_code=503, detail="ClickHouse not enabled")
+
+    start = datetime.now(timezone.utc) - timedelta(hours=hours)
+    return query_model_hourly(model=model, start=start)
+
+
+@app.get("/analytics/clusters", tags=["analytics"])
+async def analytics_clusters(
+    cluster_id: Optional[int] = None,
+    days: int = 30,
+):
+    """Daily cluster-level analytics from ClickHouse materialized view."""
+    from ..storage.clickhouse_client import query_cluster_daily, get_client
+    from datetime import datetime, timedelta, timezone
+
+    if get_client() is None:
+        raise HTTPException(status_code=503, detail="ClickHouse not enabled")
+
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    return query_cluster_daily(cluster_id=cluster_id, start=start)
+
+
+@app.get("/analytics/summary", tags=["analytics"])
+async def analytics_summary(hours: int = 24):
+    """Overall summary statistics from ClickHouse."""
+    from ..storage.clickhouse_client import query_summary, get_client
+    from datetime import datetime, timedelta, timezone
+
+    if get_client() is None:
+        raise HTTPException(status_code=503, detail="ClickHouse not enabled")
+
+    start = datetime.now(timezone.utc) - timedelta(hours=hours)
+    return query_summary(start=start)
 
 
 # --- Initialization (for programmatic setup) ---

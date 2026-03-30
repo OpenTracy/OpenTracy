@@ -4,16 +4,18 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/lunar-org-ai/lunar-router/go/internal/clickhouse"
 	"gopkg.in/yaml.v3"
 )
 
 // Config holds the application configuration.
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	Weights    WeightsConfig    `yaml:"weights"`
-	Embeddings EmbeddingsConfig `yaml:"embeddings"`
-	Routing    RoutingConfig    `yaml:"routing"`
-	Logging    LoggingConfig    `yaml:"logging"`
+	Server     ServerConfig      `yaml:"server"`
+	Weights    WeightsConfig     `yaml:"weights"`
+	Embeddings EmbeddingsConfig  `yaml:"embeddings"`
+	Routing    RoutingConfig     `yaml:"routing"`
+	Logging    LoggingConfig     `yaml:"logging"`
+	ClickHouse clickhouse.Config `yaml:"clickhouse"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -72,6 +74,7 @@ func DefaultConfig() *Config {
 			Level:  "info",
 			Format: "text",
 		},
+		ClickHouse: clickhouse.DefaultConfig(),
 	}
 }
 
@@ -108,4 +111,5 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("LUNAR_LOG_LEVEL"); v != "" {
 		c.Logging.Level = v
 	}
+	c.ClickHouse.ApplyEnvOverrides()
 }

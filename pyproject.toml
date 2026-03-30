@@ -66,8 +66,11 @@ huggingface = [
 mcp = [
     "mcp>=1.0.0",
 ]
+clickhouse = [
+    "clickhouse-connect>=0.7.0",
+]
 all = [
-    "lunar-router[openai,anthropic,mistral,google,groq,embeddings,training,api,s3,huggingface,mcp]",
+    "lunar-router[openai,anthropic,mistral,google,groq,embeddings,training,api,s3,huggingface,mcp,clickhouse]",
 ]
 dev = [
     "lunar-router[all]",
