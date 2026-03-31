@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -9,7 +9,6 @@ import type { TraceItem } from '@/types/analyticsType';
 import { getModelCategory } from '@/utils/modelUtils';
 import { convertToCSV, downloadCSV, flattenMetricsForCSV } from '../utils/ExportUtils';
 
-import { TraceDetailPanel } from './TracePanel';
 import { ActiveFiltersBadges } from './Filters/ActiveFiltersBadges';
 import { FiltersBar } from './Filters/FiltersBar';
 import { AnalyticsHeader } from './Header/AnalyticsHeader';
@@ -17,12 +16,15 @@ import { AnalyticsMetricsGrid } from './Metrics/AnalyticsMetricsGrid';
 import { TracesTable } from './Table/TracesTable';
 import { Pagination } from './Table/Pagination';
 import { TableSkeletonLoader } from './SkeletonLoader';
+import { TraceDrawer } from './TraceDrawer';
 
 export function AnalyticsContent() {
   const showToast = (message: string, type: 'success' | 'error' | 'info') => {
     toast[type](message);
   };
   const [searchParams, setSearchParams] = useSearchParams();
+  const [selectedTraceId, setSelectedTraceId] = useState<string | undefined>(undefined);
+  const drawerOpen = selectedTraceId !== undefined;
 
   const {
     isLoading,
@@ -54,7 +56,6 @@ export function AnalyticsContent() {
     dataRanges,
   } = useAnalyticsFilters(traces, metrics?.series);
 
-  const [selectedTrace, setSelectedTrace] = useState<TraceItem | undefined>(undefined);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(20);
@@ -66,7 +67,7 @@ export function AnalyticsContent() {
     if (traceIdFromUrl) {
       const trace = findTraceById(traceIdFromUrl);
       if (trace) {
-        setSelectedTrace(trace);
+        setSelectedTraceId(trace.id);
       } else {
         showToast('Trace not found in current data', 'info');
       }
@@ -203,10 +204,13 @@ export function AnalyticsContent() {
     }));
   };
 
-  const handleTraceSelect = (trace: TraceItem) => {
-    setSelectedTrace(trace);
-  };
+  const handleTraceSelect = useCallback((trace: TraceItem) => {
+    setSelectedTraceId(trace.id);
+  }, []);
 
+  const handleDrawerClose = useCallback(() => {
+    setSelectedTraceId(undefined);
+  }, []);
 
   return (
     <div className="flex flex-col min-h-screen bg-background relative overflow-x-hidden w-full max-w-full">
@@ -288,9 +292,7 @@ export function AnalyticsContent() {
         )}
       </div>
 
-      {selectedTrace && (
-        <TraceDetailPanel trace={selectedTrace} onClose={() => setSelectedTrace(undefined)} />
-      )}
+      <TraceDrawer traceId={selectedTraceId} open={drawerOpen} onClose={handleDrawerClose} />
     </div>
   );
 }

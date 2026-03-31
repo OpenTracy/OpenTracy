@@ -22,12 +22,13 @@ import (
 
 // Server is the Lunar Router HTTP server.
 type Server struct {
-	Router    *router.Router
-	Registry  *weights.Registry
-	Providers *provider.Registry
-	Metrics   *metrics.Collector
-	CHWriter  *clickhouse.Writer
-	Addr      string
+	Router       *router.Router
+	Registry     *weights.Registry
+	Providers    *provider.Registry
+	Metrics      *metrics.Collector
+	CHWriter     *clickhouse.Writer
+	Sessions     *SessionStore
+	Addr         string
 
 	httpServer *http.Server
 }
@@ -35,11 +36,12 @@ type Server struct {
 // New creates a new Server.
 func New(r *router.Router, reg *weights.Registry, providers *provider.Registry, cfg *config.Config) *Server {
 	s := &Server{
-		Router:    r,
-		Registry:  reg,
-		Providers: providers,
-		Metrics:   metrics.NewCollector(10000),
-		Addr:      fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
+		Router:       r,
+		Registry:     reg,
+		Providers:    providers,
+		Metrics:      metrics.NewCollector(10000),
+		Sessions:     NewSessionStore(),
+		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 	}
 
 	// Initialize ClickHouse writer if enabled
@@ -87,7 +89,10 @@ func (s *Server) Run() error {
 	select {
 	case <-stop:
 		log.Println("Shutting down...")
-		s.CHWriter.Close()
+		s.Sessions.Close()
+		if s.CHWriter != nil {
+			s.CHWriter.Close()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return s.httpServer.Shutdown(ctx)

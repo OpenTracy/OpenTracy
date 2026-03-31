@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"crypto/rand"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,25 @@ import (
 	"github.com/lunar-org-ai/lunar-router/go/internal/metrics"
 )
 
+// clampInt clamps v to [min, max].
+func clampInt(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
+func newRequestID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("trace-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("trace-%x", b)
+}
+
 // TraceExtra carries routing-specific fields not in RequestMetrics.
 type TraceExtra struct {
 	RequestType          string             // "route", "chat", "chat_stream"
@@ -27,6 +47,15 @@ type TraceExtra struct {
 	OutputText           string             // assistant response text
 	InputMessages        string             // JSON of full messages array
 	OutputMessage        string             // JSON of assistant message
+
+	// Tool-call tracking (migration 006)
+	FinishReason      string // "stop", "tool_calls", "length", etc.
+	RequestTools      string // JSON array of tools sent in the request
+	ResponseToolCalls string // JSON array of tool_calls from assistant response
+	HasToolCalls      bool
+	ToolCallsCount    int
+	ExecutionTimeline string  // JSON array of ExecutionTimelineStep
+	TokensPerS        float64 // total_tokens / latency_s
 }
 
 // traceRow is the combined data for one ClickHouse row.
@@ -256,7 +285,9 @@ func (w *Writer) insertBatch(rows []traceRow) error {
 		request_type, is_stream, cache_hit,
 		fallback_count, provider_attempts,
 		all_scores, cluster_probabilities,
-		input_text, output_text, input_messages, output_message
+		input_text, output_text, input_messages, output_message,
+		finish_reason, request_tools, response_tool_calls,
+		has_tool_calls, tool_calls_count, execution_timeline, tokens_per_s
 	)`)
 	if err != nil {
 		return err
@@ -275,7 +306,7 @@ func (w *Writer) insertBatch(rows []traceRow) error {
 		// Resolve request ID
 		requestID := m.RequestID
 		if requestID == "" {
-			requestID = "" // Let ClickHouse generate via DEFAULT
+			requestID = newRequestID()
 		}
 
 		// Resolve selected model
@@ -332,6 +363,24 @@ func (w *Writer) insertBatch(rows []traceRow) error {
 			reqType = "chat"
 		}
 
+		// Derived tool-call fields
+		var hasToolCalls uint8
+		if e.HasToolCalls {
+			hasToolCalls = 1
+		}
+		requestTools := e.RequestTools
+		if requestTools == "" {
+			requestTools = "[]"
+		}
+		responseToolCalls := e.ResponseToolCalls
+		if responseToolCalls == "" {
+			responseToolCalls = "[]"
+		}
+		executionTimeline := e.ExecutionTimeline
+		if executionTimeline == "" {
+			executionTimeline = "[]"
+		}
+
 		err := batch.Append(
 			requestID,
 			ts,
@@ -365,6 +414,13 @@ func (w *Writer) insertBatch(rows []traceRow) error {
 			e.OutputText,
 			e.InputMessages,
 			e.OutputMessage,
+			e.FinishReason,
+			requestTools,
+			responseToolCalls,
+			hasToolCalls,
+			uint16(clampInt(e.ToolCallsCount, 0, 65535)),
+			executionTimeline,
+			e.TokensPerS,
 		)
 		if err != nil {
 			return err

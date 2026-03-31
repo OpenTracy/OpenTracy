@@ -1,11 +1,10 @@
-import { Activity, BarChart2, Clock, Cpu, X } from 'lucide-react';
+import { Activity, Clock, Hash, Layers, Rocket, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-import LunarLogo from '@/assets/lunar-logo.png';
 import { CheckboxGroup } from './CheckboxGroup';
 import { RangeSlider } from './RangeSlider';
 import { DeploymentToggle } from './DeploymentToggle';
+import { ProviderIcon } from './ProviderIcon';
 import type { FilterState } from '../../hooks/UseAnalyticsFilters';
 
 interface FilterOptions {
@@ -44,34 +43,15 @@ export function AdvancedFiltersPanel({
   hasActiveFilters,
 }: AdvancedFiltersPanelProps) {
   return (
-    <div className="flex flex-col max-h-130">
-      <div className="flex items-center justify-between px-4 pt-4 pb-3">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Advanced Filters</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Refine your trace search</p>
-        </div>
-        {hasActiveFilters && (
-          <Button variant="ghost" size="sm" onClick={onClearAll} className="text-destructive">
-            <X className="size-3.5" />
-            Clear All
-          </Button>
-        )}
-      </div>
-
-      <Separator />
-
-      <ScrollArea className="flex-1">
-        <div className="p-4 space-y-3">
-          <DeploymentToggle
-            checked={showOnlyDeployments}
-            onChange={onToggleDeployments}
-            logo={LunarLogo}
-          />
+    <div className="flex flex-col max-h-112 overflow-hidden">
+      <ScrollArea className="flex-1 overflow-auto scrollbar-thin">
+        <div className="p-4 space-y-5">
+          <DeploymentToggle checked={showOnlyDeployments} onChange={onToggleDeployments} />
 
           {filterOptions.deployments.length > 0 && (
             <CheckboxGroup
               label="Deployments"
-              icon={Activity}
+              icon={Rocket}
               options={filterOptions.deployments}
               selected={filters.deployments}
               onToggle={(value) => onToggleArrayFilter('deployments', value)}
@@ -81,28 +61,30 @@ export function AdvancedFiltersPanel({
           {filterOptions.models.length > 0 && (
             <CheckboxGroup
               label="Models"
-              icon={Cpu}
+              icon={Layers}
               options={filterOptions.models}
               selected={filters.models}
               onToggle={(value) => onToggleArrayFilter('models', value)}
               formatLabel={(model) => model.split('/').pop() || model}
+              renderIcon={(model) => <ProviderIcon modelId={model} size={16} />}
             />
           )}
 
           {filterOptions.backends.length > 0 && (
             <CheckboxGroup
               label="Providers"
-              icon={BarChart2}
+              icon={Activity}
               options={filterOptions.backends}
               selected={filters.backends}
               onToggle={(value) => onToggleArrayFilter('backends', value)}
               formatLabel={(backend) => backend.charAt(0).toUpperCase() + backend.slice(1)}
+              renderIcon={(backend) => <ProviderIcon backend={backend} size={16} />}
             />
           )}
 
           <RangeSlider
             label="Total Tokens"
-            icon={Cpu}
+            icon={Hash}
             min={dataRanges.tokens.min}
             max={dataRanges.tokens.max}
             valueMin={filters.minTokens}
@@ -113,7 +95,7 @@ export function AdvancedFiltersPanel({
           />
 
           <RangeSlider
-            label="Latency (seconds)"
+            label="Latency"
             icon={Clock}
             min={dataRanges.latency.min}
             max={dataRanges.latency.max}
@@ -126,6 +108,20 @@ export function AdvancedFiltersPanel({
           />
         </div>
       </ScrollArea>
+
+      {hasActiveFilters && (
+        <div className="px-4 py-3 border-t border-border">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onClearAll}
+            className="w-full text-muted-foreground hover:text-foreground"
+          >
+            <X className="size-3.5" />
+            Clear all filters
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -488,6 +488,10 @@ export function MetricsProvider({ children }: { children: ReactNode }) {
       output_message: parseJsonField(sample.output_message),
       finish_reason: sample.finish_reason ?? null,
       request_tools: parseJsonField(sample.request_tools),
+      has_tool_calls: Boolean(sample.has_tool_calls),
+      tool_calls_count: sample.tool_calls_count ?? undefined,
+      tool_calls: sample.tool_calls ?? null,
+      execution_timeline: parseJsonField(sample.execution_timeline) ?? undefined,
     };
   }, []);
 

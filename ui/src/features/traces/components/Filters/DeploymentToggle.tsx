@@ -1,22 +1,20 @@
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import LunarLogo from '@/assets/lunar-logo.png';
 
 interface DeploymentToggleProps {
   checked: boolean;
   onChange: (checked: boolean) => void;
-  logo: string;
 }
 
-export function DeploymentToggle({ checked, onChange, logo }: DeploymentToggleProps) {
+export function DeploymentToggle({ checked, onChange }: DeploymentToggleProps) {
   return (
-    <div className="flex items-center justify-between rounded-md border bg-background p-3">
-      <div className="flex items-center gap-3">
-        <div className="flex size-8 items-center justify-center rounded-md bg-muted">
-          <img src={logo} alt="Logo" className="size-4 invert dark:invert-0" />
-        </div>
+    <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+      <div className="flex items-center gap-2.5">
+        <img src={LunarLogo} alt="Lunar" className="size-4 invert dark:invert-0" />
         <div>
-          <Label className="text-sm font-medium">Deployment Runs Only</Label>
-          <p className="text-xs text-muted-foreground">Show only deployed traces</p>
+          <Label className="text-sm font-medium text-foreground">Deployment runs only</Label>
+          <p className="text-xs text-muted-foreground">Filter to deployed traces</p>
         </div>
       </div>
       <Switch checked={checked} onCheckedChange={onChange} />

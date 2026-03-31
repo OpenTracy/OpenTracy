@@ -169,3 +169,71 @@ func TestPlainStringPartsReturnsTextPart(t *testing.T) {
 		t.Errorf("part = %+v, want text:'Just text'", parts[0])
 	}
 }
+
+func TestParseAssistantMessageWithSingularToolCall(t *testing.T) {
+	raw := `{
+		"role": "assistant",
+		"content": null,
+		"tool_call": {
+			"id": "call_123",
+			"type": "function",
+			"function": {
+				"name": "get_weather",
+				"arguments": "{\"city\":\"Lisbon\"}"
+			}
+		}
+	}`
+
+	var m Message
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatal(err)
+	}
+
+	if !m.HasToolCalls() {
+		t.Fatal("expected tool calls")
+	}
+	if len(m.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1", len(m.ToolCalls))
+	}
+	if m.ToolCalls[0].ID != "call_123" {
+		t.Errorf("id = %q, want call_123", m.ToolCalls[0].ID)
+	}
+	if m.ToolCalls[0].Function == nil || m.ToolCalls[0].Function.Name != "get_weather" {
+		t.Fatalf("unexpected function: %+v", m.ToolCalls[0].Function)
+	}
+	if m.TextContent() != "" {
+		t.Errorf("text = %q, want empty", m.TextContent())
+	}
+}
+
+func TestParseAssistantMessageWithLegacyFunctionCall(t *testing.T) {
+	raw := `{
+		"role": "assistant",
+		"content": null,
+		"function_call": {
+			"name": "get_weather",
+			"arguments": "{\"city\":\"Porto\"}"
+		}
+	}`
+
+	var m Message
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatal(err)
+	}
+
+	if !m.HasToolCalls() {
+		t.Fatal("expected tool calls")
+	}
+	if len(m.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1", len(m.ToolCalls))
+	}
+	if m.ToolCalls[0].Type != "function" {
+		t.Errorf("type = %q, want function", m.ToolCalls[0].Type)
+	}
+	if m.ToolCalls[0].Function == nil || m.ToolCalls[0].Function.Name != "get_weather" {
+		t.Fatalf("unexpected function: %+v", m.ToolCalls[0].Function)
+	}
+	if m.TextContent() != "" {
+		t.Errorf("text = %q, want empty", m.TextContent())
+	}
+}

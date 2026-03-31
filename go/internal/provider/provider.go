@@ -103,6 +103,56 @@ type Message struct {
 	Name       string          `json:"name,omitempty"`         // tool name for role="tool"
 }
 
+func (m *Message) UnmarshalJSON(data []byte) error {
+	type messageAlias struct {
+		Role         string          `json:"role"`
+		Content      json.RawMessage `json:"content"`
+		ToolCalls    []ToolCall      `json:"tool_calls,omitempty"`
+		ToolCall     *ToolCall       `json:"tool_call,omitempty"`
+		FunctionCall *FunctionCall   `json:"function_call,omitempty"`
+		ToolCallID   string          `json:"tool_call_id,omitempty"`
+		Name         string          `json:"name,omitempty"`
+	}
+
+	var aux messageAlias
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	m.Role = aux.Role
+	m.ToolCallID = aux.ToolCallID
+	m.Name = aux.Name
+
+	if len(aux.Content) == 0 || string(aux.Content) == "null" {
+		m.Content = json.RawMessage(`""`)
+	} else {
+		m.Content = aux.Content
+	}
+
+	if len(aux.ToolCalls) > 0 {
+		m.ToolCalls = aux.ToolCalls
+	} else if aux.ToolCall != nil {
+		m.ToolCalls = []ToolCall{*aux.ToolCall}
+	} else if aux.FunctionCall != nil {
+		m.ToolCalls = []ToolCall{{
+			Type:     "function",
+			Function: aux.FunctionCall,
+		}}
+	}
+
+	for i := range m.ToolCalls {
+		if m.ToolCalls[i].Type == "" {
+			if m.ToolCalls[i].Function != nil {
+				m.ToolCalls[i].Type = "function"
+			} else {
+				m.ToolCalls[i].Type = "function"
+			}
+		}
+	}
+
+	return nil
+}
+
 // TextContent extracts the text from content, whether it's a plain string
 // or a multimodal array of content parts.
 func (m Message) TextContent() string {

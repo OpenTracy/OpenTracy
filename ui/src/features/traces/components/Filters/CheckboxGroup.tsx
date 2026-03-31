@@ -6,12 +6,12 @@ import { FilterSection } from './FilterSection';
 
 interface CheckboxGroupProps {
   label: string;
-  icon: LucideIcon;
+  icon?: LucideIcon;
   options: string[];
   selected: string[];
   onToggle: (value: string) => void;
-  maxHeight?: string;
   formatLabel?: (value: string) => string;
+  renderIcon?: (value: string) => React.ReactNode;
 }
 
 export function CheckboxGroup({
@@ -21,22 +21,24 @@ export function CheckboxGroup({
   selected,
   onToggle,
   formatLabel = (v) => v,
+  renderIcon,
 }: CheckboxGroupProps) {
   if (options.length === 0) return null;
 
   return (
-    <FilterSection label={label} icon={icon} badge={selected.length}>
-      <ScrollArea className="max-h-32">
-        <div className="space-y-0.5 rounded-md border bg-background p-1">
+    <FilterSection label={label} icon={icon} count={selected.length}>
+      <ScrollArea className="max-h-36">
+        <div className="space-y-0.5">
           {options.map((option) => (
             <Label
               key={option}
-              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-normal cursor-pointer hover:bg-accent transition-colors"
+              className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm font-normal cursor-pointer hover:bg-accent transition-colors"
             >
               <Checkbox
                 checked={selected.includes(option)}
                 onCheckedChange={() => onToggle(option)}
               />
+              {renderIcon && <span className="shrink-0">{renderIcon(option)}</span>}
               <span className="truncate text-foreground" title={option}>
                 {formatLabel(option)}
               </span>
