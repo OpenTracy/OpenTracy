@@ -60,3 +60,36 @@ export function formatCost(cost: number): string {
 
   return `$${cost.toFixed(2)}`;
 }
+
+/**
+ * Format millisecond durations for display
+ * - Values < 1ms: shown as "<1ms"
+ * - Values < 1000ms: shown as integer ms (e.g., "450ms")
+ * - Values >= 1000ms: shown in seconds (e.g., "2.35s")
+ *
+ * @param ms - Time value in milliseconds
+ * @returns Formatted string with appropriate unit
+ */
+export function formatMs(ms: number): string {
+  if (ms < 1) return '<1ms';
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`;
+}
+
+/**
+ * Format an ISO date string as a compact date-time string with year
+ * e.g. "03/29/2026 14:05:12"
+ *
+ * @param dateStr - ISO date string
+ * @returns Formatted "MM/DD/YYYY HH:mm:ss" string
+ */
+export function formatFullDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleString('en-US', {
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}

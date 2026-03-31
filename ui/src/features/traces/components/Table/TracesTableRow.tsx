@@ -1,7 +1,6 @@
 import { ChevronDown, ChevronUp, Wrench } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { TableRow, TableCell } from '@/components/ui/table';
 import type { TraceItem } from '@/types/analyticsType';
 import { ModelCell } from './ModelCell';
@@ -12,8 +11,6 @@ interface TracesTableRowProps {
   trace: TraceItem;
   index: number;
   isExpanded: boolean;
-  isSelected?: boolean;
-  onToggleSelect?: (id: string, e: React.MouseEvent) => void;
   onToggleExpand: (id: string, e: React.MouseEvent) => void;
   onSelect: (trace: TraceItem) => void;
 }
@@ -28,28 +25,20 @@ function getOutputDisplay(trace: TraceItem): string {
 export function TracesTableRow({
   trace,
   isExpanded,
-  isSelected,
-  onToggleSelect,
   onToggleExpand,
   onSelect,
 }: TracesTableRowProps) {
   const formattedDate = trace.created_at ? new Date(trace.created_at).toLocaleString() : 'Unknown';
 
   const outputText = getOutputDisplay(trace);
-  const hasToolCalls = !!trace.output_message?.tool_calls?.length;
+  const hasToolCalls = !!trace.has_tool_calls || !!trace.output_message?.tool_calls?.length;
 
   return (
     <>
       <TableRow
         onClick={() => onSelect(trace)}
-        className={`cursor-pointer group/row transition-colors ${isSelected ? 'bg-primary/5' : ''}`}
+        className="cursor-pointer group/row transition-colors"
       >
-        <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
-          <Checkbox
-            checked={isSelected}
-            onCheckedChange={() => onToggleSelect?.(trace.id, {} as React.MouseEvent)}
-          />
-        </TableCell>
         <TableCell>
           <ModelCell modelId={trace.model_id} backend={trace.backend} provider={trace.provider} />
         </TableCell>
@@ -62,7 +51,9 @@ export function TracesTableRow({
           {hasToolCalls ? (
             <Badge variant="secondary">
               <Wrench className="size-3" />
-              {trace.output_message!.tool_calls!.map((tc) => tc.function.name).join(', ')}
+              {trace.output_message?.tool_calls
+                ? trace.output_message.tool_calls.map((tc) => tc.function.name).join(', ')
+                : `${trace.tool_calls_count ?? ''} tool call${(trace.tool_calls_count ?? 0) !== 1 ? 's' : ''}`}
             </Badge>
           ) : (
             <span className="max-w-xs truncate block text-sm text-muted-foreground">
@@ -103,7 +94,7 @@ export function TracesTableRow({
 
       {isExpanded && (
         <TableRow className="bg-muted hover:bg-muted">
-          <TableCell colSpan={9} className="p-4">
+          <TableCell colSpan={8} className="p-4">
             <TracesExpandedRow trace={trace} onViewDetails={() => onSelect(trace)} />
           </TableCell>
         </TableRow>

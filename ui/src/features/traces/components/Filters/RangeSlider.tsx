@@ -1,11 +1,10 @@
 import type { LucideIcon } from 'lucide-react';
 import { Slider } from '@/components/ui/slider';
-import { Badge } from '@/components/ui/badge';
 import { FilterSection } from './FilterSection';
 
 interface RangeSliderProps {
   label: string;
-  icon: LucideIcon;
+  icon?: LucideIcon;
   min: number;
   max: number;
   valueMin: number | null;
@@ -38,7 +37,7 @@ export function RangeSlider({
 
   return (
     <FilterSection label={label} icon={icon}>
-      <div className="space-y-3">
+      <div className="rounded-lg border border-border px-3 py-2.5 space-y-2.5">
         <Slider
           min={min}
           max={max}
@@ -47,12 +46,12 @@ export function RangeSlider({
           onValueChange={handleValueChange}
         />
         <div className="flex justify-between">
-          <Badge variant="outline" className="tabular-nums">
-            Min: {formatValue(currentMin)}
-          </Badge>
-          <Badge variant="outline" className="tabular-nums">
-            Max: {formatValue(currentMax)}
-          </Badge>
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {formatValue(currentMin)}
+          </span>
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {formatValue(currentMax)}
+          </span>
         </div>
       </div>
     </FilterSection>

@@ -26,6 +26,30 @@ export interface TraceItem {
   output_message: TraceOutputMessage | null;
   finish_reason: string | null;
   request_tools: TraceToolDef[] | null;
+  has_tool_calls?: boolean;
+  tool_calls_count?: number;
+  tool_calls?: string | null;
+  execution_timeline?: ExecutionTimelineStep[] | null;
+}
+
+export interface ExecutionTimelineStep {
+  step: number;
+  phase: 'inference' | 'tool_execution' | 'preparation';
+  started_at: string;
+  completed_at: string;
+  duration_ms: number;
+  status: 'completed' | 'failed' | 'pending';
+  provider: string | null;
+  model: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  ttft_ms: number | null;
+  tool_name: string | null;
+  tool_call_id: string | null;
+  tool_input: Record<string, unknown> | null;
+  tool_output: string | null;
+  tool_error: string | null;
+  metadata: Record<string, unknown> | null;
 }
 
 export interface TraceToolCall {
@@ -43,12 +67,16 @@ export interface TraceMessage {
   name?: string;
   tool_calls?: TraceToolCall[];
   tool_call_id?: string;
+  created_at?: string;
+  timestamp?: string;
 }
 
 export interface TraceOutputMessage {
   role: string;
   content?: string | null;
   tool_calls?: TraceToolCall[];
+  created_at?: string;
+  timestamp?: string;
 }
 
 export interface TraceToolDef {
