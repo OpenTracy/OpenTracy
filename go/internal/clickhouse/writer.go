@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"crypto/rand"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -24,6 +25,14 @@ func clampInt(v, min, max int) int {
 		return max
 	}
 	return v
+}
+
+func newRequestID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("trace-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("trace-%x", b)
 }
 
 // TraceExtra carries routing-specific fields not in RequestMetrics.
@@ -297,7 +306,7 @@ func (w *Writer) insertBatch(rows []traceRow) error {
 		// Resolve request ID
 		requestID := m.RequestID
 		if requestID == "" {
-			requestID = "" // Let ClickHouse generate via DEFAULT
+			requestID = newRequestID()
 		}
 
 		// Resolve selected model

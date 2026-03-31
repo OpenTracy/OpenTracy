@@ -558,7 +558,24 @@ def query_analytics(
 
     trace_sql = f"""
         SELECT
-            if(request_id = '', generateUUIDv4(), request_id) AS rid,
+            if(
+                request_id = '',
+                concat(
+                    'legacy-',
+                    lower(hex(MD5(concat(
+                        toString(timestamp), '|',
+                        selected_model, '|',
+                        provider, '|',
+                        toString(tokens_in), '|',
+                        toString(tokens_out), '|',
+                        toString(latency_ms), '|',
+                        toString(is_stream), '|',
+                        request_type, '|',
+                        toString(total_cost_usd)
+                    ))))
+                ),
+                request_id
+            ) AS rid,
             selected_model, provider, timestamp,
             latency_ms / 1000.0, ttft_ms / 1000.0,
             tokens_in, tokens_out, total_cost_usd,
@@ -579,6 +596,82 @@ def query_analytics(
         LIMIT {{tlimit:UInt32}} OFFSET {{toffset:UInt32}}
     """
     r = client.query(trace_sql, parameters=trace_params)
+    def _extract_text_from_message_content(content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    if item.get("type") == "text" and isinstance(item.get("text"), str):
+                        parts.append(item["text"])
+                    elif isinstance(item.get("content"), str):
+                        parts.append(item["content"])
+            return "\n".join(p for p in parts if p)
+        if isinstance(content, dict):
+            for key in ("text", "content"):
+                val = content.get(key)
+                if isinstance(val, str):
+                    return val
+        return ""
+
+    def _fallback_input_text(input_messages: Any) -> str:
+        if not isinstance(input_messages, list):
+            return ""
+        for msg in reversed(input_messages):
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                return _extract_text_from_message_content(msg.get("content"))
+        return ""
+
+    def _fallback_output_text(output_message: Any) -> str:
+        if not isinstance(output_message, dict):
+            return ""
+        return _extract_text_from_message_content(output_message.get("content"))
+
+    def _fallback_timeline(
+        created_at: Any,
+        latency_s: float,
+        ttft_s: float,
+        is_error: bool,
+        provider: str,
+        model_id: str,
+        tokens_in: int,
+        tokens_out: int,
+    ) -> list[dict[str, Any]]:
+        if latency_s <= 0:
+            return []
+        try:
+            started = datetime.fromisoformat(str(created_at).replace(" ", "T"))
+        except Exception:
+            started = datetime.now(timezone.utc)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        duration_ms = max(latency_s * 1000.0, 0.0)
+        completed = started + timedelta(milliseconds=duration_ms)
+        ttft_ms = max(ttft_s * 1000.0, 0.0)
+
+        return [{
+            "step": 1,
+            "phase": "inference",
+            "started_at": started.isoformat(),
+            "completed_at": completed.isoformat(),
+            "duration_ms": round(duration_ms, 3),
+            "status": "failed" if is_error else "completed",
+            "provider": provider or None,
+            "model": model_id or None,
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "ttft_ms": round(ttft_ms, 3) if ttft_ms > 0 else None,
+            "tool_name": None,
+            "tool_call_id": None,
+            "tool_input": None,
+            "tool_output": None,
+            "tool_error": None,
+            "metadata": {"source": "fallback"},
+        }]
+
     raw_sample = []
     for row in r.result_rows:
         input_text = row[17] or ""
@@ -611,21 +704,49 @@ def query_analytics(
         execution_timeline_raw = row[26] if len(row) > 26 else "[]"
         tokens_per_s = _safe(row[27]) if len(row) > 27 else 0.0
 
-        request_tools = None
+        request_tools = []
         try:
-            request_tools = json.loads(request_tools_raw) if request_tools_raw else None
+            request_tools = json.loads(request_tools_raw) if request_tools_raw else []
         except Exception:
-            pass
+            request_tools = []
 
         response_tool_calls_str = response_tool_calls_raw or None
 
-        execution_timeline = None
+        execution_timeline = []
         try:
-            execution_timeline = json.loads(execution_timeline_raw) if execution_timeline_raw else None
+            execution_timeline = json.loads(execution_timeline_raw) if execution_timeline_raw else []
         except Exception:
-            pass
+            execution_timeline = []
 
         total_tokens = int(row[6]) + int(row[7])
+        latency_s = round(_safe(row[4]), 4)
+        ttft_s = round(_safe(row[5]), 4)
+
+        if not input_text and input_messages is not None:
+            input_text = _fallback_input_text(input_messages)
+        if not output_text and output_message is not None:
+            output_text = _fallback_output_text(output_message)
+
+        if (not execution_timeline) and latency_s > 0:
+            execution_timeline = _fallback_timeline(
+                created_at=row[3],
+                latency_s=latency_s,
+                ttft_s=ttft_s,
+                is_error=bool(row[9]),
+                provider=row[2],
+                model_id=row[1],
+                tokens_in=int(row[6]),
+                tokens_out=int(row[7]),
+            )
+
+        if tool_calls_count <= 0 and isinstance(output_message, dict):
+            tc = output_message.get("tool_calls")
+            if isinstance(tc, list):
+                tool_calls_count = len(tc)
+                has_tool_calls = tool_calls_count > 0
+
+        if tokens_per_s <= 0 and total_tokens > 0 and latency_s > 0:
+            tokens_per_s = total_tokens / latency_s
 
         raw_sample.append({
             "event_id": str(row[0]),
@@ -635,8 +756,8 @@ def query_analytics(
             "provider": row[2],
             "endpoint": row[12] or "chat",
             "created_at": str(row[3]),
-            "latency_s": round(_safe(row[4]), 4),
-            "ttft_s": round(_safe(row[5]), 4),
+            "latency_s": latency_s,
+            "ttft_s": ttft_s,
             "input_tokens": int(row[6]),
             "output_tokens": int(row[7]),
             "total_tokens": total_tokens,
