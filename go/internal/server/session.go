@@ -47,6 +47,7 @@ type ToolCallSession struct {
 
 	CreatedAt   time.Time
 	LastTouchAt time.Time
+	Finalized   bool
 }
 
 func (s *ToolCallSession) nextStep() int {
@@ -134,6 +135,16 @@ func (s *ToolCallSession) Touch() {
 	s.mu.Lock()
 	s.LastTouchAt = time.Now()
 	s.mu.Unlock()
+}
+
+func (s *ToolCallSession) TryFinalize() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Finalized {
+		return false
+	}
+	s.Finalized = true
+	return true
 }
 
 func (s *ToolCallSession) ToolCallCount() int {
@@ -248,16 +259,35 @@ func (st *SessionStore) gc() {
 		select {
 		case <-ticker.C:
 			cutoff := time.Now().Add(-sessionTTL)
-			st.mu.Lock()
+
+			st.mu.RLock()
+			type sessionEntry struct {
+				id string
+				s  *ToolCallSession
+			}
+			entries := make([]sessionEntry, 0, len(st.sessions))
 			for id, s := range st.sessions {
-				s.mu.Lock()
-				expired := s.LastTouchAt.Before(cutoff)
-				s.mu.Unlock()
+				entries = append(entries, sessionEntry{id: id, s: s})
+			}
+			st.mu.RUnlock()
+
+			expiredIDs := make([]string, 0)
+			for _, entry := range entries {
+				entry.s.mu.Lock()
+				expired := entry.s.LastTouchAt.Before(cutoff)
+				entry.s.mu.Unlock()
 				if expired {
-					delete(st.sessions, id)
+					expiredIDs = append(expiredIDs, entry.id)
 				}
 			}
-			st.mu.Unlock()
+
+			if len(expiredIDs) > 0 {
+				st.mu.Lock()
+				for _, id := range expiredIDs {
+					delete(st.sessions, id)
+				}
+				st.mu.Unlock()
+			}
 		case <-st.stopGC:
 			return
 		}

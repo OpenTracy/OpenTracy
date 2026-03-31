@@ -910,7 +910,11 @@ func (s *Server) handleNonStreamingProxy(
 			Model:         req.Model,
 		}
 		s.Metrics.Record(em)
-		if !isInternal {
+		persistErrorTrace := true
+		if isExistingSession && session != nil {
+			persistErrorTrace = session.TryFinalize()
+		}
+		if !isInternal && persistErrorTrace {
 			timelineJSON := "[]"
 			if session != nil {
 				snap := session.Snapshot()
@@ -1002,6 +1006,12 @@ func (s *Server) handleNonStreamingProxy(
 			session.Touch()
 			w.Header().Set("X-Lunar-Session-Id", sessionID)
 		} else {
+			persistFinalTrace := true
+			if isExistingSession && session != nil {
+				persistFinalTrace = session.TryFinalize()
+			}
+
+			if persistFinalTrace {
 			// Take a consistent snapshot of session state for ClickHouse write.
 			var snap SessionSnapshot
 			if session != nil {
@@ -1110,6 +1120,7 @@ func (s *Server) handleNonStreamingProxy(
 			if isExistingSession {
 				s.Sessions.Delete(sessionID)
 				w.Header().Set("X-Lunar-Session-Done", "true")
+			}
 			}
 		}
 	}
