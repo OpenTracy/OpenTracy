@@ -565,7 +565,14 @@ def query_analytics(
             is_error, is_stream, error_category,
             request_type, cache_hit, cluster_id,
             expected_error, cost_adjusted_score,
-            input_text, output_text, input_messages, output_message
+            input_text, output_text, input_messages, output_message,
+            if(isNull(finish_reason), '', finish_reason)            AS finish_reason,
+            if(isNull(request_tools), '[]', request_tools)          AS request_tools,
+            if(isNull(response_tool_calls), '[]', response_tool_calls) AS response_tool_calls,
+            if(isNull(has_tool_calls), 0, has_tool_calls)           AS has_tool_calls,
+            if(isNull(tool_calls_count), 0, tool_calls_count)       AS tool_calls_count,
+            if(isNull(execution_timeline), '[]', execution_timeline) AS execution_timeline,
+            if(isNull(tokens_per_s), 0, tokens_per_s)               AS tokens_per_s
         FROM llm_traces
         {where}
         ORDER BY timestamp DESC
@@ -595,21 +602,49 @@ def query_analytics(
             except Exception:
                 output_message = None
 
+        # Parse tool-related JSON fields (columns 21-26, migration 006)
+        finish_reason = row[21] if len(row) > 21 else ""
+        request_tools_raw = row[22] if len(row) > 22 else "[]"
+        response_tool_calls_raw = row[23] if len(row) > 23 else "[]"
+        has_tool_calls = bool(row[24]) if len(row) > 24 else False
+        tool_calls_count = int(row[25]) if len(row) > 25 else 0
+        execution_timeline_raw = row[26] if len(row) > 26 else "[]"
+        tokens_per_s = _safe(row[27]) if len(row) > 27 else 0.0
+
+        request_tools = None
+        try:
+            request_tools = json.loads(request_tools_raw) if request_tools_raw else None
+        except Exception:
+            pass
+
+        response_tool_calls_str = response_tool_calls_raw or None
+
+        execution_timeline = None
+        try:
+            execution_timeline = json.loads(execution_timeline_raw) if execution_timeline_raw else None
+        except Exception:
+            pass
+
+        total_tokens = int(row[6]) + int(row[7])
+
         raw_sample.append({
             "event_id": str(row[0]),
             "id": str(row[0]),
             "model_id": row[1],
             "backend": row[2],
+            "provider": row[2],
             "endpoint": row[12] or "chat",
             "created_at": str(row[3]),
             "latency_s": round(_safe(row[4]), 4),
             "ttft_s": round(_safe(row[5]), 4),
             "input_tokens": int(row[6]),
             "output_tokens": int(row[7]),
+            "total_tokens": total_tokens,
+            "tokens_per_s": round(tokens_per_s, 2),
             "total_cost_usd": round(_safe(row[8]), 8),
             "cost_usd": round(_safe(row[8]), 8),
             "is_success": not bool(row[9]),
-            "success": not bool(row[9]),
+            "status": "Error" if bool(row[9]) else "Success",
             "is_stream": bool(row[10]),
             "input_preview": input_text[:200] if input_text else "",
             "output_preview": output_text[:200] if output_text else "",
@@ -619,6 +654,13 @@ def query_analytics(
             "history": None,
             "input_messages": input_messages,
             "output_message": output_message,
+            # New fields (migration 006)
+            "finish_reason": finish_reason or None,
+            "request_tools": request_tools,
+            "has_tool_calls": has_tool_calls,
+            "tool_calls_count": tool_calls_count,
+            "tool_calls": response_tool_calls_str,
+            "execution_timeline": execution_timeline,
         })
 
     # Total trace count

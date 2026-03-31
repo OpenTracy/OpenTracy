@@ -37,6 +37,17 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/traces", s.handleIngestTraces)
 	mux.HandleFunc("POST /v1/datasets/{runId}/{clusterId}/traces", s.handleAddTracesToDataset)
 	mux.HandleFunc("POST /v1/datasets/{runId}/{clusterId}/assign", s.handleAssignTracesToDataset)
+	mux.HandleFunc("GET /v1/tools/builtin", s.handleListBuiltinTools)
+}
+
+// --- Builtin Tools ---
+
+func (s *Server) handleListBuiltinTools(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tools":       s.BuiltinTools.Definitions(),
+		"tool_names":  s.BuiltinTools.ToolNames(),
+		"description": "These tools are executed automatically by the gateway when X-Lunar-Agentic: true. All other tools in the request are passed through to the model and returned to the client for execution (standard OpenAI behavior).",
+	})
 }
 
 // --- Health ---
@@ -817,12 +828,25 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if req.Stream {
 		s.handleStreamingProxy(w, r, prov, &req, start, routingMs, isInternal)
 	} else {
-		s.handleNonStreamingProxy(w, prov, &req, start, routingMs, isInternal)
+		s.handleNonStreamingProxy(w, r, prov, &req, start, routingMs, isInternal)
 	}
 }
 
+// handleNonStreamingProxy handles a single non-streaming chat completion turn.
+//
+// It follows the standard OpenAI tool-call pattern:
+//   - The gateway NEVER executes tools itself.
+//   - If the model returns finish_reason="tool_calls", the response is returned
+//     to the client AS-IS (with tool_calls field), along with an X-Lunar-Session-Id
+//     header so the client can correlate follow-up turns.
+//   - When the client sends back tool results, it includes X-Lunar-Session-Id so
+//     the gateway can accumulate the full ExecutionTimeline across turns.
+//   - When the conversation ends (stop/length/…), the session is finalized, the
+//     complete aggregated trace (with full timeline) is written to ClickHouse,
+//     and X-Lunar-Session-Done: true is set on the final response.
 func (s *Server) handleNonStreamingProxy(
 	w http.ResponseWriter,
+	r *http.Request,
 	prov provider.Provider,
 	req *provider.ChatRequest,
 	start time.Time,
@@ -830,10 +854,59 @@ func (s *Server) handleNonStreamingProxy(
 	isInternal bool,
 ) {
 	ctx := context.Background()
+	requestArrivedAt := start
+
+	// --- Session look-up ---
+	sessionID := r.Header.Get("X-Lunar-Session-Id")
+	var session *ToolCallSession
+	var isExistingSession bool
+
+	if sessionID != "" && !isInternal {
+		session = s.Sessions.Get(sessionID)
+		if session != nil {
+			isExistingSession = true
+			// Record tool_execution steps for role="tool" messages added by the client.
+			session.AddToolResultSteps(req.Messages, session.LastMessageCount, requestArrivedAt)
+			session.Touch()
+		}
+	}
+
+	// If no active session yet (first turn), create a local one we'll persist only
+	// if the model turns out to return tool_calls.
+	if session == nil && !isInternal {
+		session = &ToolCallSession{
+			OriginalMessages: req.Messages,
+			CreatedAt:        requestArrivedAt,
+			LastTouchAt:      requestArrivedAt,
+		}
+		if len(req.Tools) > 0 {
+			if b, err := json.Marshal(req.Tools); err == nil {
+				session.RequestToolsJSON = string(b)
+			}
+		}
+	}
+
+	// --- Inference step start ---
+	var inferStep *ExecutionTimelineStep
+	if session != nil {
+		provName := prov.Name()
+		mn := req.Model
+		inferStep = session.AddInferenceStep(provName, mn, requestArrivedAt)
+	}
+
+	// --- Call upstream model ---
 	resp, err := prov.Send(ctx, req)
 	latencyMs := float64(time.Since(start).Microseconds()) / 1000.0
+	inferCompletedAt := time.Now()
 
 	if err != nil {
+		if inferStep != nil {
+			errMsg := err.Error()
+			inferStep.Status = "failed"
+			inferStep.ToolError = &errMsg
+			inferStep.CompletedAt = inferCompletedAt.UTC().Format(time.RFC3339Nano)
+			inferStep.DurationMs = latencyMs
+		}
 		em := metrics.RequestMetrics{
 			LatencyMs:     latencyMs,
 			RoutingMs:     routingMs,
@@ -845,26 +918,65 @@ func (s *Server) handleNonStreamingProxy(
 		}
 		s.Metrics.Record(em)
 		if !isInternal {
-			s.CHWriter.Record(em, chw.TraceExtra{RequestType: "chat"})
+			timelineJSON := "[]"
+			if session != nil {
+				if b, e := json.Marshal(session.Timeline); e == nil {
+					timelineJSON = string(b)
+				}
+			}
+			s.CHWriter.Record(em, chw.TraceExtra{
+				RequestType:       "chat",
+				InputText:         lastUserMessage(req.Messages),
+				ExecutionTimeline: timelineJSON,
+			})
+			if isExistingSession {
+				s.Sessions.Delete(sessionID)
+			}
 		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	// Record metrics with cost
+	// --- Token & cost accounting ---
 	tokensIn, tokensOut, totalTokens := 0, 0, 0
 	if resp.Usage != nil {
 		tokensIn = resp.Usage.PromptTokens
 		tokensOut = resp.Usage.CompletionTokens
 		totalTokens = resp.Usage.TotalTokens
+		if inferStep != nil {
+			inferStep.TokensIn = &tokensIn
+			inferStep.TokensOut = &tokensOut
+		}
 	}
-
 	var inputCost, outputCost, totalCost float64
 	pricing := provider.GetPricing(req.Model)
 	if pricing != nil {
 		inputCost, outputCost, totalCost = pricing.ComputeCost(tokensIn, tokensOut)
 	}
 
+	// Complete inference step
+	if inferStep != nil {
+		inferStep.Status = "completed"
+		inferStep.CompletedAt = inferCompletedAt.UTC().Format(time.RFC3339Nano)
+		inferStep.DurationMs = latencyMs
+		ttft := latencyMs
+		inferStep.TTFTMs = &ttft
+	}
+
+	// Accumulate per-turn metrics
+	if session != nil {
+		session.AllTokensIn += tokensIn
+		session.AllTokensOut += tokensOut
+		session.AllInputCost += inputCost
+		session.AllOutputCost += outputCost
+		session.AllTotalCost += totalCost
+		session.InferenceTurns++
+		session.LastInferenceCompletedAt = inferCompletedAt
+		// Store how many messages were in this request so next turn can identify new ones.
+		session.LastMessageCount = len(req.Messages)
+	}
+
+	// Record in-memory metrics for the current turn
 	sm := metrics.RequestMetrics{
 		LatencyMs:     latencyMs,
 		TTFTMs:        latencyMs,
@@ -881,44 +993,150 @@ func (s *Server) handleNonStreamingProxy(
 	}
 	s.Metrics.Record(sm)
 
-	// Extract content for trace storage
-	inputText := lastUserMessage(req.Messages)
-	var outputText, outputMsg string
-	if len(resp.Choices) > 0 && resp.Choices[0].Message != nil {
-		outputText = resp.Choices[0].Message.TextContent()
-		if b, err := json.Marshal(resp.Choices[0].Message); err == nil {
-			outputMsg = string(b)
+	// Determine finish_reason
+	finishReason := ""
+	var responseToolCalls []provider.ToolCall
+	if len(resp.Choices) > 0 {
+		if resp.Choices[0].FinishReason != nil {
+			finishReason = *resp.Choices[0].FinishReason
+		}
+		if resp.Choices[0].Message != nil {
+			responseToolCalls = resp.Choices[0].Message.ToolCalls
 		}
 	}
-	inputMsgsJSON := ""
-	if b, err := json.Marshal(req.Messages); err == nil {
-		inputMsgsJSON = string(b)
-	}
+	isToolCallsTurn := finishReason == "tool_calls" && len(responseToolCalls) > 0
 
+	// ClickHouse trace
 	if !isInternal {
-		s.CHWriter.Record(sm, chw.TraceExtra{
-			RequestType:   "chat",
-			InputText:     inputText,
-			OutputText:    outputText,
-			InputMessages: inputMsgsJSON,
-			OutputMessage: outputMsg,
-		})
+		if isToolCallsTurn {
+			if !isExistingSession {
+				sessionID = GenerateSessionID()
+				session.ID = sessionID
+				s.Sessions.New(sessionID) // register a slot
+				s.Sessions.mu.Lock()
+				s.Sessions.sessions[sessionID] = session
+				s.Sessions.mu.Unlock()
+			}
+			session.Touch()
+			w.Header().Set("X-Lunar-Session-Id", sessionID)
+		} else {
+			inputMsgsJSON := ""
+			var origMsgs []provider.Message
+			if session != nil && len(session.OriginalMessages) > 0 {
+				origMsgs = session.OriginalMessages
+			} else {
+				origMsgs = req.Messages
+			}
+			if b, e := json.Marshal(origMsgs); e == nil {
+				inputMsgsJSON = string(b)
+			}
+
+			inputText := lastUserMessage(origMsgs)
+			var outputText, outputMsg string
+			if len(resp.Choices) > 0 && resp.Choices[0].Message != nil {
+				outputText = resp.Choices[0].Message.TextContent()
+				if b, e := json.Marshal(resp.Choices[0].Message); e == nil {
+					outputMsg = string(b)
+				}
+			}
+
+			reqToolsJSON := "[]"
+			if session != nil && session.RequestToolsJSON != "" {
+				reqToolsJSON = session.RequestToolsJSON
+			} else if len(req.Tools) > 0 {
+				if b, e := json.Marshal(req.Tools); e == nil {
+					reqToolsJSON = string(b)
+				}
+			}
+
+			responseToolCallsJSON := "[]"
+			if len(responseToolCalls) > 0 {
+				if b, e := json.Marshal(responseToolCalls); e == nil {
+					responseToolCallsJSON = string(b)
+				}
+			}
+
+			timelineJSON := "[]"
+			hasTC := false
+			tcCount := 0
+			if session != nil {
+				if b, e := json.Marshal(session.Timeline); e == nil {
+					timelineJSON = string(b)
+				}
+				hasTC = session.HasToolCalls()
+				tcCount = session.ToolCallCount()
+			}
+
+			// For multi-turn, use aggregated totals; for single-turn, use this turn's values.
+			finalTokIn, finalTokOut := tokensIn, tokensOut
+			finalInputCost, finalOutputCost, finalTotalCost := inputCost, outputCost, totalCost
+			finalLatencyMs := latencyMs
+			reqType := "chat"
+			if session != nil && session.InferenceTurns > 1 {
+				finalTokIn = session.AllTokensIn
+				finalTokOut = session.AllTokensOut
+				finalInputCost = session.AllInputCost
+				finalOutputCost = session.AllOutputCost
+				finalTotalCost = session.AllTotalCost
+				finalLatencyMs = float64(time.Since(session.CreatedAt).Microseconds()) / 1000.0
+				reqType = "chat_multiturn"
+			}
+			finalTotalTok := finalTokIn + finalTokOut
+			tokensPerS := 0.0
+			if finalLatencyMs > 0 && finalTotalTok > 0 {
+				tokensPerS = float64(finalTotalTok) / (finalLatencyMs / 1000.0)
+			}
+
+			finalSM := metrics.RequestMetrics{
+				LatencyMs:     finalLatencyMs,
+				TTFTMs:        latencyMs,
+				RoutingMs:     routingMs,
+				TokensIn:      finalTokIn,
+				TokensOut:     finalTokOut,
+				TotalTokens:   finalTotalTok,
+				InputCostUSD:  finalInputCost,
+				OutputCostUSD: finalOutputCost,
+				TotalCostUSD:  finalTotalCost,
+				Error:         0,
+				Provider:      prov.Name(),
+				Model:         req.Model,
+			}
+
+			s.CHWriter.Record(finalSM, chw.TraceExtra{
+				RequestType:       reqType,
+				InputText:         inputText,
+				OutputText:        outputText,
+				InputMessages:     inputMsgsJSON,
+				OutputMessage:     outputMsg,
+				FinishReason:      finishReason,
+				RequestTools:      reqToolsJSON,
+				ResponseToolCalls: responseToolCallsJSON,
+				HasToolCalls:      hasTC,
+				ToolCallsCount:    tcCount,
+				ExecutionTimeline: timelineJSON,
+				TokensPerS:        tokensPerS,
+			})
+
+			if isExistingSession {
+				s.Sessions.Delete(sessionID)
+				w.Header().Set("X-Lunar-Session-Done", "true")
+			}
+		}
 	}
 
-	// Inject cost into response
+	// Build response
 	type costAwareResponse struct {
 		*provider.ChatResponse
 		Cost *costInfo `json:"cost,omitempty"`
 	}
 	var costField *costInfo
-	if pricing != nil {
+	if totalCost > 0 {
 		costField = &costInfo{
 			InputCostUSD:  inputCost,
 			OutputCostUSD: outputCost,
 			TotalCostUSD:  totalCost,
 		}
 	}
-
 	writeJSON(w, http.StatusOK, costAwareResponse{
 		ChatResponse: resp,
 		Cost:         costField,

@@ -22,12 +22,14 @@ import (
 
 // Server is the Lunar Router HTTP server.
 type Server struct {
-	Router    *router.Router
-	Registry  *weights.Registry
-	Providers *provider.Registry
-	Metrics   *metrics.Collector
-	CHWriter  *clickhouse.Writer
-	Addr      string
+	Router       *router.Router
+	Registry     *weights.Registry
+	Providers    *provider.Registry
+	Metrics      *metrics.Collector
+	CHWriter     *clickhouse.Writer
+	BuiltinTools *BuiltinToolRegistry
+	Sessions     *SessionStore
+	Addr         string
 
 	httpServer *http.Server
 }
@@ -35,11 +37,13 @@ type Server struct {
 // New creates a new Server.
 func New(r *router.Router, reg *weights.Registry, providers *provider.Registry, cfg *config.Config) *Server {
 	s := &Server{
-		Router:    r,
-		Registry:  reg,
-		Providers: providers,
-		Metrics:   metrics.NewCollector(10000),
-		Addr:      fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
+		Router:       r,
+		Registry:     reg,
+		Providers:    providers,
+		Metrics:      metrics.NewCollector(10000),
+		BuiltinTools: NewBuiltinToolRegistry(),
+		Sessions:     NewSessionStore(),
+		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 	}
 
 	// Initialize ClickHouse writer if enabled
