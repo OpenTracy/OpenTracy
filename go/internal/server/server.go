@@ -27,7 +27,6 @@ type Server struct {
 	Providers    *provider.Registry
 	Metrics      *metrics.Collector
 	CHWriter     *clickhouse.Writer
-	BuiltinTools *BuiltinToolRegistry
 	Sessions     *SessionStore
 	Addr         string
 
@@ -41,7 +40,6 @@ func New(r *router.Router, reg *weights.Registry, providers *provider.Registry, 
 		Registry:     reg,
 		Providers:    providers,
 		Metrics:      metrics.NewCollector(10000),
-		BuiltinTools: NewBuiltinToolRegistry(),
 		Sessions:     NewSessionStore(),
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 	}

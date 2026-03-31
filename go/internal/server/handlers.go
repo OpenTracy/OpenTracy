@@ -37,17 +37,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/traces", s.handleIngestTraces)
 	mux.HandleFunc("POST /v1/datasets/{runId}/{clusterId}/traces", s.handleAddTracesToDataset)
 	mux.HandleFunc("POST /v1/datasets/{runId}/{clusterId}/assign", s.handleAssignTracesToDataset)
-	mux.HandleFunc("GET /v1/tools/builtin", s.handleListBuiltinTools)
-}
-
-// --- Builtin Tools ---
-
-func (s *Server) handleListBuiltinTools(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"tools":       s.BuiltinTools.Definitions(),
-		"tool_names":  s.BuiltinTools.ToolNames(),
-		"description": "These tools are executed automatically by the gateway when X-Lunar-Agentic: true. All other tools in the request are passed through to the model and returned to the client for execution (standard OpenAI behavior).",
-	})
 }
 
 // --- Health ---
