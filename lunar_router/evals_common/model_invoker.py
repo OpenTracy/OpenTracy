@@ -1,0 +1,124 @@
+"""
+Model Invoker — calls the Go engine at LUNAR_ENGINE_URL/v1/chat/completions.
+
+Replaces the old evaluations-api ModelInvoker that called ROUTER_BASE_URL.
+Locally, the Go engine runs on port 8080.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import time
+import urllib.request
+import urllib.error
+from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
+
+ENGINE_URL = os.environ.get("LUNAR_ENGINE_URL", "http://localhost:8080")
+
+
+class ModelInvoker:
+    """Invoke an LLM via the Go engine's /v1/chat/completions endpoint."""
+
+    def __init__(self, base_url: str | None = None):
+        self.base_url = (base_url or ENGINE_URL).rstrip("/")
+
+    def _build_headers(self, authorization: str | None = None) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if authorization:
+            if authorization.startswith("sk_") or authorization.startswith("pk_"):
+                headers["x-api-key"] = authorization
+            elif authorization.startswith("Bearer "):
+                headers["Authorization"] = authorization
+            else:
+                headers["Authorization"] = f"Bearer {authorization}"
+        return headers
+
+    def invoke(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        authorization: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> dict[str, Any]:
+        """
+        Invoke a model with a single user prompt.
+
+        Returns:
+            {"output": str, "latency": float, "cost": float, "usage": dict}
+        """
+        messages = [{"role": "user", "content": prompt}]
+        return self.invoke_with_messages(
+            model, messages,
+            authorization=authorization,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    def invoke_with_messages(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        *,
+        authorization: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> dict[str, Any]:
+        """
+        Invoke a model with structured messages.
+
+        Returns:
+            {"output": str, "latency": float, "cost": float, "usage": dict}
+        """
+        url = f"{self.base_url}/v1/chat/completions"
+        headers = self._build_headers(authorization)
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+
+        start = time.time()
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8", errors="replace")
+            logger.error("Model invocation failed: %s %s — %s", e.code, e.reason, error_body)
+            raise RuntimeError(f"Model invocation failed ({e.code}): {error_body}") from e
+        except Exception as e:
+            logger.error("Model invocation error: %s", e)
+            raise
+
+        latency = time.time() - start
+
+        # Extract output
+        output = ""
+        choices = body.get("choices", [])
+        if choices:
+            message = choices[0].get("message", {})
+            output = message.get("content", "")
+
+        # Extract usage / cost
+        usage = body.get("usage", {})
+        cost = 0.0
+        if "cost" in body:
+            cost = float(body["cost"])
+        elif "total_cost" in usage:
+            cost = float(usage["total_cost"])
+
+        return {
+            "output": output,
+            "latency": latency,
+            "cost": cost,
+            "usage": usage,
+        }

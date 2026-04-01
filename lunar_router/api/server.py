@@ -53,9 +53,77 @@ async def lifespan(app: FastAPI):
         logger.info("Pushed stored API keys to Go engine")
     except Exception as e:
         logger.debug(f"Could not push keys to engine on startup: {e}")
+
+    # Run datasets ClickHouse migration
+    try:
+        _run_datasets_migration()
+    except Exception as e:
+        logger.warning(f"Datasets migration skipped: {e}")
+
+    # Run evaluation tables migration
+    try:
+        _run_eval_migration()
+    except Exception as e:
+        logger.warning(f"Eval tables migration skipped: {e}")
+
+    # Seed built-in evaluation metrics
+    try:
+        from ..metrics.repository import seed_builtin_metrics
+        seed_builtin_metrics()
+        logger.info("Built-in evaluation metrics seeded")
+    except Exception as e:
+        logger.warning(f"Builtin metrics seeding skipped: {e}")
+
     yield
     # Shutdown
     logger.info("UniRoute API shutting down...")
+
+
+def _run_eval_migration():
+    """Execute the eval tables ClickHouse migration if not yet applied."""
+    import pathlib
+    from ..storage.clickhouse_client import get_client
+
+    client = get_client()
+    if client is None:
+        return
+    migration_file = pathlib.Path(__file__).resolve().parents[2] / "clickhouse" / "008_create_eval_tables.sql"
+    if not migration_file.exists():
+        logger.debug("Eval migration file not found: %s", migration_file)
+        return
+    sql = migration_file.read_text()
+    for statement in sql.split(";"):
+        stmt = statement.strip()
+        if stmt:
+            try:
+                client.command(stmt)
+            except Exception as e:
+                if "already exists" not in str(e).lower():
+                    logger.warning("Eval migration statement failed: %s — %s", stmt[:80], e)
+
+
+def _run_datasets_migration():
+    """Execute the datasets ClickHouse migration if not yet applied."""
+    import pathlib
+    from ..storage.clickhouse_client import get_client
+
+    client = get_client()
+    if client is None:
+        return
+    migration_file = pathlib.Path(__file__).resolve().parents[2] / "clickhouse" / "007_create_eval_datasets.sql"
+    if not migration_file.exists():
+        logger.debug("Datasets migration file not found: %s", migration_file)
+        return
+    sql = migration_file.read_text()
+    for statement in sql.split(";"):
+        stmt = statement.strip()
+        if stmt:
+            try:
+                client.command(stmt)
+            except Exception as e:
+                # Ignore "already exists" errors
+                if "already exists" not in str(e).lower():
+                    logger.warning("Migration statement failed: %s — %s", stmt[:80], e)
 
 
 app = FastAPI(
@@ -73,6 +141,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount datasets sub-router
+from ..datasets.router import router as datasets_router  # noqa: E402
+app.include_router(datasets_router)
+
+# Mount evaluation module routers
+from ..evaluations.router import router as evaluations_router  # noqa: E402
+from ..metrics.router import router as metrics_router  # noqa: E402
+from ..experiments.router import router as experiments_router  # noqa: E402
+from ..annotations.router import router as annotations_router  # noqa: E402
+from ..auto_eval.router import router as auto_eval_router  # noqa: E402
+from ..trace_issues.router import router as trace_issues_router  # noqa: E402
+from ..proposals.router import router as proposals_router  # noqa: E402
+from ..eval_agent.router import router as eval_agent_router  # noqa: E402
+from ..settings.router import router as settings_router  # noqa: E402
+
+app.include_router(evaluations_router)
+app.include_router(metrics_router)
+app.include_router(experiments_router)
+app.include_router(annotations_router)
+app.include_router(auto_eval_router)
+app.include_router(trace_issues_router)
+app.include_router(proposals_router)
+app.include_router(eval_agent_router)
+app.include_router(settings_router)
 
 
 def get_router() -> UniRouteRouter:
@@ -698,213 +791,6 @@ async def assign_traces_to_dataset(run_id: str, cluster_id: int, body: dict):
 # --- Dataset Trace Import (Smart Import for UI) ---
 
 
-def _detect_field(record: dict, candidates: list[str]) -> str:
-    """Find the first matching field name from a list of candidates."""
-    for c in candidates:
-        if c in record:
-            return c
-        # Try nested: "message.content", etc.
-        parts = c.split(".")
-        obj = record
-        for p in parts:
-            if isinstance(obj, dict) and p in obj:
-                obj = obj[p]
-            else:
-                obj = None
-                break
-        if obj is not None:
-            return c
-    return ""
-
-
-def _extract_value(record: dict, path: str) -> str:
-    """Extract a value from a record using a dot-separated path."""
-    if not path:
-        return ""
-    parts = path.split(".")
-    obj = record
-    for p in parts:
-        if isinstance(obj, dict) and p in obj:
-            obj = obj[p]
-        else:
-            return ""
-    return str(obj) if obj is not None else ""
-
-
-@app.post("/v1/datasets/analyze-traces", tags=["datasets"])
-async def analyze_traces_schema(body: dict):
-    """Auto-detect input/output schema from uploaded JSON data.
-
-    Examines field names and content to determine which fields
-    map to input (prompt) and output (response).
-    """
-    data = body.get("data", [])
-    if not data or not isinstance(data, list):
-        raise HTTPException(status_code=400, detail="'data' must be a non-empty array")
-
-    sample = data[0] if data else {}
-
-    # Detect format
-    input_candidates = [
-        "messages", "input", "prompt", "question", "query",
-        "user_message", "instruction", "text", "input_text",
-    ]
-    output_candidates = [
-        "output", "response", "answer", "completion", "expected_output",
-        "assistant_message", "output_text", "result", "generated_text",
-    ]
-
-    source_format = "unknown"
-    input_path = ""
-    output_path = ""
-
-    # Check for OpenAI messages format
-    if "messages" in sample and isinstance(sample["messages"], list):
-        source_format = "openai-messages"
-        input_path = "messages"
-        output_path = "messages"
-    else:
-        input_path = _detect_field(sample, input_candidates)
-        output_path = _detect_field(sample, output_candidates)
-        if input_path and output_path:
-            source_format = "input-output"
-        elif input_path:
-            source_format = "input-only"
-
-    # Build preview
-    preview = []
-    for record in data[:10]:
-        inp = ""
-        out = ""
-
-        if source_format == "openai-messages":
-            msgs = record.get("messages", [])
-            for m in msgs:
-                if m.get("role") == "user":
-                    inp = m.get("content", "")
-                elif m.get("role") == "assistant":
-                    out = m.get("content", "")
-        else:
-            inp = _extract_value(record, input_path)
-            out = _extract_value(record, output_path)
-
-        # Collect metadata (all other fields)
-        meta = {}
-        for k, v in record.items():
-            if k not in (input_path, output_path, "messages") and isinstance(v, (str, int, float, bool)):
-                meta[k] = v
-
-        preview.append({
-            "input": inp[:500] if inp else "",
-            "expected_output": out[:500] if out else "",
-            "metadata": meta,
-        })
-
-    # Build mapping
-    mapping = {
-        "input": {"path": input_path, "transform": "direct"},
-        "output": {"path": output_path, "transform": "direct"},
-        "metadata": {},
-    }
-
-    return {
-        "mapping": mapping,
-        "preview": preview,
-        "source_format": source_format,
-        "total_records": len(data),
-    }
-
-
-@app.post("/v1/datasets/import-traces", tags=["datasets"])
-async def import_traces_to_clickhouse(body: dict):
-    """Import trace data into ClickHouse using the detected mapping.
-
-    Receives data + mapping from analyze-traces, transforms records
-    into traces and sends to the Go engine.
-    """
-    import httpx
-    import uuid
-
-    name = body.get("name", "imported-dataset")
-    data = body.get("data", [])
-    mapping = body.get("mapping", {})
-    description = body.get("description", "")
-
-    if not data:
-        raise HTTPException(status_code=400, detail="'data' is required")
-
-    input_path = mapping.get("input", {}).get("path", "input") if mapping else "input"
-    output_path = mapping.get("output", {}).get("path", "output") if mapping else "output"
-
-    # Transform records into trace format
-    traces = []
-    skipped = 0
-    for record in data:
-        inp = ""
-        out = ""
-
-        # Handle OpenAI messages format
-        if input_path == "messages" and "messages" in record:
-            msgs = record.get("messages", [])
-            trace = {
-                "messages": msgs,
-                "source": f"import:{name}",
-            }
-            # Extract model/provider if present
-            if "model" in record:
-                trace["model"] = record["model"]
-            if "provider" in record:
-                trace["provider"] = record["provider"]
-            traces.append(trace)
-            continue
-
-        inp = _extract_value(record, input_path)
-        out = _extract_value(record, output_path)
-
-        if not inp and not out:
-            skipped += 1
-            continue
-
-        trace = {
-            "input": inp,
-            "output": out,
-            "source": f"import:{name}",
-        }
-        if "model" in record:
-            trace["model"] = record["model"]
-        if "provider" in record:
-            trace["provider"] = record["provider"]
-        traces.append(trace)
-
-    if not traces:
-        raise HTTPException(status_code=400, detail="No valid traces found after mapping")
-
-    # Send to Go engine
-    engine_url = os.environ.get("LUNAR_ENGINE_URL", "http://localhost:8080")
-    try:
-        resp = httpx.post(
-            f"{engine_url}/v1/traces",
-            json={"traces": traces},
-            timeout=60.0,
-        )
-        resp.raise_for_status()
-        result = resp.json()
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Engine unavailable: {e}")
-
-    dataset_id = str(uuid.uuid4())[:8]
-
-    return {
-        "dataset_id": dataset_id,
-        "name": name,
-        "source": "smart-import",
-        "samples_count": result.get("ingested", len(traces)),
-        "skipped_count": skipped,
-    }
-
-
 # --- Secrets (API Key Management) ---
 
 
@@ -981,6 +867,42 @@ async def list_traces(
     traces = query_traces(model=model, start=start, limit=limit, offset=offset)
     total = query_trace_count(model=model, start=start)
     return {"traces": traces, "total": total, "limit": limit, "offset": offset}
+
+
+@app.get("/v1/traces", tags=["traces"])
+async def list_traces_v1(
+    limit: int = 100,
+    offset: int = 0,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    source: Optional[str] = None,
+    model_id: Optional[str] = None,
+):
+    """List traces for evaluations UI (v1 API)."""
+    from ..storage.clickhouse_client import query_traces, query_trace_count, get_client
+    from datetime import datetime, timedelta, timezone
+
+    if get_client() is None:
+        raise HTTPException(status_code=503, detail="ClickHouse not enabled")
+
+    start = None
+    end = None
+    if start_date:
+        try:
+            start = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+        except ValueError:
+            start = datetime.now(timezone.utc) - timedelta(hours=24)
+    else:
+        start = datetime.now(timezone.utc) - timedelta(hours=24)
+    if end_date:
+        try:
+            end = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+
+    traces = query_traces(model=model_id, start=start, end=end, limit=limit, offset=offset)
+    total = query_trace_count(model=model_id, start=start, end=end)
+    return {"traces": traces, "total": total, "has_more": (offset + limit) < total}
 
 
 @app.get("/analytics/models", tags=["analytics"])
