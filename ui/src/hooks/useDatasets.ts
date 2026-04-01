@@ -20,7 +20,6 @@ export function useDatasets() {
   const [error, setError] = useState<string | null>(null);
 
   const refreshDatasets = useCallback(async () => {
-    if (!accessToken) return;
     setLoading(true);
     setError(null);
     try {
@@ -40,7 +39,6 @@ export function useDatasets() {
       id: string,
       options?: { include_samples?: boolean; samples_limit?: number; samples_offset?: number }
     ): Promise<{ dataset: Dataset; samples: DatasetSample[]; samples_total?: number } | null> => {
-      if (!accessToken) return null;
       try {
         return await service.getDataset(accessToken, id, options);
       } catch (err) {
@@ -57,7 +55,6 @@ export function useDatasets() {
 
   const createDataset = useCallback(
     async (request: CreateDatasetRequest): Promise<Dataset | null> => {
-      if (!accessToken) return null;
       try {
         const dataset = await service.createDataset(accessToken, request);
         addDatasetLocally(dataset);
@@ -73,7 +70,6 @@ export function useDatasets() {
 
   const deleteDataset = useCallback(
     async (id: string): Promise<boolean> => {
-      if (!accessToken) return false;
       try {
         await service.deleteDataset(accessToken, id);
         setDatasets((prev) => prev.filter((d) => d.id !== id));
@@ -89,7 +85,6 @@ export function useDatasets() {
 
   const importDataset = useCallback(
     async (file: File, name: string): Promise<Dataset | null> => {
-      if (!accessToken) return null;
       setLoading(true);
       try {
         const dataset = await service.importDataset(accessToken, file, name);
@@ -108,7 +103,6 @@ export function useDatasets() {
 
   const createDatasetFromTraces = useCallback(
     async (name: string, traceIds: string[]): Promise<Dataset | null> => {
-      if (!accessToken) return null;
       try {
         const dataset = await service.createDatasetFromTraces(accessToken, name, traceIds);
         if (!dataset?.id) {
@@ -130,7 +124,6 @@ export function useDatasets() {
     async (
       request: CreateFromInstructionRequest
     ): Promise<CreateFromInstructionResponse | null> => {
-      if (!accessToken) return null;
       try {
         const result = await service.createDatasetFromInstruction(accessToken, request);
         addDatasetLocally({
@@ -153,7 +146,6 @@ export function useDatasets() {
 
   const generateDataset = useCallback(
     async (request: GenerateDatasetRequest): Promise<GenerateDatasetResponse | null> => {
-      if (!accessToken) return null;
       try {
         const result = await service.generateDataset(accessToken, request);
         addDatasetLocally({
@@ -177,10 +169,10 @@ export function useDatasets() {
   const clearError = useCallback(() => setError(null), []);
 
   useEffect(() => {
-    if (!accessToken || loaded.current) return;
+    if (loaded.current) return;
     loaded.current = true;
     refreshDatasets();
-  }, [accessToken, refreshDatasets]);
+  }, [refreshDatasets]);
 
   return {
     datasets,

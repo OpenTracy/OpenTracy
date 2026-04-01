@@ -11,8 +11,6 @@ import type {
   CreateDatasetRequest,
   CreateFromInstructionRequest,
   CreateFromInstructionResponse,
-  GenerateDatasetRequest,
-  GenerateDatasetResponse,
   CreateEvaluationRequest,
   CreateCustomMetricRequest,
   UpdateCustomMetricRequest,
@@ -31,6 +29,7 @@ import { BUILTIN_METRICS } from '../types/evaluationsTypes';
 import { API_BASE_URL } from '@/config/api';
 
 const API_BASE = API_BASE_URL;
+const DEFAULT_TENANT_ID = 'default';
 
 // Helper function for API calls
 async function apiCall<T>(
@@ -42,6 +41,7 @@ async function apiCall<T>(
 
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
+    'X-Tenant-Id': DEFAULT_TENANT_ID,
     ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     ...options.headers,
   };
@@ -70,6 +70,7 @@ async function apiCallWithAccepted<T>(
 
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
+    'X-Tenant-Id': DEFAULT_TENANT_ID,
     ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     ...options.headers,
   };
@@ -710,27 +711,6 @@ export function useEvaluationsService() {
         return data;
       } catch (error) {
         console.error('[EvaluationsService] Failed to create dataset from instruction:', error);
-        throw error;
-      }
-    },
-    []
-  );
-
-  const generateDataset = useCallback(
-    async (
-      accessToken: string,
-      request: GenerateDatasetRequest
-    ): Promise<GenerateDatasetResponse> => {
-      console.log('[EvaluationsService] Generating synthetic dataset:', request.instruction);
-
-      try {
-        const data = await apiCall<GenerateDatasetResponse>('/v1/datasets/generate', accessToken, {
-          method: 'POST',
-          body: JSON.stringify(request),
-        });
-        return data;
-      } catch (error) {
-        console.error('[EvaluationsService] Failed to generate dataset:', error);
         throw error;
       }
     },
@@ -1985,7 +1965,6 @@ export function useEvaluationsService() {
       listTraces,
       createDatasetFromTraces,
       createDatasetFromInstruction,
-      generateDataset,
 
       // Evaluations
       listEvaluations,
@@ -2068,7 +2047,6 @@ export function useEvaluationsService() {
       listTraces,
       createDatasetFromTraces,
       createDatasetFromInstruction,
-      generateDataset,
       listEvaluations,
       getEvaluation,
       createEvaluation,

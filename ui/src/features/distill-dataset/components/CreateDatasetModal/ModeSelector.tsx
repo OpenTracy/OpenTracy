@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { FileText, GitBranch, Search, Sparkles, Upload, Wand2 } from 'lucide-react';
+import { FileText, GitBranch, Search, Sparkles, Upload } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { CreateMode } from '../../types';
 
@@ -15,7 +15,6 @@ interface ModeSelectorProps {
 const MODE_CONFIG = [
   { value: 'manual', label: 'Manual', icon: FileText },
   { value: 'import', label: 'Import', icon: Upload },
-  { value: 'smart-import', label: 'Smart Import', icon: Wand2 },
   { value: 'topic', label: 'From Topic', icon: Search },
   { value: 'generate', label: 'Generate', icon: Sparkles },
   { value: 'traces', label: 'From Traces', icon: GitBranch },

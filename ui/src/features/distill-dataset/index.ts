@@ -1,1 +1,1 @@
-export { default } from './components/ClusterDatasetsPage';
+export { default } from './components/DatasetList/DatasetsPage';

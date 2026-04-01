@@ -19,7 +19,6 @@ import { ModeSelector } from './ModeSelector';
 import { DatasetNameFields } from './DatasetNameFields';
 import { ManualMode } from './ManualMode';
 import { ImportMode } from './ImportMode';
-import { SmartImportMode } from './SmartImportMode';
 import { TopicMode } from './TopicMode';
 import { GenerateMode } from './GenerateMode';
 import { TracesMode } from './TracesMode';
@@ -33,8 +32,6 @@ import type {
   CreateFromInstructionResponse,
   GenerateDatasetRequest,
   GenerateDatasetResponse,
-  AnalyzeTracesResponse,
-  ImportTracesResponse,
 } from '../../types';
 
 interface FooterState {
@@ -47,7 +44,6 @@ interface FooterState {
 
 const SUBMIT_LABEL: Partial<Record<CreateMode, string>> = {
   import: 'Import Dataset',
-  'smart-import': 'Import Traces',
   topic: 'Find & Create',
   generate: 'Generate',
   manual: 'Create Dataset',
@@ -59,7 +55,6 @@ const MODE_DESCRIPTIONS: Record<CreateMode, string> = {
   traces: 'Select traces from your API and Playground usage.',
   manual: 'Add input/output samples by hand, one at a time.',
   import: 'Upload a CSV or JSON file to populate the dataset.',
-  'smart-import': 'Upload any JSON traces — AI auto-detects the schema.',
 };
 
 interface CreateDatasetModalProps {
@@ -83,8 +78,6 @@ interface CreateDatasetModalProps {
   traces?: Trace[];
   tracesLoading?: boolean;
   onCreateFromTraces?: (name: string, traceIds: string[]) => Promise<void>;
-  onAnalyzeTraces?: (data: any[]) => Promise<AnalyzeTracesResponse>;
-  onImportTraces?: (name: string, data: any[], mapping: any, description?: string) => Promise<ImportTracesResponse>;
 }
 
 export function CreateDatasetModal({
@@ -100,8 +93,6 @@ export function CreateDatasetModal({
   traces,
   tracesLoading,
   onCreateFromTraces,
-  onAnalyzeTraces,
-  onImportTraces,
 }: CreateDatasetModalProps) {
   const modal = useCreateDatasetModal({
     open,
@@ -112,8 +103,6 @@ export function CreateDatasetModal({
     onGenerate,
     onPollGenerate,
     onGenerateBackground,
-    onAnalyzeTraces,
-    onImportTraces,
   });
 
   const isDisabled = modal.isDisabled || !!loading;
@@ -235,23 +224,6 @@ export function CreateDatasetModal({
             disabled={isDisabled}
             onCreateFromTraces={onCreateFromTraces!}
             onSuccess={modal.showSuccess}
-          />
-        );
-
-      case 'smart-import':
-        return (
-          <SmartImportMode
-            name={modal.name}
-            description={modal.description}
-            disabled={isDisabled}
-            file={modal.smartImportFile}
-            phase={modal.smartImportPhase}
-            analysis={modal.smartImportAnalysis}
-            recordCount={modal.smartImportRecordCount}
-            onNameChange={modal.setName}
-            onDescriptionChange={modal.setDescription}
-            onFileSelect={modal.handleSmartImportFileSelect}
-            inputRef={modal.inputRef}
           />
         );
 

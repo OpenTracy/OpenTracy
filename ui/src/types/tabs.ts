@@ -11,6 +11,8 @@ export type TabKey =
   | 'production'
   // Validate
   | 'compare'
+  // Evaluate
+  | 'evaluations'
   // Monitor
   | 'observability'
   | 'traces'

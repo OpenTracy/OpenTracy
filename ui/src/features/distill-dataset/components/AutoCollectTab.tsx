@@ -67,7 +67,6 @@ export function AutoCollectTab({ dataset }: AutoCollectTabProps) {
   const [triggering, setTriggering] = useState(false);
 
   const loadData = useCallback(async () => {
-    if (!accessToken) return;
     setLoadingConfig(true);
 
     try {
@@ -110,7 +109,6 @@ export function AutoCollectTab({ dataset }: AutoCollectTabProps) {
   }, [loadData]);
 
   const handleSave = async () => {
-    if (!accessToken) return;
     setSaving(true);
     try {
       const saved = await putAutoCollectConfig(accessToken, dataset.id, {
@@ -136,7 +134,6 @@ export function AutoCollectTab({ dataset }: AutoCollectTabProps) {
   };
 
   const handleDelete = async () => {
-    if (!accessToken) return;
     setDeleting(true);
     try {
       await deleteAutoCollectConfig(accessToken, dataset.id);
@@ -158,7 +155,6 @@ export function AutoCollectTab({ dataset }: AutoCollectTabProps) {
   };
 
   const handleTrigger = async () => {
-    if (!accessToken) return;
     setTriggering(true);
     try {
       await triggerAutoCollect(accessToken, dataset.id);

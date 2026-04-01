@@ -15,13 +15,13 @@ import type {
 
 export function useDatasetsPage() {
   const navigate = useNavigate();
+  const accessToken = '';
 
   const [searchTerm, setSearchTerm] = useState('');
   const [sourceFilter, setSourceFilter] = useState('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deletingDatasetId, setDeletingDatasetId] = useState<string | null>(null);
 
-  const accessToken = '';
   const service = useEvaluationsService();
   const { allTraces, isLoading: metricsLoading, isInitialized: metricsInitialized } = useMetrics();
   const datasetsHook = useDatasets();
@@ -50,7 +50,7 @@ export function useDatasetsPage() {
   const traces: Trace[] = useMemo(
     () =>
       allTraces.map((t) => ({
-        id: t.created_at,
+        id: t.id || t.event_id || t.created_at,
         input: t.input_preview ?? '',
         output: t.output_preview ?? '',
         model_id: t.model_id,
@@ -77,7 +77,6 @@ export function useDatasetsPage() {
 
   const setupAutoCollect = useCallback(
     async (datasetId: string, instruction: string, maxSamples?: number) => {
-      if (!accessToken) return;
       try {
         await service.putAutoCollectConfig(accessToken, datasetId, {
           enabled: true,
@@ -229,25 +228,6 @@ export function useDatasetsPage() {
     [importDataset, setupAutoCollect]
   );
 
-  const handleAnalyzeTraces = useCallback(
-    async (data: any[]) => {
-      if (!accessToken) throw new Error('Not authenticated');
-      return await service.analyzeTraces(accessToken, data);
-    },
-    [accessToken, service]
-  );
-
-  const handleImportTraces = useCallback(
-    async (name: string, data: any[], mapping: any, description?: string) => {
-      if (!accessToken) throw new Error('Not authenticated');
-      const result = await service.importTraces(accessToken, name, data, mapping, description);
-      toast.success(`Imported "${result.name}" with ${result.samples_count} samples`);
-      refreshDatasets();
-      return result;
-    },
-    [accessToken, service, refreshDatasets]
-  );
-
   const handlePollGenerate = useCallback(
     async (datasetId: string) => {
       const result = await getDataset(datasetId, { include_samples: false });
@@ -288,8 +268,6 @@ export function useDatasetsPage() {
     handleCreateFromTopic,
     handleGenerate,
     handleImport,
-    handleAnalyzeTraces,
-    handleImportTraces,
     handlePollGenerate,
     handleGenerateBackground,
     handleCloseCreateModal,
