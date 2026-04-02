@@ -63,6 +63,14 @@ async def lifespan(app: FastAPI):
         scheduler.start()
         logger.info("Scan scheduler started on lifespan")
 
+    # Cleanup stale vLLM deployments from previous runs
+    try:
+        from ..deployment.manager import cleanup_stale_deployments
+        await cleanup_stale_deployments()
+        logger.info("Checked for stale deployments")
+    except Exception as e:
+        logger.debug(f"Deployment cleanup skipped: {e}")
+
     yield
 
     # Shutdown
@@ -85,6 +93,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# --- Mount vLLM deployment router ---
+from ..deployment.routes import deployment_router
+
+app.include_router(deployment_router, prefix="/v1/deployments", tags=["deployments"])
 
 
 def get_router() -> UniRouteRouter:
