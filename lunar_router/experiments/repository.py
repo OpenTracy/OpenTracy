@@ -32,9 +32,6 @@ def _deserialize_comp(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-# =========================================================================
-# Experiment CRUD
-# =========================================================================
 
 def create(tenant_id: str, data: dict[str, Any]) -> dict[str, Any]:
     exp_id = str(uuid.uuid4())
@@ -99,9 +96,6 @@ def delete(tenant_id: str, experiment_id: str) -> bool:
     return True
 
 
-# =========================================================================
-# Comparison
-# =========================================================================
 
 def save_comparison(tenant_id: str, experiment_id: str, data: dict[str, Any]) -> dict[str, Any]:
     now = now_utc()

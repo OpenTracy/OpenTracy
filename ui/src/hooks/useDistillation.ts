@@ -1,7 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useUser } from '../contexts/UserContext';
 import { useDistillationService } from '../services/distillationService';
-import { useQuotaCheck } from './useQuotaCheck';
 import type {
   DistillationJob,
   DistillationStatus,
@@ -57,9 +55,7 @@ interface UseDistillationReturn extends UseDistillationState {
 }
 
 export function useDistillation(): UseDistillationReturn {
-  const { accessToken, tenantId } = useUser();
   const service = useDistillationService();
-  const { checkResourceQuota } = useQuotaCheck();
   const initialLoadDone = useRef(false);
 
   const [state, setState] = useState<UseDistillationState>({
@@ -73,11 +69,9 @@ export function useDistillation(): UseDistillationReturn {
   }, []);
 
   const refreshJobs = useCallback(async () => {
-    if (!accessToken || !tenantId) return;
-
     setPartialState({ loading: true, error: null });
     try {
-      const jobs = await service.listJobs(accessToken, tenantId);
+      const jobs = await service.listJobs();
       setPartialState({ jobs, loading: false });
     } catch (err) {
       console.error('Failed to fetch distillation jobs:', err);
@@ -88,31 +82,25 @@ export function useDistillation(): UseDistillationReturn {
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken, tenantId]);
+  }, []);
 
   const getJob = useCallback(
     async (id: string): Promise<DistillationJob | null> => {
-      if (!accessToken || !tenantId) return null;
       try {
-        return await service.getJob(accessToken, id, tenantId);
+        return await service.getJob(id);
       } catch (err) {
         console.error('Failed to get distillation job:', err);
         return null;
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accessToken, tenantId]
+    []
   );
 
   const createJob = useCallback(
     async (request: CreateDistillationJobRequest): Promise<DistillationJob | null> => {
-      if (!accessToken || !tenantId) return null;
-
       try {
-        const { available } = await checkResourceQuota('gpu_training');
-        if (!available) return null;
-
-        const job = await service.createJob(accessToken, request, tenantId);
+        const job = await service.createJob(request);
         setState((prev) => ({
           ...prev,
           jobs: [job, ...prev.jobs],
@@ -127,15 +115,13 @@ export function useDistillation(): UseDistillationReturn {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accessToken, tenantId]
+    []
   );
 
   const cancelJob = useCallback(
     async (id: string): Promise<boolean> => {
-      if (!accessToken || !tenantId) return false;
-
       try {
-        const success = await service.cancelJob(accessToken, id, tenantId);
+        const success = await service.cancelJob(id);
         if (success) {
           setState((prev) => ({
             ...prev,
@@ -154,15 +140,13 @@ export function useDistillation(): UseDistillationReturn {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accessToken, tenantId]
+    []
   );
 
   const deleteJob = useCallback(
     async (id: string): Promise<boolean> => {
-      if (!accessToken || !tenantId) return false;
-
       try {
-        const success = await service.deleteJob(accessToken, id, tenantId);
+        const success = await service.deleteJob(id);
         if (success) {
           setState((prev) => ({
             ...prev,
@@ -179,101 +163,91 @@ export function useDistillation(): UseDistillationReturn {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accessToken, tenantId]
+    []
   );
 
   const getJobResults = useCallback(
     async (id: string): Promise<DistillationResults | null> => {
-      if (!accessToken || !tenantId) return null;
       try {
-        return await service.getJobResults(accessToken, id, tenantId);
+        return await service.getJobResults(id);
       } catch (err) {
         console.error('Failed to get job results:', err);
         return null;
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accessToken, tenantId]
+    []
   );
 
   const getJobLogs = useCallback(
     async (id: string): Promise<string[]> => {
-      if (!accessToken || !tenantId) return [];
       try {
-        return await service.getJobLogs(accessToken, id, tenantId);
+        return await service.getJobLogs(id);
       } catch (err) {
         console.error('Failed to get job logs:', err);
         return [];
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accessToken, tenantId]
+    []
   );
 
   const getJobCandidates = useCallback(
     async (id: string): Promise<{ samples: CurationSample[]; total: number }> => {
-      if (!accessToken || !tenantId) return { samples: [], total: 0 };
       try {
-        return await service.getJobCandidates(accessToken, id, tenantId);
+        return await service.getJobCandidates(id);
       } catch (err) {
         console.error('Failed to get job candidates:', err);
         return { samples: [], total: 0 };
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accessToken, tenantId]
+    []
   );
 
   const getJobArtifacts = useCallback(
     async (id: string): Promise<GGUFArtifact[]> => {
-      if (!accessToken || !tenantId) return [];
       try {
-        return await service.getJobArtifacts(accessToken, id, tenantId);
+        return await service.getJobArtifacts(id);
       } catch (err) {
         console.error('Failed to get job artifacts:', err);
         return [];
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accessToken, tenantId]
+    []
   );
 
   const listAvailableModels = useCallback(
     async (): Promise<AvailableTeacherModel[]> => {
-      if (!accessToken) return [];
       try {
-        return await service.listAvailableModels(accessToken);
+        return await service.listAvailableModels();
       } catch (err) {
         console.error('Failed to list available models:', err);
         return [];
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accessToken]
+    []
   );
 
   const estimateJob = useCallback(
     async (request: EstimateRequest): Promise<EstimateResponse | null> => {
-      if (!accessToken || !tenantId) return null;
       try {
-        return await service.estimateJob(accessToken, request, tenantId);
+        return await service.estimateJob(request);
       } catch (err) {
         console.error('Failed to estimate job cost:', err);
         return null;
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accessToken, tenantId]
+    []
   );
 
   const deployJob = useCallback(
     async (id: string, instanceType?: string): Promise<DeployJobResult | null> => {
-      if (!accessToken || !tenantId) return null;
       try {
-        const { available } = await checkResourceQuota('cpu_export');
-        if (!available) return null;
-
-        return await service.deployJob(accessToken, id, tenantId, instanceType);
+        return await service.deployJob(id, instanceType);
       } catch (err) {
         console.error('Failed to deploy distillation job:', err);
         setPartialState({
@@ -283,7 +257,7 @@ export function useDistillation(): UseDistillationReturn {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accessToken, tenantId]
+    []
   );
 
   const clearError = useCallback(() => {
@@ -292,13 +266,13 @@ export function useDistillation(): UseDistillationReturn {
 
   // Initial load
   useEffect(() => {
-    if (!accessToken || !tenantId || initialLoadDone.current) return;
+    if (initialLoadDone.current) return;
     initialLoadDone.current = true;
 
     const loadData = async () => {
       setPartialState({ loading: true });
       try {
-        const jobs = await service.listJobs(accessToken, tenantId);
+        const jobs = await service.listJobs();
         setPartialState({ jobs, loading: false });
       } catch (err) {
         console.error('Failed to load distillation jobs:', err);
@@ -311,12 +285,10 @@ export function useDistillation(): UseDistillationReturn {
     };
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken, tenantId]);
+  }, []);
 
   // Polling for active jobs
   useEffect(() => {
-    if (!accessToken || !tenantId) return;
-
     const activeJobs = state.jobs.filter((j) => ACTIVE_STATUSES.includes(j.status));
     if (activeJobs.length === 0) return;
 
@@ -325,7 +297,7 @@ export function useDistillation(): UseDistillationReturn {
 
     const poll = async () => {
       try {
-        const jobs = await service.listJobs(accessToken, tenantId);
+        const jobs = await service.listJobs();
         setPartialState({ jobs });
       } catch {
         // Silent fail on polling
@@ -341,8 +313,6 @@ export function useDistillation(): UseDistillationReturn {
       .map((j) => `${j.id}:${j.status}`)
       .sort()
       .join(','),
-    accessToken,
-    tenantId,
   ]);
 
   return {

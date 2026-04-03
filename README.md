@@ -42,25 +42,27 @@ print(f"Cost: ${response._cost:.6f}")
 - **Tool Calling** — function calls with cross-provider translation
 - **Computer Use** — `computer_use_preview` with OpenAI/Anthropic translation
 - **ClickHouse Analytics** — traces, cost, latency, model-level stats
+- **Evaluations** — datasets, metrics, experiments, annotations, auto-eval
+- **Distillation** — BOND pipeline: teacher → curation → LoRA training → GGUF export
 - **MCP Integration** — Claude Code / Claw via Model Context Protocol
 
 ## Supported Providers
 
-| Provider | Syntax | Env Var |
-|----------|--------|---------|
-| **OpenAI** | `openai/gpt-4o-mini` | `OPENAI_API_KEY` |
-| **Anthropic** | `anthropic/claude-haiku-4-5-20251001` | `ANTHROPIC_API_KEY` |
-| **Gemini** | `gemini/gemini-2.0-flash` | `GEMINI_API_KEY` |
-| **Mistral** | `mistral/mistral-small-latest` | `MISTRAL_API_KEY` |
-| **Groq** | `groq/llama-3.3-70b-versatile` | `GROQ_API_KEY` |
-| **DeepSeek** | `deepseek/deepseek-chat` | `DEEPSEEK_API_KEY` |
-| **Perplexity** | `perplexity/sonar` | `PERPLEXITY_API_KEY` |
-| **Cerebras** | `cerebras/llama3.1-70b` | `CEREBRAS_API_KEY` |
-| **SambaNova** | `sambanova/Meta-Llama-3.1-70B-Instruct` | `SAMBANOVA_API_KEY` |
-| **Together** | `together/meta-llama/Llama-3.3-70B-Instruct-Turbo` | `TOGETHER_API_KEY` |
-| **Fireworks** | `fireworks/accounts/fireworks/models/llama-v3p1-70b-instruct` | `FIREWORKS_API_KEY` |
-| **Cohere** | `cohere/command-r-plus` | `COHERE_API_KEY` |
-| **AWS Bedrock** | `bedrock/amazon.titan-text-express-v1` | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
+| Provider        | Syntax                                                        | Env Var                                       |
+| --------------- | ------------------------------------------------------------- | --------------------------------------------- |
+| **OpenAI**      | `openai/gpt-4o-mini`                                          | `OPENAI_API_KEY`                              |
+| **Anthropic**   | `anthropic/claude-haiku-4-5-20251001`                         | `ANTHROPIC_API_KEY`                           |
+| **Gemini**      | `gemini/gemini-2.0-flash`                                     | `GEMINI_API_KEY`                              |
+| **Mistral**     | `mistral/mistral-small-latest`                                | `MISTRAL_API_KEY`                             |
+| **Groq**        | `groq/llama-3.3-70b-versatile`                                | `GROQ_API_KEY`                                |
+| **DeepSeek**    | `deepseek/deepseek-chat`                                      | `DEEPSEEK_API_KEY`                            |
+| **Perplexity**  | `perplexity/sonar`                                            | `PERPLEXITY_API_KEY`                          |
+| **Cerebras**    | `cerebras/llama3.1-70b`                                       | `CEREBRAS_API_KEY`                            |
+| **SambaNova**   | `sambanova/Meta-Llama-3.1-70B-Instruct`                       | `SAMBANOVA_API_KEY`                           |
+| **Together**    | `together/meta-llama/Llama-3.3-70B-Instruct-Turbo`            | `TOGETHER_API_KEY`                            |
+| **Fireworks**   | `fireworks/accounts/fireworks/models/llama-v3p1-70b-instruct` | `FIREWORKS_API_KEY`                           |
+| **Cohere**      | `cohere/command-r-plus`                                       | `COHERE_API_KEY`                              |
+| **AWS Bedrock** | `bedrock/amazon.titan-text-express-v1`                        | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
 
 ## Installation
 
@@ -154,10 +156,10 @@ client.chat.completions.create(model="mistral/mistral-small-latest", messages=[.
 
 ## Running
 
-| Command | What | Requires |
-|---------|------|----------|
-| `make start` | Gateway proxy (no weights needed) | Go |
-| `make start-full` | Gateway + ClickHouse analytics | Go + Docker |
+| Command             | What                                   | Requires     |
+| ------------------- | -------------------------------------- | ------------ |
+| `make start`        | Gateway proxy (no weights needed)      | Go           |
+| `make start-full`   | Gateway + ClickHouse analytics         | Go + Docker  |
 | `make start-router` | Full semantic routing (`model="auto"`) | Go + weights |
 
 ### API Keys
@@ -174,16 +176,16 @@ Keys are auto-loaded from `~/.lunar/secrets.json` on startup and hot-reloaded wh
 
 ## API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
+| Method | Endpoint               | Description                                           |
+| ------ | ---------------------- | ----------------------------------------------------- |
 | `POST` | `/v1/chat/completions` | Chat completion (`model="auto"` for semantic routing) |
-| `POST` | `/v1/route` | Route a prompt without generating |
-| `GET`  | `/v1/models` | List available models |
-| `POST` | `/v1/config/keys` | Set provider API key at runtime |
-| `POST` | `/v1/config/reload` | Reload keys from secrets file |
-| `GET`  | `/v1/metrics` | Aggregated request metrics |
-| `GET`  | `/v1/cache` | Cache statistics |
-| `GET`  | `/health` | Health check |
+| `POST` | `/v1/route`            | Route a prompt without generating                     |
+| `GET`  | `/v1/models`           | List available models                                 |
+| `POST` | `/v1/config/keys`      | Set provider API key at runtime                       |
+| `POST` | `/v1/config/reload`    | Reload keys from secrets file                         |
+| `GET`  | `/v1/metrics`          | Aggregated request metrics                            |
+| `GET`  | `/v1/cache`            | Cache statistics                                      |
+| `GET`  | `/health`              | Health check                                          |
 
 ### Examples
 
@@ -230,25 +232,80 @@ go/                          # Go engine (high-performance runtime)
 ├── cmd/lunar-engine/        # Entry point (--gateway, --weights)
 ├── internal/
 │   ├── provider/            # 13 providers (OpenAI, Anthropic, Bedrock, etc.)
-│   │   ├── openai.go        # OpenAI-compatible provider (11 providers)
-│   │   ├── anthropic.go     # Anthropic Messages API translation
-│   │   ├── bedrock.go       # AWS Bedrock Converse API + SigV4 signing
-│   │   ├── stream_adapter.go    # Anthropic SSE → OpenAI SSE
-│   │   └── bedrock_stream.go    # Bedrock event-stream → OpenAI SSE
 │   ├── router/              # UniRoute algorithm + LRU cache
 │   ├── embeddings/          # ONNX MiniLM embedder
 │   ├── clickhouse/          # Trace writer + migrations
 │   └── server/              # HTTP handlers
 
-lunar_router/                # Python SDK
+lunar_router/                # Python package (SDK + API + all modules)
 ├── sdk.py                   # completion(), acompletion(), Router class
 ├── model_prices.py          # 70+ models with pricing
 ├── loader.py                # load_router() with Go engine auto-detect
-├── storage/secrets.py       # API key management (~/.lunar/secrets.json)
-├── training/                # Train custom routers
+├── api/                     # FastAPI server (port 8000)
+├── distillation/            # BOND distillation pipeline
+│   ├── pipeline.py          # 4-phase orchestrator (data gen → curation → train → export)
+│   ├── data_gen.py          # Teacher model candidate generation
+│   ├── curation.py          # LLM-as-Judge scoring & selection
+│   ├── trainer.py           # SFT/BOND fine-tuning (Unsloth + LoRA)
+│   ├── export.py            # LoRA merge + GGUF conversion
+│   ├── repository.py        # ClickHouse persistence
+│   ├── router.py            # API endpoints
+│   └── schemas.py           # Pydantic models & model catalog
+├── evaluations/             # Evaluation runs & results
+├── datasets/                # Dataset CRUD, from-traces, auto-collect
+├── metrics/                 # Metric definitions & validation
+├── experiments/             # A/B experiments & comparison
+├── annotations/             # Human annotation queues
+├── auto_eval/               # Automated evaluation configs & triggers
+├── eval_agent/              # AI-powered eval setup assistant
+├── proposals/               # Decision engine proposals
+├── trace_issues/            # Issue scanning & detection
+├── settings/                # Per-tenant evaluation settings
+├── evals_common/            # Shared services (model invoker, LLM judge)
+├── training/                # Custom router training (UniRoute)
+├── hub/                     # HuggingFace artifact manager
 ├── mcp/                     # Claude Code MCP server
+├── storage/                 # API key management (~/.lunar/secrets.json)
 └── cli.py                   # CLI (download, route, mcp)
+
+ui/                          # React + TypeScript dashboard (port 3000)
 ```
+
+## Distillation
+
+BOND-style distillation pipeline: generate candidates with a teacher model, score them with LLM-as-Judge, fine-tune a student model with LoRA, and export to GGUF.
+
+```bash
+make install-train   # install training deps (requires CUDA)
+make dev-all         # start full stack
+```
+
+Then open the UI at `http://localhost:3000` → Distillation to create a job, or via API:
+
+```bash
+curl -X POST http://localhost:8000/v1/distillation/default/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teacher_model": "openai/gpt-4o-mini",
+    "student_model": "unsloth/Llama-3.2-1B-Instruct-bnb-4bit",
+    "num_candidates": 5,
+    "dataset_id": "my-dataset"
+  }'
+```
+
+## Evaluations
+
+Built-in evaluation framework with metrics, datasets, experiments, and annotations — all accessible through the UI or API.
+
+| Module          | Description                                            |
+| --------------- | ------------------------------------------------------ |
+| **Datasets**    | Create datasets from traces or upload manually         |
+| **Metrics**     | Built-in + custom LLM-as-Judge metrics                 |
+| **Evaluations** | Run evaluations against datasets with selected metrics |
+| **Experiments** | Compare model performance side-by-side                 |
+| **Annotations** | Human-in-the-loop annotation queues                    |
+| **Auto Eval**   | Automated evaluation triggers                          |
+| **Proposals**   | Decision engine for model selection recommendations    |
 
 ## Training Custom Routers
 
@@ -296,9 +353,24 @@ Tools: `lunar_route`, `lunar_generate`, `lunar_smart_generate`, `lunar_list_mode
 ```bash
 make help               # show all commands
 make install            # install Python SDK + Go deps
+make install-all        # install everything (Python + Go + UI)
+make install-train      # install training/distillation deps (CUDA)
+make dev-all            # start full local stack (ClickHouse + Go + API + UI)
+make stop-all           # stop all local services
 make test               # run all tests
 make lint               # lint all code
 ```
+
+### Local Stack
+
+`make dev-all` starts everything you need for development:
+
+| Service    | Port | Description                                   |
+| ---------- | ---- | --------------------------------------------- |
+| ClickHouse | 8123 | Analytics & trace storage (Docker)            |
+| Go engine  | 8080 | LLM gateway proxy                             |
+| Python API | 8000 | FastAPI (evaluations, distillation, datasets) |
+| UI         | 3000 | React dashboard                               |
 
 ## License
 

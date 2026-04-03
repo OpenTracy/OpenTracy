@@ -41,9 +41,6 @@ def _is_expired(item: dict[str, Any]) -> bool:
         return False
 
 
-# =========================================================================
-# CRUD
-# =========================================================================
 
 def create(tenant_id: str, data: dict[str, Any]) -> dict[str, Any]:
     pid = str(uuid.uuid4())

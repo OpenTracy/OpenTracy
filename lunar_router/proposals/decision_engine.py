@@ -20,9 +20,6 @@ REGRESSION_THRESHOLD_DEFAULT = 0.05
 class DecisionEngine:
     """Core rule engine that creates proposals based on system events."""
 
-    # =========================================================================
-    # Event Handlers (fire-and-forget safe)
-    # =========================================================================
 
     def on_samples_added(self, tenant_id: str, dataset_id: str, count: int) -> None:
         try:
@@ -44,9 +41,6 @@ class DecisionEngine:
         except Exception as e:
             logger.warning("Rule 4 (cross-model experiment) failed: %s", e)
 
-    # =========================================================================
-    # Rule implementations
-    # =========================================================================
 
     def _check_rule_create_evaluation(self, tenant_id: str, dataset_id: str, new_count: int) -> None:
         from ..auto_eval import repository as ae_repo
@@ -232,9 +226,6 @@ class DecisionEngine:
             "action_payload": {"dataset_id": dataset_id, "evaluation_ids": eval_ids, "name": f"Model comparison - {name}"},
         })
 
-    # =========================================================================
-    # Execution
-    # =========================================================================
 
     def execute_proposal(self, tenant_id: str, proposal: dict[str, Any], authorization: str | None = None) -> dict[str, Any]:
         ptype = proposal.get("proposal_type")
@@ -307,9 +298,6 @@ class DecisionEngine:
         experiment = exp_repo.create(tenant_id, {"name": name, "description": "Created by Decision Engine", "dataset_id": ds_id, "evaluation_ids": eids})
         return {"success": True, "created_id": experiment.get("experiment_id")}
 
-    # =========================================================================
-    # Helpers
-    # =========================================================================
 
     @staticmethod
     def _count_samples_since(samples: list, since_iso: str) -> int:

@@ -86,9 +86,6 @@ def _insert_rows(table: str, rows: list[dict[str, Any]]) -> None:
     _ch().insert(table, list(zip(*data)), column_names=columns)
 
 
-# ============================================================================
-# Dataset CRUD
-# ============================================================================
 
 def create_dataset(tenant_id: str, *, name: str, description: str = "", source: str = "manual") -> dict[str, Any]:
     dataset_id = str(uuid.uuid4())
@@ -154,9 +151,6 @@ def delete_dataset(tenant_id: str, dataset_id: str) -> bool:
     return True
 
 
-# ============================================================================
-# Samples
-# ============================================================================
 
 def add_samples(tenant_id: str, dataset_id: str, samples: list[dict[str, Any]]) -> int:
     """Add samples and update the dataset counter."""
@@ -251,9 +245,6 @@ def _update_samples_count(tenant_id: str, dataset_id: str, delta: int) -> None:
     _insert_row("eval_datasets", current)
 
 
-# ============================================================================
-# Auto-collect config
-# ============================================================================
 
 def get_auto_collect_config(tenant_id: str, dataset_id: str) -> dict[str, Any] | None:
     row = _query_one(
@@ -348,9 +339,6 @@ def get_collected_trace_ids(tenant_id: str, dataset_id: str) -> set[str]:
     return {r["trace_id"] for r in rows}
 
 
-# ============================================================================
-# Traces (read from llm_traces — written by the Go engine)
-# ============================================================================
 
 def list_traces(
     *,

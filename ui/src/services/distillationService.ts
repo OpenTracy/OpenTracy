@@ -15,6 +15,7 @@ import type {
 } from '../types/distillationTypes';
 
 const API_BASE = API_BASE_URL;
+const DEFAULT_TENANT = 'default';
 
 export interface CurationCandidate {
   text: string;
@@ -33,16 +34,11 @@ export interface CurationSample {
 // API Helper
 // =============================================================================
 
-async function apiCall<T>(
-  endpoint: string,
-  accessToken: string,
-  options: RequestInit = {}
-): Promise<T> {
+async function apiCall<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
 
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${accessToken}`,
     ...options.headers,
   };
 
@@ -173,10 +169,9 @@ function mapProgress(
 
 function mapConfig(backendConfig: Record<string, unknown>): DistillationConfig {
   return {
-    teacher_model: (backendConfig.teacher_model as string) || 'gpt-4o',
+    teacher_model: (backendConfig.teacher_model as string) || 'openai/gpt-4o',
     student_model:
       (backendConfig.student_model as string) || (backendConfig.base_model as string) || '',
-    target_device: (backendConfig.target_device as string) || '',
     dataset_id: (backendConfig.dataset_id as string) || '',
     n_samples: (backendConfig.n_samples as number) || 4,
     temperature: (backendConfig.temperature as number) || 0.8,
@@ -225,7 +220,6 @@ function mapBackendJobStatus(job: BackendJobStatus): DistillationJob {
       : {
           teacher_model: '',
           student_model: '',
-          target_device: '',
           dataset_id: '',
           n_samples: 4,
           temperature: 0.8,
@@ -272,7 +266,6 @@ interface BackendCreateRequest {
     student_model: string;
     n_samples: number;
     temperature: number;
-    target_device?: string;
     curation_agents?: { id: string; enabled: boolean; threshold?: number }[];
     quantization?: string;
     output_name?: string;
@@ -280,21 +273,17 @@ interface BackendCreateRequest {
   };
 }
 
-function mapCreateRequest(
-  request: CreateDistillationJobRequest,
-  tenantId: string
-): BackendCreateRequest {
+function mapCreateRequest(request: CreateDistillationJobRequest): BackendCreateRequest {
   const config = request.config;
 
   return {
-    tenant_id: tenantId,
+    tenant_id: DEFAULT_TENANT,
     name: request.name,
     config: {
       teacher_model: config.teacher_model || 'gpt-4o',
       student_model: config.student_model,
       n_samples: config.n_samples ?? 4,
       temperature: config.temperature ?? 0.8,
-      ...(config.target_device ? { target_device: config.target_device } : {}),
       ...(config.curation_agents?.length
         ? {
             curation_agents: config.curation_agents.map((a) => ({
@@ -334,52 +323,36 @@ export interface EstimateResponse {
 // =============================================================================
 
 export function useDistillationService() {
-  const listJobs = useCallback(
-    async (accessToken: string, tenantId: string): Promise<DistillationJob[]> => {
-      const data = await apiCall<BackendJobStatus[]>(
-        `/v1/distillation?tenant_id=${encodeURIComponent(tenantId)}`,
-        accessToken
-      );
-      return data.map(mapBackendJobStatus);
-    },
-    []
-  );
+  const qs = `tenant_id=${encodeURIComponent(DEFAULT_TENANT)}`;
 
-  const getJob = useCallback(
-    async (
-      accessToken: string,
-      jobId: string,
-      tenantId: string
-    ): Promise<DistillationJob | null> => {
-      try {
-        const data = await apiCall<BackendJobDetails>(
-          `/v1/distillation/${encodeURIComponent(jobId)}?tenant_id=${encodeURIComponent(tenantId)}`,
-          accessToken
+  const listJobs = useCallback(async (): Promise<DistillationJob[]> => {
+    const data = await apiCall<BackendJobStatus[]>(`/v1/distillation?${qs}`);
+    return data.map(mapBackendJobStatus);
+  }, []);
+
+  const getJob = useCallback(async (jobId: string): Promise<DistillationJob | null> => {
+    try {
+      const data = await apiCall<BackendJobDetails>(
+        `/v1/distillation/${encodeURIComponent(jobId)}?${qs}`
+      );
+      console.debug('[DistillationService] Raw progress:', data.progress);
+      if (data.progress?.training) {
+        console.debug(
+          '[DistillationService] Training keys:',
+          Object.keys(data.progress.training),
+          data.progress.training
         );
-        console.debug('[DistillationService] Raw progress:', data.progress);
-        if (data.progress?.training) {
-          console.debug(
-            '[DistillationService] Training keys:',
-            Object.keys(data.progress.training),
-            data.progress.training
-          );
-        }
-        return mapBackendJobDetails(data);
-      } catch {
-        return null;
       }
-    },
-    []
-  );
+      return mapBackendJobDetails(data);
+    } catch {
+      return null;
+    }
+  }, []);
 
   const createJob = useCallback(
-    async (
-      accessToken: string,
-      request: CreateDistillationJobRequest,
-      tenantId: string
-    ): Promise<DistillationJob> => {
-      const backendReq = mapCreateRequest(request, tenantId);
-      const data = await apiCall<BackendJobStatus>('/v1/distillation', accessToken, {
+    async (request: CreateDistillationJobRequest): Promise<DistillationJob> => {
+      const backendReq = mapCreateRequest(request);
+      const data = await apiCall<BackendJobStatus>('/v1/distillation', {
         method: 'POST',
         body: JSON.stringify(backendReq),
       });
@@ -388,84 +361,56 @@ export function useDistillationService() {
     []
   );
 
-  const cancelJob = useCallback(
-    async (accessToken: string, jobId: string, tenantId: string): Promise<boolean> => {
-      try {
-        await apiCall<BackendJobStatus>(
-          `/v1/distillation/${encodeURIComponent(jobId)}/cancel?tenant_id=${encodeURIComponent(tenantId)}`,
-          accessToken,
-          { method: 'POST' }
-        );
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    []
-  );
+  const cancelJob = useCallback(async (jobId: string): Promise<boolean> => {
+    try {
+      await apiCall<BackendJobStatus>(
+        `/v1/distillation/${encodeURIComponent(jobId)}/cancel?${qs}`,
+        { method: 'POST' }
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
 
-  const deleteJob = useCallback(
-    async (accessToken: string, jobId: string, tenantId: string): Promise<boolean> => {
-      try {
-        await apiCall<{ deleted: boolean }>(
-          `/v1/distillation/${encodeURIComponent(jobId)}?tenant_id=${encodeURIComponent(tenantId)}`,
-          accessToken,
-          { method: 'DELETE' }
-        );
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    []
-  );
+  const deleteJob = useCallback(async (jobId: string): Promise<boolean> => {
+    try {
+      await apiCall<{ deleted: boolean }>(`/v1/distillation/${encodeURIComponent(jobId)}?${qs}`, {
+        method: 'DELETE',
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
 
-  const getJobResults = useCallback(
-    async (
-      accessToken: string,
-      jobId: string,
-      tenantId: string
-    ): Promise<DistillationResults | null> => {
-      try {
-        const data = await apiCall<BackendJobDetails>(
-          `/v1/distillation/${encodeURIComponent(jobId)}?tenant_id=${encodeURIComponent(tenantId)}`,
-          accessToken
-        );
-        return mapResults(data.results) || null;
-      } catch {
-        return null;
-      }
-    },
-    []
-  );
+  const getJobResults = useCallback(async (jobId: string): Promise<DistillationResults | null> => {
+    try {
+      const data = await apiCall<BackendJobDetails>(
+        `/v1/distillation/${encodeURIComponent(jobId)}?${qs}`
+      );
+      return mapResults(data.results) || null;
+    } catch {
+      return null;
+    }
+  }, []);
 
-  const getJobLogs = useCallback(
-    async (accessToken: string, jobId: string, tenantId?: string): Promise<string[]> => {
-      try {
-        const qs = tenantId ? `?tenant_id=${encodeURIComponent(tenantId)}` : '';
-        const data = await apiCall<{ logs: string[] }>(
-          `/v1/distillation/${encodeURIComponent(jobId)}/logs${qs}`,
-          accessToken
-        );
-        return data.logs ?? [];
-      } catch {
-        return [];
-      }
-    },
-    []
-  );
+  const getJobLogs = useCallback(async (jobId: string): Promise<string[]> => {
+    try {
+      const data = await apiCall<{ logs: string[] }>(
+        `/v1/distillation/${encodeURIComponent(jobId)}/logs?${qs}`
+      );
+      return data.logs ?? [];
+    } catch {
+      return [];
+    }
+  }, []);
 
   const getJobCandidates = useCallback(
-    async (
-      accessToken: string,
-      jobId: string,
-      tenantId?: string
-    ): Promise<{ samples: CurationSample[]; total: number }> => {
+    async (jobId: string): Promise<{ samples: CurationSample[]; total: number }> => {
       try {
-        const qs = tenantId ? `?tenant_id=${encodeURIComponent(tenantId)}` : '';
         const data = await apiCall<{ samples: CurationSample[]; total: number }>(
-          `/v1/distillation/${encodeURIComponent(jobId)}/candidates${qs}`,
-          accessToken
+          `/v1/distillation/${encodeURIComponent(jobId)}/candidates?${qs}`
         );
         return { samples: data.samples ?? [], total: data.total ?? 0 };
       } catch {
@@ -475,58 +420,37 @@ export function useDistillationService() {
     []
   );
 
-  const getJobArtifacts = useCallback(
-    async (accessToken: string, jobId: string, tenantId: string): Promise<GGUFArtifact[]> => {
-      try {
-        return await apiCall<GGUFArtifact[]>(
-          `/v1/distillation/${encodeURIComponent(jobId)}/artifacts?tenant_id=${encodeURIComponent(tenantId)}`,
-          accessToken
-        );
-      } catch {
-        return [];
-      }
-    },
-    []
-  );
-
-  const estimateJob = useCallback(
-    async (
-      accessToken: string,
-      request: EstimateRequest,
-      tenantId: string
-    ): Promise<EstimateResponse> => {
-      return apiCall<EstimateResponse>(
-        `/v1/distillation/estimate?tenant_id=${encodeURIComponent(tenantId)}`,
-        accessToken,
-        {
-          method: 'POST',
-          body: JSON.stringify(request),
-        }
+  const getJobArtifacts = useCallback(async (jobId: string): Promise<GGUFArtifact[]> => {
+    try {
+      return await apiCall<GGUFArtifact[]>(
+        `/v1/distillation/${encodeURIComponent(jobId)}/artifacts?${qs}`
       );
-    },
-    []
-  );
+    } catch {
+      return [];
+    }
+  }, []);
 
-  const listAvailableModels = useCallback(
-    async (accessToken: string): Promise<AvailableTeacherModel[]> => {
-      try {
-        const data = await apiCall<{ models: AvailableTeacherModel[] }>(
-          '/v1/models/available',
-          accessToken
-        );
-        return (data.models ?? []).filter((m) => m.available);
-      } catch {
-        return [];
-      }
-    },
-    []
-  );
+  const estimateJob = useCallback(async (request: EstimateRequest): Promise<EstimateResponse> => {
+    return apiCall<EstimateResponse>(`/v1/distillation/estimate?${qs}`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }, []);
+
+  const listAvailableModels = useCallback(async (): Promise<AvailableTeacherModel[]> => {
+    try {
+      const data = await apiCall<{ models: AvailableTeacherModel[] }>(
+        '/v1/distillation/teacher-models'
+      );
+      return (data.models ?? []).filter((m) => m.available);
+    } catch {
+      return [];
+    }
+  }, []);
 
   const deployJob = useCallback(
     async (
-      accessToken: string,
       jobId: string,
-      tenantId: string,
       instanceType?: string
     ): Promise<{
       deployment_id: string;
@@ -534,15 +458,10 @@ export function useDistillationService() {
       status: string;
       already_deployed: boolean;
     }> => {
-      return apiCall(
-        `/v1/distillation/${encodeURIComponent(jobId)}/deploy?tenant_id=${encodeURIComponent(tenantId)}`,
-        accessToken,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ instance_type: instanceType || 'cpu-small' }),
-        }
-      );
+      return apiCall(`/v1/distillation/${encodeURIComponent(jobId)}/deploy?${qs}`, {
+        method: 'POST',
+        body: JSON.stringify({ instance_type: instanceType || 'cpu-small' }),
+      });
     },
     []
   );

@@ -28,9 +28,6 @@ def _deser_item(r: dict[str, Any]) -> dict[str, Any]:
     return r
 
 
-# =========================================================================
-# Queue CRUD
-# =========================================================================
 
 def create_queue(tenant_id: str, data: dict[str, Any]) -> dict[str, Any]:
     qid = str(uuid.uuid4())
@@ -89,9 +86,6 @@ def _update_queue_counter(tenant_id: str, queue_id: str, field: str, increment: 
     insert_row("eval_annotation_queues", q)
 
 
-# =========================================================================
-# Item operations
-# =========================================================================
 
 def create_items_from_samples(tenant_id: str, queue_id: str, samples: list[dict[str, Any]]) -> int:
     now = now_utc()

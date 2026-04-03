@@ -26,9 +26,6 @@ logger = logging.getLogger(__name__)
 HF_REPO_ID = "pureai-ecosystem/lunar-router-weights"
 HF_REPO_URL = f"https://huggingface.co/{HF_REPO_ID}"
 
-# ============================================================================
-# Configuration
-# ============================================================================
 
 # Default data directory (like ~/.nltk_data or ~/.cache/huggingface)
 def _get_data_home() -> Path:
@@ -59,9 +56,6 @@ DEFAULT_INDEX_URL = "https://raw.githubusercontent.com/pureai-ecosystem/lunar-ro
 BUNDLED_INDEX_PATH = Path(__file__).parent / "index.json"
 
 
-# ============================================================================
-# Data Classes
-# ============================================================================
 
 @dataclass
 class Package:
@@ -189,9 +183,6 @@ class PackageIndex:
         return [p for p in self.packages.values() if p.category == category]
 
 
-# ============================================================================
-# Hub Class
-# ============================================================================
 
 class Hub:
     """
@@ -533,9 +524,6 @@ class Hub:
         return info
 
 
-# ============================================================================
-# Module-level API (like NLTK)
-# ============================================================================
 
 # Global hub instance
 _hub: Optional[Hub] = None

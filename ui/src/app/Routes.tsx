@@ -12,6 +12,10 @@ const DatasetDetail = lazy(
   () => import('@/features/distill-dataset/components/DatasetDetail/DatasetDetailPage')
 );
 const Evaluations = lazy(() => import('@/features/evaluations'));
+const DistillJobs = lazy(() => import('@/views/DistillJobs'));
+const NewDistillationJob = lazy(() => import('@/views/NewDistillationJob'));
+const DistillationJobView = lazy(() => import('@/views/DistillationJobView'));
+const DistillationResults = lazy(() => import('@/views/DistillationResults'));
 export function AppRoutes() {
   return (
     <Suspense fallback={<FullScreenSpinner />}>
@@ -25,6 +29,10 @@ export function AppRoutes() {
           <Route path="distill-datasets" element={<DistillDatasets />} />
           <Route path="distill-datasets/:datasetId" element={<DatasetDetail />} />
           <Route path="distill-datasets/:datasetId/:tab" element={<DatasetDetail />} />
+          <Route path="distill-jobs" element={<DistillJobs />} />
+          <Route path="distill-new" element={<NewDistillationJob />} />
+          <Route path="distill-job/:jobId" element={<DistillationJobView />} />
+          <Route path="distill-job/:jobId/results" element={<DistillationResults />} />
           <Route path="evaluations" element={<Evaluations />} />
         </Route>
 

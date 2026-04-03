@@ -1,4 +1,4 @@
-import { BarChart3, Database, FlaskConical, Layers, Route, BookOpen } from 'lucide-react';
+import { BarChart3, Database, FlaskConical, Layers, Route, BookOpen, Sparkles } from 'lucide-react';
 import type { TabKey } from '../../types/tabs';
 
 export interface MenuItem {
@@ -44,6 +44,13 @@ export const MENU_SECTIONS: MenuSection[] = [
         path: '/distill-datasets',
         icon: <Layers size={20} />,
         description: 'Manage datasets and traces',
+      },
+      {
+        label: 'Jobs',
+        value: 'distill-jobs',
+        path: '/distill-jobs',
+        icon: <Sparkles size={20} />,
+        description: 'Distillation & fine-tuning jobs',
       },
     ],
   },

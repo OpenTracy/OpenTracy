@@ -35,9 +35,6 @@ def _deser_run(r: dict[str, Any]) -> dict[str, Any]:
     return r
 
 
-# =========================================================================
-# Config CRUD
-# =========================================================================
 
 def list_configs(tenant_id: str) -> list[dict[str, Any]]:
     rows = query_rows(
@@ -117,9 +114,6 @@ def update_config_last_run(tenant_id: str, config_id: str, score: float, timesta
     insert_row("eval_auto_eval_configs", current)
 
 
-# =========================================================================
-# Run CRUD
-# =========================================================================
 
 def create_run(tenant_id: str, config_id: str, data: dict[str, Any]) -> dict[str, Any]:
     rid = str(uuid.uuid4())

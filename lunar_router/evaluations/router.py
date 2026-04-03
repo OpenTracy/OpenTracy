@@ -35,9 +35,6 @@ def _auth(request: Request) -> str | None:
 _runner = EvaluationRunner()
 
 
-# =========================================================================
-# LIST / CREATE
-# =========================================================================
 
 @router.get("")
 async def list_evaluations(request: Request, status: str | None = Query(None)):
@@ -118,9 +115,6 @@ async def create_evaluation(request: Request):
     return evaluation
 
 
-# =========================================================================
-# GET / DELETE / STATUS / RESULTS
-# =========================================================================
 
 @router.get("/settings")
 async def get_settings_redirect(request: Request):
@@ -249,9 +243,6 @@ async def delete_evaluation(evaluation_id: str, request: Request):
     return {"message": "Evaluation deleted"}
 
 
-# =========================================================================
-# CANCEL / RERUN / CLEANUP
-# =========================================================================
 
 @router.post("/{evaluation_id}/cancel")
 async def cancel_evaluation(evaluation_id: str, request: Request):

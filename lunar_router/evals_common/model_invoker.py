@@ -67,12 +67,17 @@ class ModelInvoker:
         authorization: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        **extra: Any,
     ) -> dict[str, Any]:
         """
         Invoke a model with structured messages.
 
+        Args:
+            extra: Additional payload fields (e.g. tools, tool_choice)
+
         Returns:
-            {"output": str, "latency": float, "cost": float, "usage": dict}
+            {"output": str, "latency": float, "cost": float, "usage": dict,
+             "tool_calls": list | None}
         """
         url = f"{self.base_url}/v1/chat/completions"
         headers = self._build_headers(authorization)
@@ -83,6 +88,8 @@ class ModelInvoker:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        # Merge extra fields (tools, tool_choice, etc.)
+        payload.update(extra)
 
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
@@ -103,16 +110,24 @@ class ModelInvoker:
 
         # Extract output
         output = ""
+        tool_calls = None
         choices = body.get("choices", [])
         if choices:
             message = choices[0].get("message", {})
-            output = message.get("content", "")
+            output = message.get("content", "") or ""
+            if message.get("tool_calls"):
+                tool_calls = message["tool_calls"]
 
         # Extract usage / cost
         usage = body.get("usage", {})
         cost = 0.0
-        if "cost" in body:
-            cost = float(body["cost"])
+        cost_data = body.get("cost")
+        if isinstance(cost_data, (int, float)):
+            cost = float(cost_data)
+        elif isinstance(cost_data, dict):
+            cost = float(cost_data.get("total_cost_usd", 0))
+        elif isinstance(cost_data, str):
+            cost = float(cost_data)
         elif "total_cost" in usage:
             cost = float(usage["total_cost"])
 
@@ -121,4 +136,5 @@ class ModelInvoker:
             "latency": latency,
             "cost": cost,
             "usage": usage,
+            "tool_calls": tool_calls,
         }

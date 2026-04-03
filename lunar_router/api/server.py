@@ -66,6 +66,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Eval tables migration skipped: {e}")
 
+    # Run distillation tables migration
+    try:
+        _run_distillation_migration()
+    except Exception as e:
+        logger.warning(f"Distillation migration skipped: {e}")
+
     # Seed built-in evaluation metrics
     try:
         from ..metrics.repository import seed_builtin_metrics
@@ -100,6 +106,29 @@ def _run_eval_migration():
             except Exception as e:
                 if "already exists" not in str(e).lower():
                     logger.warning("Eval migration statement failed: %s — %s", stmt[:80], e)
+
+
+def _run_distillation_migration():
+    """Execute the distillation tables ClickHouse migration if not yet applied."""
+    import pathlib
+    from ..storage.clickhouse_client import get_client
+
+    client = get_client()
+    if client is None:
+        return
+    migration_file = pathlib.Path(__file__).resolve().parents[2] / "clickhouse" / "009_create_distillation_tables.sql"
+    if not migration_file.exists():
+        logger.debug("Distillation migration file not found: %s", migration_file)
+        return
+    sql = migration_file.read_text()
+    for statement in sql.split(";"):
+        stmt = statement.strip()
+        if stmt:
+            try:
+                client.command(stmt)
+            except Exception as e:
+                if "already exists" not in str(e).lower():
+                    logger.warning("Distillation migration statement failed: %s — %s", stmt[:80], e)
 
 
 def _run_datasets_migration():
@@ -166,6 +195,10 @@ app.include_router(trace_issues_router)
 app.include_router(proposals_router)
 app.include_router(eval_agent_router)
 app.include_router(settings_router)
+
+# Mount distillation module router
+from ..distillation.router import router as distillation_router  # noqa: E402
+app.include_router(distillation_router)
 
 
 def get_router() -> UniRouteRouter:

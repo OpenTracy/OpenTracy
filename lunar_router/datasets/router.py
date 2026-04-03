@@ -66,9 +66,6 @@ def _detect_field(sample: dict, candidates: list[str]) -> str:
     return ""
 
 
-# ============================================================================
-# LIST / CREATE datasets
-# ============================================================================
 
 @router.get("")
 async def list_datasets(request: Request):
@@ -84,9 +81,6 @@ async def create_dataset(body: DatasetCreate, request: Request):
     return {"dataset": ds}
 
 
-# ============================================================================
-# GET / DELETE single dataset
-# ============================================================================
 
 @router.get("/{dataset_id}")
 async def get_dataset(
@@ -115,9 +109,6 @@ async def delete_dataset(dataset_id: str, request: Request):
     return {"success": True}
 
 
-# ============================================================================
-# SAMPLES
-# ============================================================================
 
 @router.post("/{dataset_id}/samples")
 async def add_samples(dataset_id: str, body: AddSamplesRequest, request: Request):
@@ -137,9 +128,6 @@ async def delete_sample(dataset_id: str, sample_id: str, request: Request):
     return {"success": True}
 
 
-# ============================================================================
-# FROM-TRACES  (create dataset from existing llm_traces)
-# ============================================================================
 
 @router.post("/from-traces")
 async def create_from_traces(body: CreateFromTracesRequest, request: Request):
@@ -191,9 +179,6 @@ async def create_from_traces(body: CreateFromTracesRequest, request: Request):
     return {"dataset": ds}
 
 
-# ============================================================================
-# FROM-INSTRUCTION  (placeholder — needs LLM integration)
-# ============================================================================
 
 @router.post("/from-instruction")
 async def create_from_instruction(body: CreateFromInstructionRequest, request: Request):
@@ -238,18 +223,12 @@ async def create_from_instruction(body: CreateFromInstructionRequest, request: R
     }
 
 
-# ============================================================================
-# GENERATE  (synthetic generation removed — returns 410)
-# ============================================================================
 
 @router.post("/generate")
 async def generate_dataset():
     raise HTTPException(status_code=410, detail="Synthetic generation has been removed")
 
 
-# ============================================================================
-# ANALYZE-TRACES  /  IMPORT-TRACES  (smart-import from file)
-# ============================================================================
 
 @router.post("/analyze-traces")
 async def analyze_traces_schema(body: AnalyzeTracesRequest):
@@ -409,9 +388,6 @@ async def import_traces(body: ImportTracesRequest, request: Request):
     }
 
 
-# ============================================================================
-# AUTO-COLLECT
-# ============================================================================
 
 @router.get("/{dataset_id}/auto-collect")
 async def get_auto_collect(dataset_id: str, request: Request):

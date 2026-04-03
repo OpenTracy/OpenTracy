@@ -59,7 +59,6 @@ export interface CurationAgentConfig {
 export interface DistillationConfig {
   teacher_model: string;
   student_model: string;
-  target_device: string;
   dataset_id: string;
   n_samples: number;
   temperature: number;
@@ -151,28 +150,35 @@ export interface CreateDistillationJobRequest {
 // Teacher Models
 export const TEACHER_MODELS = [
   {
-    id: 'gpt-4o',
+    id: 'openai/gpt-4o',
     name: 'GPT-4o',
     provider: 'OpenAI',
     quality: 'highest' as const,
     cost_per_1k: 0.005,
   },
   {
-    id: 'gpt-4-turbo',
+    id: 'openai/gpt-4o-mini',
+    name: 'GPT-4o Mini',
+    provider: 'OpenAI',
+    quality: 'high' as const,
+    cost_per_1k: 0.0015,
+  },
+  {
+    id: 'openai/gpt-4-turbo',
     name: 'GPT-4 Turbo',
     provider: 'OpenAI',
     quality: 'high' as const,
     cost_per_1k: 0.01,
   },
   {
-    id: 'claude-3-opus',
-    name: 'Claude 3 Opus',
+    id: 'anthropic/claude-sonnet-4-20250514',
+    name: 'Claude Sonnet 4',
     provider: 'Anthropic',
     quality: 'highest' as const,
-    cost_per_1k: 0.015,
+    cost_per_1k: 0.003,
   },
   {
-    id: 'claude-3.5-sonnet',
+    id: 'anthropic/claude-3-5-sonnet-20241022',
     name: 'Claude 3.5 Sonnet',
     provider: 'Anthropic',
     quality: 'high' as const,
@@ -308,14 +314,6 @@ export const STUDENT_MODELS: StudentModel[] = [
   // Granite
   { id: 'granite-3.2-2b', name: 'Granite 3.2 2B', params: '2B', memory: '~3GB', family: 'Granite' },
   { id: 'granite-3.2-8b', name: 'Granite 3.2 8B', params: '8B', memory: '~8GB', family: 'Granite' },
-];
-
-// Target Devices
-export const TARGET_DEVICES = [
-  { id: 'nvidia-a100', name: 'NVIDIA A100', vram: '80GB' },
-  { id: 'nvidia-h100', name: 'NVIDIA H100', vram: '80GB' },
-  { id: 'nvidia-l4', name: 'NVIDIA L4', vram: '24GB' },
-  { id: 'nvidia-t4', name: 'NVIDIA T4', vram: '16GB' },
 ];
 
 // Quantization Options

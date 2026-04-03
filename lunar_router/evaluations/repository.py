@@ -33,9 +33,6 @@ def _deserialize_result(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-# =========================================================================
-# Evaluation CRUD
-# =========================================================================
 
 def create(tenant_id: str, data: dict[str, Any]) -> dict[str, Any]:
     evaluation_id = str(uuid.uuid4())
@@ -141,9 +138,6 @@ def delete(tenant_id: str, evaluation_id: str) -> bool:
     return True
 
 
-# =========================================================================
-# Results
-# =========================================================================
 
 def save_result(tenant_id: str, evaluation_id: str, result_data: dict[str, Any]) -> dict[str, Any]:
     now = now_utc()
@@ -188,9 +182,6 @@ def save_result_and_complete(
     )
 
 
-# =========================================================================
-# Stale detection
-# =========================================================================
 
 def find_stale_evaluations(tenant_id: str, stale_threshold_hours: float = 1.0) -> list[dict[str, Any]]:
     running_cutoff = now_utc() - timedelta(hours=stale_threshold_hours)

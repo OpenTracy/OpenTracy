@@ -61,13 +61,11 @@ import type { DistillationJob, DistillationResults, GGUFArtifact } from '@/types
 import {
   TEACHER_MODELS,
   STUDENT_MODELS,
-  TARGET_DEVICES,
   QUANTIZATION_OPTIONS,
   CURATION_AGENTS,
 } from '@/types/distillationTypes';
 import type { CurationSample } from '@/services/distillationService';
 import { useCurationSubscription } from '@/hooks/useCurationSubscription';
-import { useUser } from '@/contexts/UserContext';
 import {
   LineChart,
   Line,
@@ -117,7 +115,6 @@ export default function DistillationJobView() {
     getJobArtifacts,
     deployJob,
   } = useDistillation();
-  const { tenantId } = useUser();
 
   const [job, setJob] = useState<DistillationJob | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -139,7 +136,7 @@ export default function DistillationJobView() {
     events: curationEvents,
     latestEvent,
     connected: subConnected,
-  } = useCurationSubscription(tenantId ?? undefined, jobId, isCurationPhase);
+  } = useCurationSubscription('default', jobId, isCurationPhase);
   const [viewingEventIdx, setViewingEventIdx] = useState<number | null>(null);
 
   // Auto-track latest event
@@ -357,11 +354,6 @@ export default function DistillationJobView() {
   const studentModel = STUDENT_MODELS.find((m) => m.id === job.config.student_model);
   const studentName = studentModel?.name || job.config.student_model;
   const studentParams = studentModel?.params;
-
-  const device = TARGET_DEVICES.find((d) => d.id === job.config.target_device);
-  const deviceName = device
-    ? `${device.name} (${device.vram})`
-    : job.config.target_device || '\u2014';
 
   const quantOption = QUANTIZATION_OPTIONS.find((q) => q.id === job.config.quantization);
   const quantLabel = quantOption?.name || job.config.quantization?.toUpperCase() || '\u2014';
@@ -648,10 +640,6 @@ export default function DistillationJobView() {
                       </p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground mb-0.5">Target Device</p>
-                      <p className="text-sm font-medium">{deviceName}</p>
-                    </div>
-                    <div>
                       <p className="text-xs text-muted-foreground mb-0.5">Quantization</p>
                       <p className="text-sm font-medium">{quantLabel}</p>
                     </div>
@@ -771,14 +759,14 @@ export default function DistillationJobView() {
 
                             {/* Candidate cards */}
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              {activeEvent.candidates.map((candidate) => {
+                              {activeEvent.candidates.map((candidate, idx) => {
                                 const isWinner =
                                   candidate.candidateIndex === activeEvent.selectedIndex;
                                 const scorePct = Math.round(candidate.score * 100);
 
                                 return (
                                   <Card
-                                    key={candidate.candidateIndex}
+                                    key={`candidate-${idx}`}
                                     className={cn(
                                       isWinner && 'border-primary bg-accent ring-1 ring-primary/10'
                                     )}
@@ -954,11 +942,13 @@ export default function DistillationJobView() {
 
                             {/* Candidate cards */}
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              {sample.candidates.map((c) => {
+                              {sample.candidates.map((c, idx) => {
                                 const scorePct = Math.round(Number(c.scores?.quality ?? 0) * 100);
                                 return (
                                   <Card
-                                    key={c.candidate_idx}
+                                    key={
+                                      c.candidate_id || `${c.prompt_id}-${c.candidate_idx}-${idx}`
+                                    }
                                     className={cn(
                                       c.isWinner &&
                                         'border-primary bg-accent ring-1 ring-primary/10'

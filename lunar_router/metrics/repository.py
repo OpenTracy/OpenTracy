@@ -29,9 +29,6 @@ def _deserialize(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-# =========================================================================
-# CRUD
-# =========================================================================
 
 def create(tenant_id: str, data: dict[str, Any]) -> dict[str, Any]:
     metric_id = str(uuid.uuid4())
@@ -145,9 +142,6 @@ def delete(tenant_id: str, metric_id: str) -> bool:
     return True
 
 
-# =========================================================================
-# Builtin seeding
-# =========================================================================
 
 BUILTIN_METRICS = [
     {"metric_id": "exact_match", "name": "Exact Match", "type": "exact_match", "description": "Compares output exactly with expected output"},

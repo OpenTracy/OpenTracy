@@ -22,9 +22,6 @@ def _deser_issue(r: dict[str, Any]) -> dict[str, Any]:
     return r
 
 
-# =========================================================================
-# Issue CRUD
-# =========================================================================
 
 def create_issue(tenant_id: str, data: dict[str, Any]) -> dict[str, Any]:
     iid = str(uuid.uuid4())
@@ -133,9 +130,6 @@ def delete_unresolved_issues(tenant_id: str) -> int:
     return len(issues)
 
 
-# =========================================================================
-# Scan CRUD
-# =========================================================================
 
 def create_scan(tenant_id: str) -> dict[str, Any]:
     sid = str(uuid.uuid4())

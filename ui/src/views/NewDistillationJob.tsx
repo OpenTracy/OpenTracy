@@ -48,13 +48,11 @@ import { Slider } from '@/components/shared/Slider';
 import { CostBadge } from '@/components/shared/CostBadge';
 import { useDistillation } from '@/hooks/useDistillation';
 import { useDatasets } from '@/hooks/useDatasets';
-import { useOnboarding } from '@/hooks/useOnboarding';
 import { useTutorialStep } from '@/components/Tutorial';
 import {
   TEACHER_MODELS,
   STUDENT_MODELS,
   STUDENT_MODEL_FAMILIES,
-  TARGET_DEVICES,
   QUANTIZATION_OPTIONS,
   CURATION_AGENTS,
   type CurationAgentConfig,
@@ -73,11 +71,9 @@ export default function NewDistillationJob() {
   const preselectedDatasetId = searchParams.get('dataset');
 
   const { createJob, estimateJob, listAvailableModels } = useDistillation();
-  const {
-    step: tutorialStep,
-    isActive: isTutorialActive,
-    nextStep: advanceTutorial,
-  } = useOnboarding();
+  const tutorialStep = 0;
+  const isTutorialActive = false;
+  const advanceTutorial = async () => {};
   useTutorialStep(4, false);
   const { datasets } = useDatasets();
   const [teacherModels, setTeacherModels] = useState<AvailableTeacherModel[]>([]);
@@ -102,7 +98,6 @@ export default function NewDistillationJob() {
   const [expandedFamilies, setExpandedFamilies] = useState<Set<string>>(
     new Set([defaultStudentFamily])
   );
-  const [targetDevice, setTargetDevice] = useState('nvidia-a100');
   const [dataSource, setDataSource] = useState<'existing' | 'upload'>('existing');
   const [selectedDatasetId, setSelectedDatasetId] = useState(preselectedDatasetId || '');
   const [nSamples, setNSamples] = useState(5);
@@ -239,7 +234,6 @@ export default function NewDistillationJob() {
         config: {
           teacher_model: teacherModel,
           student_model: studentModel,
-          target_device: targetDevice,
           dataset_id: selectedDatasetId,
           n_samples: nSamples,
           temperature,
@@ -480,24 +474,6 @@ export default function NewDistillationJob() {
                       </div>
                     </ScrollArea>
                   </div>
-                </div>
-
-                <Separator />
-
-                <div className="max-w-xs space-y-2">
-                  <Label>Target Device</Label>
-                  <Select value={targetDevice} onValueChange={setTargetDevice}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {TARGET_DEVICES.map((d) => (
-                        <SelectItem key={d.id} value={d.id}>
-                          {d.name} ({d.vram})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
               </CardContent>
             </Card>
