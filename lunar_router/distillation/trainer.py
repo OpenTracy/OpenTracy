@@ -57,7 +57,7 @@ async def start_training(
     try:
         import torch as _torch
         if _torch.cuda.is_available():
-            vram_gb = _torch.cuda.get_device_properties(0).total_mem / (1024**3)
+            vram_gb = _torch.cuda.get_device_properties(0).total_memory / (1024**3)
             _low_vram = vram_gb < 4.0
             logger.info("GPU VRAM: %.2f GiB (low_vram=%s)", vram_gb, _low_vram)
     except Exception:
@@ -164,7 +164,7 @@ def _run_training(config_path: str) -> None:
 
     print(f"[TRAIN] PyTorch {torch.__version__}, CUDA={torch.cuda.is_available()}")
     if torch.cuda.is_available():
-        vram_gb = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         print(f"[TRAIN] GPU: {torch.cuda.get_device_name(0)}, VRAM: {vram_gb:.2f} GiB")
         if vram_gb < 4.0:
             os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -311,7 +311,7 @@ def _run_sft_training(
     # Detect low VRAM for extra memory optimizations
     _low_vram_train = False
     if torch.cuda.is_available():
-        _vram = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+        _vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         _low_vram_train = _vram < 4.0
 
     training_args = TrainingArguments(

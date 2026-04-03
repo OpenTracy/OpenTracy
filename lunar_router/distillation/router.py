@@ -223,15 +223,19 @@ async def cancel_job(
     """Cancel a running distillation job."""
     tid = _tenant(tenant_id)
 
-    from .pipeline import cancel_pipeline
-    cancelled = cancel_pipeline(job_id)
-
-    if cancelled:
-        repo.update_job_status(tid, job_id, status="cancelled", error="Cancelled by user")
-
     job = repo.get_job(tid, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    active_statuses = {"pending", "queued", "running"}
+    if job.get("status") in active_statuses:
+        from .pipeline import cancel_pipeline
+        cancel_pipeline(job_id)
+
+        repo.update_job_status(tid, job_id, status="cancelled", error="Cancelled by user")
+
+        job = repo.get_job(tid, job_id) or job
+
     return _serialize_job(job)
 
 

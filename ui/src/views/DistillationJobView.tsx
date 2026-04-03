@@ -13,7 +13,6 @@ import {
   Download,
   Rocket,
   TrendingUp,
-  DollarSign,
   Zap,
   ChevronDown,
   ChevronUp,
@@ -51,7 +50,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { StepTracker } from '@/components/shared/StepTracker';
 import { TerminalLogs } from '@/components/shared/TerminalLogs';
-import { CostBadge } from '@/components/shared/CostBadge';
 import { KpiCard } from '@/components/shared/KpiCard';
 import { DiffViewer } from '@/components/shared/DiffViewer';
 import { useDistillation } from '@/hooks/useDistillation';
@@ -454,7 +452,6 @@ export default function DistillationJobView() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <CostBadge amount={job.cost_accrued} label="accrued" />
               {(job.status === 'running' || job.status === 'pending') && (
                 <Button variant="outline" size="sm" onClick={handleCancel}>
                   <XCircle className="size-4" />
@@ -516,18 +513,12 @@ export default function DistillationJobView() {
 
           {isCompleted && results && (
             <>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <KpiCard
                   label="Quality Score"
                   value={`${((results.quality_score ?? 0) * 100).toFixed(0)}%`}
                   icon={TrendingUp}
                   subtitle={`vs ${teacherName}`}
-                />
-                <KpiCard
-                  label="Cost Savings"
-                  value={`${(results.cost_savings ?? 0).toFixed(1)}%`}
-                  icon={DollarSign}
-                  subtitle="cheaper per request"
                 />
                 <KpiCard
                   label="Speed"

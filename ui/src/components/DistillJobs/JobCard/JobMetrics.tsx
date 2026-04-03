@@ -5,10 +5,9 @@ import { ItemContent, ItemDescription } from '@/components/ui/item';
 interface JobMetricsProps {
   status: DistillationStatus;
   progress?: number;
-  cost: number;
 }
 
-export function JobMetrics({ status, progress, cost }: JobMetricsProps) {
+export function JobMetrics({ status, progress }: JobMetricsProps) {
   return (
     <div className="flex items-center gap-4">
       <ItemContent className="flex-col items-end gap-1">
@@ -20,12 +19,6 @@ export function JobMetrics({ status, progress, cost }: JobMetricsProps) {
             </span>
           </div>
         )}
-      </ItemContent>
-
-      <ItemContent>
-        <ItemDescription className="text-sm text-foreground font-medium tabular-nums">
-          ${cost.toFixed(2)}
-        </ItemDescription>
       </ItemContent>
     </div>
   );

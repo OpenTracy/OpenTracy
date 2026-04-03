@@ -45,7 +45,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Slider } from '@/components/shared/Slider';
-import { CostBadge } from '@/components/shared/CostBadge';
+
 import { useDistillation } from '@/hooks/useDistillation';
 import { useDatasets } from '@/hooks/useDatasets';
 import { useTutorialStep } from '@/components/Tutorial';
@@ -713,25 +713,9 @@ export default function NewDistillationJob() {
             <Separator />
 
             <div className="flex items-center justify-between pb-6">
-              {estimateLoading ? (
-                <Badge variant="outline" className="gap-1.5 py-1.5">
-                  <Loader2 className="size-3 animate-spin" />
-                  Estimating cost...
-                </Badge>
-              ) : estimate?.is_sandbox ? (
-                <CostBadge amount={0} variant="sandbox" />
-              ) : estimate && !estimate.sufficient ? (
-                <CostBadge
-                  amount={estimate.estimated_cost}
-                  variant="insufficient"
-                  balance={estimate.balance}
-                  onAddCredits={() => navigate('/billing')}
-                />
-              ) : estimate ? (
-                <CostBadge amount={estimate.estimated_cost} variant="sufficient" label="credits" />
-              ) : (
-                <CostBadge amount={0} label="estimated" />
-              )}
+              <Badge variant="outline" className="gap-1.5 py-1.5">
+                Local Compute
+              </Badge>
 
               <div className="flex items-center gap-3">
                 <Button variant="outline" onClick={() => navigate('/distill-jobs')}>
