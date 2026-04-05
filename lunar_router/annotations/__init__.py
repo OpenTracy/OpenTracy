@@ -1,0 +1,4 @@
+"""Annotations module — queues, items, analytics."""
+from .router import router
+
+__all__ = ["router"]

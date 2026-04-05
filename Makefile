@@ -1,9 +1,8 @@
-# ============================================================================
 # Lunar Router — Developer Makefile
-# ============================================================================
 #
 #   make start          ← fastest way to get running (build + launch gateway)
 #   make start-full     ← full stack with ClickHouse analytics
+#   make dev-all        ← local dev: ClickHouse + Go + Python API + UI
 #   make test           ← run all tests
 #
 # Prerequisites:
@@ -13,9 +12,9 @@
 # ============================================================================
 
 .PHONY: help install build start start-full stop \
-        dev dev-go dev-python dev-ui \
+        dev dev-all dev-go dev-python dev-ui \
         test test-go test-python test-clickhouse \
-        lint lint-go lint-python clean
+        lint lint-go lint-python clean stop-all
 
 help: ## Show this help
 	@echo ""
@@ -84,6 +83,18 @@ install-all: ## Install everything (Python dev deps + Go + UI)
 	cd go && go mod download
 	@if [ -d ui ]; then cd ui && npm install; fi
 
+install-train: ## Install training/distillation dependencies (requires CUDA GPU)
+	@echo "Installing training dependencies..."
+	pip install -r lunar_router/requirements-train.txt
+	@echo ""
+	@python3 -c "import torch; print('  PyTorch', torch.__version__, '— CUDA:', torch.cuda.is_available())" 2>/dev/null || \
+		echo "  ⚠ PyTorch not found. Install: pip install torch --index-url https://download.pytorch.org/whl/cu126"
+	@python3 -c "import unsloth; print('  ✓ unsloth OK')" 2>/dev/null || echo "  ✗ unsloth failed"
+	@python3 -c "import trl; print('  ✓ trl OK')" 2>/dev/null || echo "  ✗ trl failed"
+	@python3 -c "import peft; print('  ✓ peft OK')" 2>/dev/null || echo "  ✗ peft failed"
+	@python3 -c "import bitsandbytes; print('  ✓ bitsandbytes OK')" 2>/dev/null || echo "  ✗ bitsandbytes failed"
+	@python3 -c "import datasets; print('  ✓ datasets OK')" 2>/dev/null || echo "  ✗ datasets failed"
+
 download-weights: ## Download pre-trained routing weights from HuggingFace
 	lunar-router download weights-mmlu-v1
 
@@ -120,6 +131,89 @@ dev-python: ## Run Python API server locally
 
 dev-ui: ## Run UI dev server
 	cd ui && npm run dev -- --port 3000
+
+# ---------------------------------------------------------------------------
+# Full local stack  (ClickHouse + Go + Python API + UI)
+# ---------------------------------------------------------------------------
+
+# Env vars shared by Go engine and Python API
+export LUNAR_CH_ENABLED  := true
+export LUNAR_CH_HOST     := localhost
+export LUNAR_CH_PASSWORD := lunar
+export LUNAR_CH_DATABASE := lunar_router
+
+dev-all: build ## Start everything: ClickHouse, Go engine, Python API, UI
+	@# Clean up any stale processes first
+	@-lsof -ti :8080 | xargs kill -9 2>/dev/null || true
+	@-lsof -ti :8000 | xargs kill -9 2>/dev/null || true
+	@-lsof -ti :3000 | xargs kill -9 2>/dev/null || true
+	@-rm -f /tmp/lunar-engine.pid /tmp/lunar-api.pid /tmp/lunar-ui.pid
+	@sleep 1
+	@echo ""
+	@echo "  \033[1m Starting full local stack …\033[0m"
+	@echo ""
+	@# 1. ClickHouse (Docker) -----------------------------------------------
+	@docker compose up clickhouse -d
+	@echo "  Waiting for ClickHouse …"
+	@until docker compose exec -T clickhouse clickhouse-client --password lunar -q "SELECT 1" > /dev/null 2>&1; do sleep 1; done
+	@echo "  \033[32m✓ ClickHouse ready       — localhost:8123\033[0m"
+	@# 2. Go engine (background) --------------------------------------------
+	@LUNAR_CH_ENABLED=true LUNAR_CH_HOST=localhost LUNAR_CH_PASSWORD=lunar LUNAR_CH_DATABASE=lunar_router \
+		nohup ./go/bin/lunar-engine --gateway > /tmp/lunar-engine.log 2>&1 & echo $$! > /tmp/lunar-engine.pid
+	@sleep 2
+	@if kill -0 $$(cat /tmp/lunar-engine.pid) 2>/dev/null; then \
+		echo "  \033[32m✓ Go engine ready        — localhost:8080  (pid $$(cat /tmp/lunar-engine.pid))\033[0m"; \
+	else \
+		echo "  \033[31m✗ Go engine failed to start — check /tmp/lunar-engine.log\033[0m"; exit 1; \
+	fi
+	@# 3. Python API (background) -------------------------------------------
+	@LUNAR_CH_ENABLED=true LUNAR_CH_HOST=localhost LUNAR_CH_PASSWORD=lunar LUNAR_CH_DATABASE=lunar_router \
+		nohup uvicorn lunar_router.api.server:app --host 0.0.0.0 --port 8000 > /tmp/lunar-api.log 2>&1 & echo $$! > /tmp/lunar-api.pid
+	@sleep 3
+	@if kill -0 $$(cat /tmp/lunar-api.pid) 2>/dev/null; then \
+		echo "  \033[32m✓ Python API ready       — localhost:8000  (pid $$(cat /tmp/lunar-api.pid))\033[0m"; \
+	else \
+		echo "  \033[31m✗ Python API failed to start — check /tmp/lunar-api.log\033[0m"; exit 1; \
+	fi
+	@# 4. UI dev server (background) ----------------------------------------
+	@cd ui && nohup npm run dev -- --port 3000 > /tmp/lunar-ui.log 2>&1 & echo $$! > /tmp/lunar-ui.pid
+	@sleep 3
+	@if kill -0 $$(cat /tmp/lunar-ui.pid) 2>/dev/null; then \
+		echo "  \033[32m✓ UI dev server ready    — localhost:3000  (pid $$(cat /tmp/lunar-ui.pid))\033[0m"; \
+	else \
+		echo "  \033[31m✗ UI failed to start — check /tmp/lunar-ui.log\033[0m"; exit 1; \
+	fi
+	@echo ""
+	@echo "  \033[1mAll services running!\033[0m"
+	@echo ""
+	@echo "  UI:          http://localhost:3000"
+	@echo "  Python API:  http://localhost:8000"
+	@echo "  Go engine:   http://localhost:8080"
+	@echo "  ClickHouse:  localhost:8123"
+	@echo ""
+	@echo "  Stop all:    make stop-all"
+	@echo ""
+
+stop-all: ## Stop all local services (Go, Python API, UI, ClickHouse)
+	@echo "  Stopping services …"
+	@-if [ -f /tmp/lunar-ui.pid ]; then \
+		kill $$(cat /tmp/lunar-ui.pid) 2>/dev/null && echo "  ✓ UI stopped (pid)" || true; \
+		rm -f /tmp/lunar-ui.pid; \
+	fi
+	@-if [ -f /tmp/lunar-api.pid ]; then \
+		kill $$(cat /tmp/lunar-api.pid) 2>/dev/null && echo "  ✓ Python API stopped (pid)" || true; \
+		rm -f /tmp/lunar-api.pid; \
+	fi
+	@-if [ -f /tmp/lunar-engine.pid ]; then \
+		kill $$(cat /tmp/lunar-engine.pid) 2>/dev/null && echo "  ✓ Go engine stopped (pid)" || true; \
+		rm -f /tmp/lunar-engine.pid; \
+	fi
+	@# Also kill by port as fallback (handles orphan processes)
+	@-lsof -ti :8080 | xargs kill -9 2>/dev/null && echo "  ✓ Go engine stopped (port 8080)" || true
+	@-lsof -ti :8000 | xargs kill -9 2>/dev/null && echo "  ✓ Python API stopped (port 8000)" || true
+	@-lsof -ti :3000 | xargs kill -9 2>/dev/null && echo "  ✓ UI stopped (port 3000)" || true
+	@-docker compose down 2>/dev/null && echo "  ✓ ClickHouse stopped" || echo "  · ClickHouse was not running"
+	@echo "  Done."
 
 # ---------------------------------------------------------------------------
 # Test
@@ -167,7 +261,7 @@ clickhouse-shell: ## Open ClickHouse SQL shell
 # ---------------------------------------------------------------------------
 
 clean: ## Remove build artifacts
-	rm -rf go/bin/
+	rm -rf go/bin/ outputs/ unsloth_compiled_cache/ .vite/
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
 

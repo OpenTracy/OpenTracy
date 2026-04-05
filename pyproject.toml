@@ -63,6 +63,13 @@ s3 = [
 huggingface = [
     "huggingface_hub>=0.16.0",
 ]
+distillation = [
+    "datasets>=2.14.0",
+    "unsloth>=2024.0",
+    "trl>=0.7.0",
+    "peft>=0.6.0",
+    "bitsandbytes>=0.41.0",
+]
 mcp = [
     "mcp>=1.0.0",
 ]
@@ -70,7 +77,7 @@ clickhouse = [
     "clickhouse-connect>=0.7.0",
 ]
 all = [
-    "lunar-router[openai,anthropic,mistral,google,groq,embeddings,training,api,s3,huggingface,mcp,clickhouse]",
+    "lunar-router[openai,anthropic,mistral,google,groq,embeddings,training,api,s3,huggingface,mcp,clickhouse,distillation]",
 ]
 dev = [
     "lunar-router[all]",
