@@ -80,7 +80,6 @@ Requests ──► Gateway (13 providers) ──► Traces (ClickHouse)
 
 ### Evaluations
 
-- **Evaluations** — datasets, metrics, experiments, annotations, auto-eval
 - **Run Evaluations** — send dataset samples through models, score and compare
 - **6 Built-in Metrics** — exact match, contains, similarity, LLM-as-judge, latency, cost
 - **AI Metric Suggestion** — harness agent analyzes dataset domain and creates tailored metrics
@@ -89,7 +88,9 @@ Requests ──► Gateway (13 providers) ──► Traces (ClickHouse)
 
 ### Distillation
 
-- **Distillation** — BOND pipeline: teacher → curation → LoRA training → GGUF export
+- **BOND Pipeline** — teacher → LLM-as-Judge curation → LoRA training (Unsloth) → GGUF export
+- **Dataset Support** — use domain clusters or custom datasets as training source
+- **UI + API** — create and monitor jobs via dashboard or REST endpoints
 
 ### Harness (AI Agent System)
 
@@ -97,10 +98,6 @@ Requests ──► Gateway (13 providers) ──► Traces (ClickHouse)
 - **7 Agents** — cluster labeler, coherence scorer, outlier detector, merge checker, trace scanner, eval generator, metrics suggester
 - **Memory Layer** — persistent agent memory with query/summary
 - **Tool Access** — agents can call tools (list traces, query datasets, etc.)
-
-### Integrations
-
-- **MCP Integration** — Claude Code / Claw via Model Context Protocol
 
 ## Supported Providers
 
@@ -125,6 +122,7 @@ Requests ──► Gateway (13 providers) ──► Traces (ClickHouse)
 ```bash
 pip install -e ".[openai,anthropic,api]"   # SDK + common providers
 pip install -e ".[all]"                     # everything
+pip install -e ".[train]"                   # training/distillation deps (CUDA)
 ```
 
 ## Python SDK
@@ -202,49 +200,55 @@ make start-full
 
 ### Gateway (Go Engine — port 8080)
 
-| Method | Endpoint               | Description                                           |
-| ------ | ---------------------- | ----------------------------------------------------- |
-| `POST` | `/v1/chat/completions` | Chat completion (`model="auto"` for semantic routing) |
-| `POST` | `/v1/route`            | Route a prompt without generating                     |
-| `GET`  | `/v1/models`           | List available models                                 |
-| `POST` | `/v1/config/keys`      | Set provider API key at runtime                       |
-| `POST` | `/v1/config/reload`    | Reload keys from secrets file                         |
-| `GET`  | `/v1/metrics`          | Aggregated request metrics                            |
-| `GET`  | `/v1/cache`            | Cache statistics                                      |
-| `GET`  | `/health`              | Health check                                          |
+| Method | Endpoint               | Description                       |
+| ------ | ---------------------- | --------------------------------- |
+| `POST` | `/v1/chat/completions` | Chat completion (any provider)    |
+| `POST` | `/v1/route`            | Route a prompt without generating |
+| `GET`  | `/v1/models`           | List registered models            |
+| `GET`  | `/health`              | Health check                      |
 
 ### Python API (port 8000)
 
-| Method          | Endpoint                                  | Description                                           |
-| --------------- | ----------------------------------------- | ----------------------------------------------------- |
-| **Analytics**   |                                           |                                                       |
-| `GET`           | `/v1/stats/{tenant}/analytics`            | Full analytics (traces, cost, latency, distributions) |
-| **Clustering**  |                                           |                                                       |
-| `POST`          | `/v1/clustering/run`                      | Run clustering pipeline (embed, cluster, label)       |
-| `GET`           | `/v1/clustering/datasets`                 | List domain datasets from latest run                  |
-| `GET`           | `/v1/clustering/datasets/{run}/{cluster}` | Get traces for a cluster                              |
-| **Datasets**    |                                           |                                                       |
-| `GET`           | `/v1/datasets`                            | List all datasets (eval + domain clusters)            |
-| `POST`          | `/v1/datasets`                            | Create evaluation dataset                             |
-| `POST`          | `/v1/datasets/{id}/samples`               | Add samples to dataset                                |
-| **Evaluations** |                                           |                                                       |
-| `POST`          | `/v1/evaluations`                         | Create and run evaluation (async)                     |
-| `GET`           | `/v1/evaluations`                         | List evaluations                                      |
-| `GET`           | `/v1/evaluations/{id}/status`             | Evaluation progress                                   |
-| `GET`           | `/v1/evaluations/{id}/results`            | Evaluation results with scores                        |
-| **Metrics**     |                                           |                                                       |
-| `GET`           | `/v1/metrics`                             | List built-in + custom metrics                        |
-| `POST`          | `/v1/metrics`                             | Create custom metric                                  |
-| `POST`          | `/v1/auto-eval/suggest-metrics`           | AI-powered metric suggestion                          |
-| **Models**      |                                           |                                                       |
-| `GET`           | `/v1/models/available`                    | Models available from configured providers            |
-| **Harness**     |                                           |                                                       |
-| `GET`           | `/v1/harness/agents`                      | List AI agents                                        |
-| `POST`          | `/v1/harness/run/{name}`                  | Run an agent with input                               |
-| `GET`           | `/v1/harness/memory`                      | Query agent memory                                    |
-| **Secrets**     |                                           |                                                       |
-| `GET`           | `/v1/secrets`                             | List configured providers                             |
-| `POST`          | `/v1/secrets/{provider}`                  | Save API key                                          |
+| Method           | Endpoint                                  | Description                                           |
+| ---------------- | ----------------------------------------- | ----------------------------------------------------- |
+| **Analytics**    |                                           |                                                       |
+| `GET`            | `/v1/stats/{tenant}/analytics`            | Full analytics (traces, cost, latency, distributions) |
+| **Clustering**   |                                           |                                                       |
+| `POST`           | `/v1/clustering/run`                      | Run clustering pipeline (embed, cluster, label)       |
+| `GET`            | `/v1/clustering/datasets`                 | List domain datasets from latest run                  |
+| `GET`            | `/v1/clustering/datasets/{run}/{cluster}` | Get traces for a cluster                              |
+| **Datasets**     |                                           |                                                       |
+| `GET`            | `/v1/datasets`                            | List all datasets (eval + domain clusters)            |
+| `POST`           | `/v1/datasets`                            | Create evaluation dataset                             |
+| `POST`           | `/v1/datasets/{id}/samples`               | Add samples to dataset                                |
+| **Evaluations**  |                                           |                                                       |
+| `POST`           | `/v1/evaluations`                         | Create and run evaluation (async)                     |
+| `GET`            | `/v1/evaluations`                         | List evaluations                                      |
+| `GET`            | `/v1/evaluations/{id}/status`             | Evaluation progress                                   |
+| `GET`            | `/v1/evaluations/{id}/results`            | Evaluation results with scores                        |
+| **Distillation** |                                           |                                                       |
+| `POST`           | `/v1/distillation/{tenant}/jobs`          | Create distillation job                               |
+| `GET`            | `/v1/distillation/{tenant}/jobs`          | List distillation jobs                                |
+| `GET`            | `/v1/distillation/{tenant}/jobs/{id}`     | Get job status and results                            |
+| **Metrics**      |                                           |                                                       |
+| `GET`            | `/v1/metrics`                             | List built-in + custom metrics                        |
+| `POST`           | `/v1/metrics`                             | Create custom metric                                  |
+| `POST`           | `/v1/auto-eval/suggest-metrics`           | AI-powered metric suggestion                          |
+| **Models**       |                                           |                                                       |
+| `GET`            | `/v1/models/available`                    | Models available from configured providers            |
+| **Harness**      |                                           |                                                       |
+| `GET`            | `/v1/harness/agents`                      | List AI agents                                        |
+| `POST`           | `/v1/harness/run/{name}`                  | Run an agent with input                               |
+| `GET`            | `/v1/harness/memory`                      | Query agent memory                                    |
+| **Secrets**      |                                           |                                                       |
+| `GET`            | `/v1/secrets`                             | List configured providers                             |
+| `POST`           | `/v1/secrets/{provider}`                  | Save API key                                         
+| `GET` | `/v1/harness/agents` | List AI agents |
+| `POST` | `/v1/harness/run/{name}` | Run an agent with input |
+| `GET` | `/v1/harness/memory` | Query agent memory |
+| **Secrets** | | |
+| `GET` | `/v1/secrets` | List configured providers |
+| `POST` | `/v1/secrets/{provider}` | Save API key |
 
 ## Architecture
 
@@ -277,6 +281,25 @@ lunar_router/                    # Python layer (analytics, clustering, evals)
 │       ├── trace_scanner.md
 │       ├── eval_generator.md
 │       └── metrics_suggester.md
+├── distillation/
+│   ├── pipeline.py              # 4-phase orchestrator (data gen → curation → train → export)
+│   ├── data_gen.py              # Teacher model candidate generation
+│   ├── curation.py              # LLM-as-Judge scoring & selection
+│   ├── trainer.py               # SFT/BOND fine-tuning (Unsloth + LoRA)
+│   ├── export.py                # LoRA merge + GGUF conversion
+│   ├── repository.py            # ClickHouse persistence
+│   ├── router.py                # API endpoints
+│   └── schemas.py               # Pydantic models & model catalog
+├── evaluations/                 # Evaluation runs & results
+├── datasets/                    # Dataset CRUD, from-traces, auto-collect
+├── metrics/                     # Metric definitions & validation
+├── experiments/                 # A/B experiments & comparison
+├── annotations/                 # Human annotation queues
+├── auto_eval/                   # Automated evaluation configs & triggers
+├── eval_agent/                  # AI-powered eval setup assistant
+├── proposals/                   # Decision engine proposals
+├── trace_issues/                # Issue scanning & detection
+├── training/                    # Custom router training (UniRoute)
 ├── storage/
 │   ├── clickhouse_client.py     # Analytics queries
 │   ├── secrets.py               # API key management
@@ -315,6 +338,27 @@ curl -X POST http://localhost:8000/v1/evaluations \
 curl http://localhost:8000/v1/evaluations/{id}/results
 ```
 
+## Distillation
+
+BOND-style distillation pipeline: generate candidates with a teacher model, score them with LLM-as-Judge, fine-tune a student model with LoRA, and export to GGUF.
+
+```bash
+make install-train   # install training deps (requires CUDA)
+```
+
+Via UI at `http://localhost:3000` → Distillation, or via API:
+
+```bash
+curl -X POST http://localhost:8000/v1/distillation/default/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "teacher_model": "openai/gpt-4o-mini",
+    "student_model": "unsloth/Llama-3.2-1B-Instruct-bnb-4bit",
+    "num_candidates": 5,
+    "dataset_id": "my-dataset"
+  }'
+```
+
 ## Semantic Routing
 
 With pre-trained weights, the router picks the best model per prompt:
@@ -331,91 +375,7 @@ print(f"Best model: {decision.selected_model}")
 print(f"Expected error: {decision.expected_error:.4f}")
 ```
 
-The routing formula: `h* = argmin_h [γ(x,h) + λ·c(h)]` where `γ(x,h) = Φ(x)ᵀ · Ψ(h)`.
-
-## Architecture
-
-```
-go/                          # Go engine (high-performance runtime)
-├── cmd/lunar-engine/        # Entry point (--gateway, --weights)
-├── internal/
-│   ├── provider/            # 13 providers (OpenAI, Anthropic, Bedrock, etc.)
-│   ├── router/              # UniRoute algorithm + LRU cache
-│   ├── embeddings/          # ONNX MiniLM embedder
-│   ├── clickhouse/          # Trace writer + migrations
-│   └── server/              # HTTP handlers
-
-lunar_router/                # Python package (SDK + API + all modules)
-├── sdk.py                   # completion(), acompletion(), Router class
-├── model_prices.py          # 70+ models with pricing
-├── loader.py                # load_router() with Go engine auto-detect
-├── api/                     # FastAPI server (port 8000)
-├── distillation/            # BOND distillation pipeline
-│   ├── pipeline.py          # 4-phase orchestrator (data gen → curation → train → export)
-│   ├── data_gen.py          # Teacher model candidate generation
-│   ├── curation.py          # LLM-as-Judge scoring & selection
-│   ├── trainer.py           # SFT/BOND fine-tuning (Unsloth + LoRA)
-│   ├── export.py            # LoRA merge + GGUF conversion
-│   ├── repository.py        # ClickHouse persistence
-│   ├── router.py            # API endpoints
-│   └── schemas.py           # Pydantic models & model catalog
-├── evaluations/             # Evaluation runs & results
-├── datasets/                # Dataset CRUD, from-traces, auto-collect
-├── metrics/                 # Metric definitions & validation
-├── experiments/             # A/B experiments & comparison
-├── annotations/             # Human annotation queues
-├── auto_eval/               # Automated evaluation configs & triggers
-├── eval_agent/              # AI-powered eval setup assistant
-├── proposals/               # Decision engine proposals
-├── trace_issues/            # Issue scanning & detection
-├── settings/                # Per-tenant evaluation settings
-├── evals_common/            # Shared services (model invoker, LLM judge)
-├── training/                # Custom router training (UniRoute)
-├── hub/                     # HuggingFace artifact manager
-├── mcp/                     # Claude Code MCP server
-├── storage/                 # API key management (~/.lunar/secrets.json)
-└── cli.py                   # CLI (download, route, mcp)
-
-ui/                          # React + TypeScript dashboard (port 3000)
-```
-
-## Distillation
-
-BOND-style distillation pipeline: generate candidates with a teacher model, score them with LLM-as-Judge, fine-tune a student model with LoRA, and export to GGUF.
-
-```bash
-make install-train   # install training deps (requires CUDA)
-make dev-all         # start full stack
-```
-
-Then open the UI at `http://localhost:3000` → Distillation to create a job, or via API:
-
-```bash
-curl -X POST http://localhost:8000/v1/distillation/default/jobs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "teacher_model": "openai/gpt-4o-mini",
-    "student_model": "unsloth/Llama-3.2-1B-Instruct-bnb-4bit",
-    "num_candidates": 5,
-    "dataset_id": "my-dataset"
-  }'
-```
-
-## Evaluations
-
-Built-in evaluation framework with metrics, datasets, experiments, and annotations — all accessible through the UI or API.
-
-| Module          | Description                                            |
-| --------------- | ------------------------------------------------------ |
-| **Datasets**    | Create datasets from traces or upload manually         |
-| **Metrics**     | Built-in + custom LLM-as-Judge metrics                 |
-| **Evaluations** | Run evaluations against datasets with selected metrics |
-| **Experiments** | Compare model performance side-by-side                 |
-| **Annotations** | Human-in-the-loop annotation queues                    |
-| **Auto Eval**   | Automated evaluation triggers                          |
-| **Proposals**   | Decision engine for model selection recommendations    |
-
-## Training Custom Routers
+### Training Custom Routers
 
 ```python
 from lunar_router import full_training_pipeline, TrainingConfig, PromptDataset, create_client
@@ -434,7 +394,6 @@ result = full_training_pipeline(
     TrainingConfig(num_clusters=100, output_dir="./weights"),
 )
 ```
-
 
 ## MCP Integration (Claude Code)
 
@@ -469,17 +428,6 @@ make stop-all           # stop all local services
 make test               # run all tests
 make lint               # lint all code
 ```
-
-### Local Stack
-
-`make dev-all` starts everything you need for development:
-
-| Service    | Port | Description                                   |
-| ---------- | ---- | --------------------------------------------- |
-| ClickHouse | 8123 | Analytics & trace storage (Docker)            |
-| Go engine  | 8080 | LLM gateway proxy                             |
-| Python API | 8000 | FastAPI (evaluations, distillation, datasets) |
-| UI         | 3000 | React dashboard                               |
 
 ## License
 
