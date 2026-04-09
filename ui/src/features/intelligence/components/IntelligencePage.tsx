@@ -1,7 +1,15 @@
 import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { createElement } from 'react';
-import { RefreshCw, BarChart3, DollarSign, Gauge, Layers } from 'lucide-react';
+import {
+  RefreshCw,
+  BarChart3,
+  DollarSign,
+  Gauge,
+  Layers,
+  Route,
+  GraduationCap,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PageHeader } from '@/components/shared/PageHeader';
@@ -13,15 +21,34 @@ import { OverviewTab } from './OverviewTab';
 import { CostAnalysisTab } from './CostAnalysisTab';
 import { PerformanceTab } from './PerformanceTab';
 import { ModelsTab } from './ModelsTab';
+import { RoutingIntelligenceTab } from './RoutingIntelligenceTab';
+import { TrainingAdvisorTab } from './TrainingAdvisorTab';
 
 const TABS: PageTab<IntelligenceTabId>[] = [
   { id: 'overview', label: 'Overview', icon: createElement(BarChart3, { className: 'size-4' }) },
   { id: 'costs', label: 'Cost Analysis', icon: createElement(DollarSign, { className: 'size-4' }) },
   { id: 'performance', label: 'Performance', icon: createElement(Gauge, { className: 'size-4' }) },
   { id: 'models', label: 'Models', icon: createElement(Layers, { className: 'size-4' }) },
+  {
+    id: 'routing',
+    label: 'Routing Intelligence',
+    icon: createElement(Route, { className: 'size-4' }),
+  },
+  {
+    id: 'training',
+    label: 'Training & Advisor',
+    icon: createElement(GraduationCap, { className: 'size-4' }),
+  },
 ];
 
-const VALID_TABS = new Set<string>(['overview', 'costs', 'performance', 'models']);
+const VALID_TABS = new Set<string>([
+  'overview',
+  'costs',
+  'performance',
+  'models',
+  'routing',
+  'training',
+]);
 const VALID_PERIODS = new Set<string>(['7d', '14d', '30d']);
 
 function parseTab(value: string | null): IntelligenceTabId {
@@ -95,6 +122,8 @@ export default function IntelligencePage() {
         {activeTab === 'costs' && <CostAnalysisTab data={data} />}
         {activeTab === 'performance' && <PerformanceTab data={data} />}
         {activeTab === 'models' && <ModelsTab data={data} />}
+        {activeTab === 'routing' && <RoutingIntelligenceTab data={data} />}
+        {activeTab === 'training' && <TrainingAdvisorTab data={data} />}
       </main>
     </div>
   );
@@ -104,14 +133,14 @@ function PeriodSelector({ value, onChange }: { value: Period; onChange: (p: Peri
   const options: Period[] = ['7d', '14d', '30d'];
 
   return (
-    <div className="inline-flex items-center gap-0.5 rounded-lg border bg-muted/50 p-0.5">
+    <div className="inline-flex items-center gap-0.5 rounded-lg border p-0.5">
       {options.map((opt) => (
         <Button
           key={opt}
           size="sm"
           variant={value === opt ? 'default' : 'ghost'}
-          className={`h-7 px-3 text-xs font-medium transition-all ${
-            value === opt ? 'shadow-sm' : 'text-muted-foreground hover:text-foreground'
+          className={`h-7 px-3 text-xs font-medium ${
+            value === opt ? '' : 'text-muted-foreground hover:text-foreground'
           }`}
           onClick={() => onChange(opt)}
         >

@@ -185,6 +185,31 @@ class KpiValue(BaseModel):
     delta_pct: Optional[float] = None
 
 
+class CostBreakdown(BaseModel):
+    """Breakdown of costs across provider, routing, and training."""
+
+    provider_baseline: float = Field(0.0, description="What it would cost using only the most expensive model")
+    routing_actual: float = Field(0.0, description="Actual cost with smart routing")
+    routing_savings: float = Field(0.0, description="Savings from routing (baseline - actual)")
+    training_investment: float = Field(0.0, description="Total cost invested in distillation/training")
+    net_savings: float = Field(0.0, description="routing_savings - training_investment")
+    roi_pct: float = Field(0.0, description="(net_savings / training_investment) * 100 if training_investment > 0")
+    monthly_projection: float = Field(0.0, description="Projected monthly savings at current rate")
+
+
+class DistillationJobSummary(BaseModel):
+    """Summary of a distillation job for cost tracking."""
+
+    job_id: str = ""
+    name: str = ""
+    status: str = ""
+    teacher_model: str = ""
+    student_model: str = ""
+    cost_accrued: float = 0.0
+    created_at: str = ""
+    completed_at: Optional[str] = None
+
+
 class EfficiencyResponse(BaseModel):
     """Router efficiency metrics."""
 
@@ -192,6 +217,8 @@ class EfficiencyResponse(BaseModel):
     model_distribution: list[dict[str, Any]] = Field(default_factory=list)
     cost_savings_trend: list[dict[str, Any]] = Field(default_factory=list)
     model_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    cost_breakdown: Optional[CostBreakdown] = None
+    distillation_jobs: list[DistillationJobSummary] = Field(default_factory=list)
 
 
 class ModelPerformanceResponse(BaseModel):
@@ -211,3 +238,54 @@ class TrainingActivityResponse(BaseModel):
     signal_trends: list[dict[str, Any]] = Field(default_factory=list)
     advisor_decisions: list[dict[str, Any]] = Field(default_factory=list)
     training_cycles: list[dict[str, Any]] = Field(default_factory=list)
+    distillation_summary: Optional[dict[str, Any]] = None
+    training_runs_detail: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RoutingDecisionItem(BaseModel):
+    """A single routing decision from llm_traces."""
+
+    request_id: str
+    cluster: int
+    model_chosen: str
+    reason: str = ""
+    cost: float = 0.0
+    latency: float = 0.0
+    outcome: str = "success"
+    timestamp: str = ""
+
+
+class WinRatePoint(BaseModel):
+    date: str
+    router: float = 0.0
+    baseline: float = 0.0
+
+
+class ConfidenceBucket(BaseModel):
+    bucket: str
+    count: int = 0
+
+
+class EfficiencyTrendPoint(BaseModel):
+    date: str
+    score: float = 0.0
+
+
+class RoutingIntelligenceResponse(BaseModel):
+    """Real routing intelligence data derived from llm_traces."""
+
+    decisions: list[RoutingDecisionItem] = Field(default_factory=list)
+    win_rate: list[WinRatePoint] = Field(default_factory=list)
+    confidence_distribution: list[ConfidenceBucket] = Field(default_factory=list)
+    efficiency_trend: list[EfficiencyTrendPoint] = Field(default_factory=list)
+
+
+class AdvisorConfigResponse(BaseModel):
+    """Training advisor configuration and next trigger estimate."""
+
+    threshold: float = 0.75
+    strategy: str = "Quality-first with cost optimization"
+    model_targets: list[str] = Field(default_factory=list)
+    next_trigger_estimate: Optional[str] = None
+    data_accumulation_rate: float = 0.0
+    traces_since_last_training: int = 0

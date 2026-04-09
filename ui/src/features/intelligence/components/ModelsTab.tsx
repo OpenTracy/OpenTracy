@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { DollarSign, Filter, BarChart3, Zap, TrendingUp, Activity } from 'lucide-react';
+import { DollarSign, Filter, BarChart3, Zap, Activity, Eye, Wrench, Download } from 'lucide-react';
 import { Bar, BarChart, LabelList, Pie, PieChart, XAxis, YAxis } from 'recharts';
 import {
   Card,
@@ -17,16 +17,25 @@ import {
   ChartLegend,
   ChartLegendContent,
 } from '@/components/ui/chart';
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { KpiCard } from '@/components/shared/KpiCard';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatCost } from '@/utils/formatUtils';
+import { formatNumber, costTierLabel, exportTableToCsv } from '../utils/intelligenceHelpers';
 import type { IntelligenceData } from '../hooks/useIntelligenceData';
+import { MetricCard } from './shared/MetricCard';
 import { ModelBreakdownTable } from './shared/ModelBreakdownTable';
 import { ModelsSkeleton, EmptyState, ErrorState } from './shared';
 
 const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)'];
-
 const PROVIDERS = ['OpenAI', 'Groq', 'Anthropic', 'Meta'] as const;
 
 interface ModelsTabProps {
@@ -39,13 +48,13 @@ export function ModelsTab({ data }: ModelsTabProps) {
   if (loading) return <ModelsSkeleton />;
   if (error) return <ErrorState error={error} onRetry={refreshData} />;
   if (unifiedModelRows.length === 0)
-    return <EmptyState message="No model data available" onRefresh={refreshData} />;
+    return <EmptyState message="No model data available yet." onRefresh={refreshData} />;
 
   return <ModelsContent data={data} />;
 }
 
 function ModelsContent({ data }: { data: IntelligenceData }) {
-  const { costData, unifiedModelRows, selectedDays } = data;
+  const { costData, unifiedModelRows, modelCapabilities, selectedDays } = data;
   const [activeProviders, setActiveProviders] = useState<Set<string>>(new Set());
 
   const toggleProvider = (p: string) => {
@@ -62,7 +71,6 @@ function ModelsContent({ data }: { data: IntelligenceData }) {
     return unifiedModelRows.filter((r) => activeProviders.has(r.provider));
   }, [unifiedModelRows, activeProviders]);
 
-  // Cost by model bar data
   const costByModelData = useMemo(
     () =>
       (costData?.externalCosts || []).slice(0, 6).map((item, i) => ({
@@ -87,7 +95,6 @@ function ModelsContent({ data }: { data: IntelligenceData }) {
     return cfg;
   }, [costData]);
 
-  // Aggregated stats
   const totalCost = useMemo(
     () => (costData?.externalCosts || []).reduce((s, c) => s + c.cost, 0),
     [costData]
@@ -104,16 +111,11 @@ function ModelsContent({ data }: { data: IntelligenceData }) {
     () => (totalRequests > 0 ? totalCost / totalRequests : 0),
     [totalCost, totalRequests]
   );
-  const topModel = useMemo(
-    () => (unifiedModelRows.length > 0 ? unifiedModelRows[0] : null),
-    [unifiedModelRows]
-  );
 
-  // Provider breakdown for pie chart
   const providerBreakdown = useMemo(() => {
-    const map = new Map<string, { requests: number; cost: number }>();
+    const map = new Map<string, { requests: number; cost: number; errors: number }>();
     for (const row of unifiedModelRows) {
-      const existing = map.get(row.provider) ?? { requests: 0, cost: 0 };
+      const existing = map.get(row.provider) ?? { requests: 0, cost: 0, errors: 0 };
       existing.requests += row.requests;
       existing.cost += row.totalCost;
       map.set(row.provider, existing);
@@ -137,51 +139,145 @@ function ModelsContent({ data }: { data: IntelligenceData }) {
     return cfg;
   }, [providerBreakdown]);
 
+  const costEfficiency = useMemo(() => {
+    return unifiedModelRows
+      .filter((r) => r.totalCost > 0)
+      .map((r) => ({
+        model: r.model,
+        requestsPerDollar: r.totalCost > 0 ? r.requests / r.totalCost : 0,
+      }))
+      .sort((a, b) => b.requestsPerDollar - a.requestsPerDollar)
+      .slice(0, 8);
+  }, [unifiedModelRows]);
+
+  const handleExportCapabilities = () => {
+    const headers = [
+      'Model',
+      'Provider',
+      'Context Window',
+      'Vision',
+      'Function Calling',
+      'Cost Tier',
+    ];
+    const rows = modelCapabilities.map((c) => [
+      c.model,
+      c.provider,
+      formatNumber(c.contextWindow),
+      c.supportsVision ? 'Yes' : 'No',
+      c.supportsFunctionCalling ? 'Yes' : 'No',
+      costTierLabel(c.costTier),
+    ]);
+    exportTableToCsv(headers, rows, 'model-capabilities');
+  };
+
   return (
-    <div className="space-y-6">
-      {/* Summary KPIs */}
+    <div className="space-y-8">
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-5">
-        <KpiCard label="Total Models" value={String(unifiedModelRows.length)} icon={BarChart3} />
-        <KpiCard label="Providers" value={String(uniqueProviders)} icon={Filter} />
-        <KpiCard
-          label={`Total Requests (${selectedDays}d)`}
-          value={totalRequests.toLocaleString()}
-          icon={Activity}
+        <MetricCard
+          label="Total Models"
+          value={String(unifiedModelRows.length)}
+          icon={BarChart3}
+          tooltip="Number of unique models used in routing"
         />
-        <KpiCard
+        <MetricCard
+          label="Providers"
+          value={String(uniqueProviders)}
+          icon={Filter}
+          tooltip="Number of distinct LLM providers"
+        />
+        <MetricCard
+          label={`Total Requests (${selectedDays}d)`}
+          value={formatNumber(totalRequests)}
+          icon={Activity}
+          tooltip="Total requests across all models in the period"
+        />
+        <MetricCard
           label={`Total Cost (${selectedDays}d)`}
           value={formatCost(totalCost)}
           icon={DollarSign}
+          tooltip="Combined cost of all model API calls"
         />
-        <KpiCard label="Avg Cost / Request" value={formatCost(avgCostPerReq)} icon={Zap} />
+        <MetricCard
+          label="Avg Cost / Request"
+          value={formatCost(avgCostPerReq)}
+          icon={Zap}
+          tooltip="Average cost per individual request across all models"
+        />
       </div>
 
-      {/* Top Model highlight */}
-      {topModel && (
-        <Card className="border-chart-2/20 bg-chart-2/5">
-          <CardContent className="flex flex-wrap items-center gap-6 py-4">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="size-4 text-chart-2" />
-              <span className="text-sm font-medium text-muted-foreground">Most Used Model</span>
-            </div>
-            <span className="text-sm font-semibold">{topModel.model}</span>
-            <Badge variant="outline" className="text-xs">
-              {topModel.provider}
-            </Badge>
-            <span className="text-sm tabular-nums text-muted-foreground">
-              {topModel.requests.toLocaleString()} requests
-            </span>
-            <span className="text-sm tabular-nums text-muted-foreground">
-              {topModel.trafficPct.toFixed(1)}% traffic
-            </span>
-            <span className="text-sm tabular-nums text-muted-foreground">
-              {formatCost(topModel.totalCost)} cost
-            </span>
+      {modelCapabilities.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Model Capability Comparison</CardTitle>
+            <CardDescription>Feature support and cost tier across models</CardDescription>
+            <CardAction>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5"
+                    onClick={handleExportCapabilities}
+                  >
+                    <Download className="size-3" />
+                    CSV
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Export capabilities as CSV</TooltipContent>
+              </Tooltip>
+            </CardAction>
+          </CardHeader>
+          <CardContent className="px-6">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Model</TableHead>
+                  <TableHead>Provider</TableHead>
+                  <TableHead className="text-right">Context Window</TableHead>
+                  <TableHead className="text-center">Vision</TableHead>
+                  <TableHead className="text-center">Functions</TableHead>
+                  <TableHead>Cost Tier</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {modelCapabilities.map((cap) => (
+                  <TableRow key={cap.model}>
+                    <TableCell className="font-medium">{cap.model}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-xs font-normal">
+                        {cap.provider}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatNumber(cap.contextWindow)}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {cap.supportsVision ? (
+                        <Eye className="mx-auto size-4 text-foreground" />
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {cap.supportsFunctionCalling ? (
+                        <Wrench className="mx-auto size-4 text-foreground" />
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className="text-xs">
+                        {costTierLabel(cap.costTier)}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       )}
 
-      {/* Charts row: Cost by Model + Provider Distribution */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-3">
           <CardHeader>
@@ -235,22 +331,18 @@ function ModelsContent({ data }: { data: IntelligenceData }) {
                 </BarChart>
               </ChartContainer>
             ) : (
-              <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60">
-                <DollarSign className="size-8 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">No cost data</p>
-              </div>
+              <ChartEmpty icon={DollarSign} message="No cost data" />
             )}
           </CardContent>
         </Card>
 
-        {/* Provider distribution donut */}
         <Card className="flex flex-col lg:col-span-2">
           <CardHeader className="items-center pb-0">
             <CardTitle className="text-base">Request Distribution</CardTitle>
             <CardDescription>By provider &middot; {selectedDays}d</CardDescription>
             <CardAction>
               <Badge variant="secondary" className="tabular-nums text-xs">
-                {totalRequests.toLocaleString()} total
+                {formatNumber(totalRequests)} total
               </Badge>
             </CardAction>
           </CardHeader>
@@ -263,7 +355,7 @@ function ModelsContent({ data }: { data: IntelligenceData }) {
                     content={
                       <ChartTooltipContent
                         formatter={(value: number) => [
-                          `${Number(value).toLocaleString()} requests`,
+                          `${formatNumber(Number(value))} requests`,
                           '',
                         ]}
                       />
@@ -283,16 +375,34 @@ function ModelsContent({ data }: { data: IntelligenceData }) {
                 </PieChart>
               </ChartContainer>
             ) : (
-              <div className="flex h-40 flex-col items-center justify-center gap-2">
-                <Activity className="size-8 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">No provider data</p>
-              </div>
+              <ChartEmpty icon={Activity} message="No provider data" />
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Provider filter + table */}
+      {costEfficiency.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Cost Efficiency Score</CardTitle>
+            <CardDescription>Requests per dollar — higher is more efficient</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {costEfficiency.slice(0, 4).map((item) => (
+                <div key={item.model} className="space-y-1 rounded-lg border p-4">
+                  <p className="truncate text-sm font-medium">{item.model}</p>
+                  <p className="text-lg font-semibold tabular-nums">
+                    {formatNumber(Math.round(item.requestsPerDollar))}
+                  </p>
+                  <p className="text-xs text-muted-foreground">requests / $1</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted-foreground">Filter:</span>
         {PROVIDERS.map((p) => (
@@ -300,9 +410,7 @@ function ModelsContent({ data }: { data: IntelligenceData }) {
             key={p}
             variant={activeProviders.has(p) ? 'default' : 'outline'}
             size="sm"
-            className={`h-7 rounded-full px-3 text-xs transition-all ${
-              activeProviders.has(p) ? 'shadow-sm' : ''
-            }`}
+            className="h-7 rounded-full px-3 text-xs"
             onClick={() => toggleProvider(p)}
           >
             {p}
@@ -321,6 +429,15 @@ function ModelsContent({ data }: { data: IntelligenceData }) {
       </div>
 
       <ModelBreakdownTable rows={filteredRows} />
+    </div>
+  );
+}
+
+function ChartEmpty({ icon: Icon, message }: { icon: React.ElementType; message: string }) {
+  return (
+    <div className="flex h-40 flex-col items-center justify-center gap-2">
+      <Icon className="size-8 text-muted-foreground" />
+      <p className="text-sm text-muted-foreground">{message}</p>
     </div>
   );
 }

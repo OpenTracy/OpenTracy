@@ -30,6 +30,12 @@ from .schemas import (
     EfficiencyResponse,
     ModelPerformanceResponse,
     TrainingActivityResponse,
+    RoutingIntelligenceResponse,
+    RoutingDecisionItem,
+    WinRatePoint,
+    ConfidenceBucket,
+    EfficiencyTrendPoint,
+    AdvisorConfigResponse,
 )
 from ..router.uniroute import UniRouteRouter
 from ..models.llm_profile import LLMProfile
@@ -2624,11 +2630,91 @@ async def intelligence_efficiency(days: int = 30):
         except Exception:
             pass
 
+    from .schemas import CostBreakdown, DistillationJobSummary
+    import json as _json
+
+    cost_breakdown = None
+    distillation_job_summaries: list[DistillationJobSummary] = []
+
+    # Compute accumulated provider baseline and router actual from the data we already have
+    provider_baseline = 0.0
+    routing_actual = 0.0
+    if cost_savings_trend:
+        provider_baseline = sum(d.get("baseline", 0) for d in cost_savings_trend)
+        routing_actual = sum(d.get("actual", 0) for d in cost_savings_trend)
+    elif kpis:
+        provider_baseline = kpis["cost_saved"].value + (kpis["avg_cost_per_request"].value * kpis["requests_routed"].value)
+        routing_actual = kpis["avg_cost_per_request"].value * kpis["requests_routed"].value
+
+    routing_savings = provider_baseline - routing_actual
+
+    # Fetch distillation jobs for training cost
+    training_investment = 0.0
+    if ch is not None:
+        try:
+            r_jobs = ch.query(
+                "SELECT job_id, name, status, config, cost_accrued, "
+                "toString(created_at) AS created_at, "
+                "toString(completed_at) AS completed_at "
+                "FROM distillation_jobs FINAL "
+                "ORDER BY created_at DESC LIMIT 20"
+            )
+            for row in r_jobs.result_rows:
+                job_id_val = str(row[0])
+                job_name = str(row[1])
+                job_status = str(row[2])
+                job_config_raw = row[3]
+                job_cost = float(row[4])
+                job_created = str(row[5])
+                job_completed = str(row[6]) if row[6] else None
+
+                training_investment += job_cost
+
+                # Parse config to get teacher/student models
+                teacher_m = ""
+                student_m = ""
+                try:
+                    cfg = _json.loads(job_config_raw) if isinstance(job_config_raw, str) else job_config_raw
+                    teacher_m = cfg.get("teacher_model", "")
+                    student_m = cfg.get("student_model", "")
+                except Exception:
+                    pass
+
+                distillation_job_summaries.append(DistillationJobSummary(
+                    job_id=job_id_val,
+                    name=job_name,
+                    status=job_status,
+                    teacher_model=teacher_m,
+                    student_model=student_m,
+                    cost_accrued=job_cost,
+                    created_at=job_created,
+                    completed_at=job_completed,
+                ))
+        except Exception:
+            pass
+
+    net_savings = routing_savings - training_investment
+    roi_pct = (net_savings / training_investment * 100) if training_investment > 0 else 0.0
+    # Monthly projection: extrapolate from the period
+    monthly_projection = (routing_savings / days * 30) if days > 0 else 0.0
+
+    cost_breakdown = CostBreakdown(
+        provider_baseline=round(provider_baseline, 6),
+        routing_actual=round(routing_actual, 6),
+        routing_savings=round(routing_savings, 6),
+        training_investment=round(training_investment, 6),
+        net_savings=round(net_savings, 6),
+        roi_pct=round(roi_pct, 1),
+        monthly_projection=round(monthly_projection, 6),
+    )
+
     return EfficiencyResponse(
         kpis=kpis,
         model_distribution=model_distribution,
         cost_savings_trend=cost_savings_trend,
         model_breakdown=sorted(model_breakdown, key=lambda x: -x["requests"]),
+        cost_breakdown=cost_breakdown,
+        distillation_jobs=distillation_job_summaries,
     )
 
 
@@ -2718,6 +2804,113 @@ async def intelligence_models():
     )
 
 
+def _build_training_runs_detail(ch, training_history: list[dict]) -> list[dict]:
+    """Build detailed training runs from distillation_jobs with real duration/confidence."""
+    runs: list[dict] = []
+    if ch is None:
+        # Fall back to training_history with what we have
+        for i, h in enumerate(training_history):
+            runs.append({
+                "run_id": f"run_{i+1:03d}",
+                "date": h.get("date", ""),
+                "outcome": "promoted" if h.get("promoted") else "rejected",
+                "confidence": 0,
+                "cost": 0,
+                "duration": "—",
+                "reason": h.get("reason", ""),
+            })
+        return runs
+
+    try:
+        import json as _json
+        r_jobs = ch.query(
+            "SELECT job_id, name, status, config, cost_accrued, results, "
+            "toString(created_at) AS created_at, "
+            "toString(completed_at) AS completed_at "
+            "FROM distillation_jobs FINAL "
+            "ORDER BY created_at DESC LIMIT 30"
+        )
+        for row in r_jobs.result_rows:
+            job_id = str(row[0])
+            name = str(row[1])
+            status = str(row[2])
+            config_raw = row[3]
+            cost = float(row[4])
+            results_raw = row[5]
+            created_at = str(row[6])
+            completed_at = str(row[7]) if row[7] else None
+
+            # Compute real duration
+            duration = "—"
+            if completed_at and created_at and completed_at != "" and created_at != "":
+                try:
+                    from datetime import datetime
+                    dt_start = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    dt_end = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+                    mins = max(1, round((dt_end - dt_start).total_seconds() / 60))
+                    if mins >= 60:
+                        duration = f"{mins // 60}h {mins % 60}m"
+                    else:
+                        duration = f"{mins}m"
+                except Exception:
+                    pass
+
+            # Get real confidence from results or distillation_metrics
+            confidence = 0.0
+            try:
+                results = _json.loads(results_raw) if isinstance(results_raw, str) and results_raw else {}
+                confidence = results.get("final_accuracy", results.get("eval_score", 0))
+            except Exception:
+                pass
+
+            if confidence == 0:
+                # Try distillation_metrics for the latest reward
+                try:
+                    r_met = ch.query(
+                        "SELECT reward_improvement FROM distillation_metrics "
+                        "WHERE job_id = {jid:String} "
+                        "ORDER BY step DESC LIMIT 1",
+                        parameters={"jid": job_id},
+                    )
+                    if r_met.result_rows:
+                        confidence = min(1.0, max(0, float(r_met.result_rows[0][0])))
+                except Exception:
+                    pass
+
+            outcome = "promoted" if status == "completed" else "rejected"
+            reason = name or "Distillation run"
+
+            runs.append({
+                "run_id": job_id,
+                "date": created_at,
+                "outcome": outcome,
+                "confidence": round(confidence, 4),
+                "cost": round(cost, 4),
+                "duration": duration,
+                "reason": reason,
+            })
+    except Exception:
+        pass
+
+    # Also merge training_history entries not already covered by distillation jobs
+    job_dates = {r["date"][:10] for r in runs if r.get("date")}
+    for i, h in enumerate(training_history):
+        h_date = str(h.get("date", ""))[:10]
+        if h_date and h_date not in job_dates:
+            runs.append({
+                "run_id": f"run_{i+1:03d}",
+                "date": h.get("date", ""),
+                "outcome": "promoted" if h.get("promoted") else "rejected",
+                "confidence": 0,
+                "cost": 0,
+                "duration": "—",
+                "reason": h.get("reason", ""),
+            })
+
+    runs.sort(key=lambda x: x.get("date", ""), reverse=True)
+    return runs
+
+
 @app.get("/v1/intelligence/training", response_model=TrainingActivityResponse, tags=["intelligence"])
 async def intelligence_training(days: int = 30):
     """Training activity: advisor decisions, training history, signal trends."""
@@ -2801,16 +2994,400 @@ async def intelligence_training(days: int = 30):
         "models_updated": models_updated,
     }
 
+    # Fetch distillation summary for training cost visibility
+    distillation_summary = None
+    from ..storage.clickhouse_client import get_client as _get_ch
+    try:
+        _ch = _get_ch()
+    except Exception:
+        _ch = None
+
+    if _ch is not None:
+        try:
+            import json as _json
+            r_dist_summary = _ch.query(
+                "SELECT count() AS total_jobs, "
+                "sum(cost_accrued) AS total_cost, "
+                "countIf(status = 'completed') AS completed_jobs, "
+                "countIf(status = 'running') AS running_jobs, "
+                "countIf(status = 'failed') AS failed_jobs "
+                "FROM distillation_jobs FINAL"
+            )
+            if r_dist_summary.result_rows:
+                row = r_dist_summary.result_rows[0]
+                total_jobs = int(row[0])
+                total_cost = float(row[1])
+                completed = int(row[2])
+                running = int(row[3])
+                failed = int(row[4])
+
+                # Get latest completed job details
+                latest_job = None
+                r_latest = _ch.query(
+                    "SELECT job_id, name, config, cost_accrued, "
+                    "toString(completed_at) AS completed_at "
+                    "FROM distillation_jobs FINAL "
+                    "WHERE status = 'completed' "
+                    "ORDER BY completed_at DESC LIMIT 1"
+                )
+                if r_latest.result_rows:
+                    lr = r_latest.result_rows[0]
+                    cfg = {}
+                    try:
+                        cfg = _json.loads(lr[2]) if isinstance(lr[2], str) else lr[2]
+                    except Exception:
+                        pass
+                    latest_job = {
+                        "job_id": str(lr[0]),
+                        "name": str(lr[1]),
+                        "teacher_model": cfg.get("teacher_model", ""),
+                        "student_model": cfg.get("student_model", ""),
+                        "cost": float(lr[3]),
+                        "completed_at": str(lr[4]),
+                    }
+
+                distillation_summary = {
+                    "total_jobs": total_jobs,
+                    "completed_jobs": completed,
+                    "running_jobs": running,
+                    "failed_jobs": failed,
+                    "total_training_cost": round(total_cost, 4),
+                    "latest_completed_job": latest_job,
+                }
+        except Exception:
+            pass
+
     return TrainingActivityResponse(
         kpis=kpis,
         training_history=training_history,
         signal_trends=signal_trends,
         advisor_decisions=advisor_decisions,
         training_cycles=training_cycles,
+        distillation_summary=distillation_summary,
+        training_runs_detail=_build_training_runs_detail(_ch, training_history),
     )
 
 
-# --- Initialization (for programmatic setup) ---
+@app.get("/v1/intelligence/routing", response_model=RoutingIntelligenceResponse, tags=["intelligence"])
+async def intelligence_routing(days: int = 30, limit: int = 50):
+    """Real routing intelligence: decisions, win rate, confidence distribution, efficiency trend.
+
+    All data derived from llm_traces — no mock data.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    empty = RoutingIntelligenceResponse()
+
+    from ..storage.clickhouse_client import get_client
+    try:
+        ch = get_client()
+    except Exception:
+        ch = None
+
+    if ch is None:
+        return empty
+
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # ── 1. Recent routing decisions from llm_traces ──────────────────────
+    decisions: list[RoutingDecisionItem] = []
+    try:
+        r_decisions = ch.query(
+            "SELECT request_id, cluster_id, selected_model, total_cost_usd, "
+            "latency_ms, is_error, toString(timestamp) AS ts, "
+            "all_scores, error_category "
+            "FROM llm_traces "
+            "WHERE timestamp >= {start:DateTime64(3)} "
+            "ORDER BY timestamp DESC "
+            "LIMIT {limit:UInt32}",
+            parameters={"start": start, "limit": limit},
+        )
+        for row in r_decisions.result_rows:
+            req_id = str(row[0])
+            cluster = int(row[1])
+            model = str(row[2])
+            cost = float(row[3])
+            latency = float(row[4])
+            is_err = int(row[5])
+            ts = str(row[6])
+            scores_raw = str(row[7]) if row[7] else "{}"
+            err_cat = str(row[8]) if row[8] else ""
+
+            # Derive reason from all_scores
+            reason = "Router selection"
+            try:
+                import json as _j
+                scores = _j.loads(scores_raw)
+                if scores:
+                    sorted_scores = sorted(scores.items(), key=lambda x: x[1])
+                    best_model = sorted_scores[0][0] if sorted_scores else ""
+                    if best_model == model:
+                        reason = "Lowest expected error"
+                    elif len(sorted_scores) > 1:
+                        reason = f"Cost-optimized (vs {sorted_scores[0][0]})"
+            except Exception:
+                pass
+
+            decisions.append(RoutingDecisionItem(
+                request_id=req_id,
+                cluster=cluster,
+                model_chosen=model,
+                reason=reason,
+                cost=round(cost, 6),
+                latency=round(latency, 1),
+                outcome="error" if is_err else "success",
+                timestamp=ts,
+            ))
+    except Exception:
+        pass
+
+    # ── 2. Win rate over time ────────────────────────────────────────────
+    # Router win = request succeeded. Baseline = daily success rate of the most expensive model.
+    win_rate: list[WinRatePoint] = []
+    try:
+        r_wr = ch.query(
+            "SELECT toDate(timestamp) AS day, "
+            "  selected_model, "
+            "  count() AS total, "
+            "  countIf(is_error = 0) AS successes, "
+            "  avg(total_cost_usd) AS avg_cost "
+            "FROM llm_traces "
+            "WHERE timestamp >= {start:DateTime64(3)} "
+            "GROUP BY day, selected_model "
+            "ORDER BY day",
+            parameters={"start": start},
+        )
+
+        # Build per-day data
+        day_data: dict[str, dict] = {}
+        for row in r_wr.result_rows:
+            day_str = str(row[0])
+            model = str(row[1])
+            total = int(row[2])
+            successes = int(row[3])
+            avg_cost = float(row[4])
+            if day_str not in day_data:
+                day_data[day_str] = {"total": 0, "successes": 0, "models": {}}
+            day_data[day_str]["total"] += total
+            day_data[day_str]["successes"] += successes
+            day_data[day_str]["models"][model] = {
+                "total": total, "successes": successes, "avg_cost": avg_cost
+            }
+
+        for day_str in sorted(day_data.keys()):
+            d = day_data[day_str]
+            router_rate = d["successes"] / d["total"] if d["total"] > 0 else 0
+
+            # Baseline: success rate of the most expensive model that day
+            baseline_rate = 0.0
+            max_cost = 0.0
+            for _m, stats in d["models"].items():
+                if stats["avg_cost"] > max_cost:
+                    max_cost = stats["avg_cost"]
+                    baseline_rate = stats["successes"] / stats["total"] if stats["total"] > 0 else 0
+
+            win_rate.append(WinRatePoint(
+                date=day_str,
+                router=round(router_rate, 4),
+                baseline=round(baseline_rate, 4),
+            ))
+    except Exception:
+        pass
+
+    # ── 3. Confidence distribution (from cost_adjusted_score) ────────────
+    confidence_dist: list[ConfidenceBucket] = []
+    try:
+        r_conf = ch.query(
+            "SELECT "
+            "  countIf(cost_adjusted_score >= 0 AND cost_adjusted_score < 0.2) AS b0, "
+            "  countIf(cost_adjusted_score >= 0.2 AND cost_adjusted_score < 0.4) AS b1, "
+            "  countIf(cost_adjusted_score >= 0.4 AND cost_adjusted_score < 0.6) AS b2, "
+            "  countIf(cost_adjusted_score >= 0.6 AND cost_adjusted_score < 0.8) AS b3, "
+            "  countIf(cost_adjusted_score >= 0.8 AND cost_adjusted_score <= 1.0) AS b4 "
+            "FROM llm_traces "
+            "WHERE timestamp >= {start:DateTime64(3)} "
+            "AND cost_adjusted_score >= 0",
+            parameters={"start": start},
+        )
+        if r_conf.result_rows:
+            row = r_conf.result_rows[0]
+            buckets = ["0-20%", "20-40%", "40-60%", "60-80%", "80-100%"]
+            for i, label in enumerate(buckets):
+                confidence_dist.append(ConfidenceBucket(bucket=label, count=int(row[i])))
+    except Exception:
+        pass
+
+    # ── 4. Efficiency trend (daily savings ratio) ────────────────────────
+    efficiency_trend: list[EfficiencyTrendPoint] = []
+    try:
+        # Get the max avg_cost model for baseline
+        r_max = ch.query(
+            "SELECT max(avg_cost) FROM ("
+            "  SELECT avg(total_cost_usd) AS avg_cost "
+            "  FROM llm_traces WHERE timestamp >= {start:DateTime64(3)} "
+            "  GROUP BY selected_model"
+            ")",
+            parameters={"start": start},
+        )
+        max_model_cost = float(r_max.result_rows[0][0]) if r_max.result_rows else 0
+
+        if max_model_cost > 0:
+            r_eff = ch.query(
+                "SELECT toDate(timestamp) AS day, "
+                "  avg(total_cost_usd) AS actual_avg, "
+                "  count() AS cnt "
+                "FROM llm_traces "
+                "WHERE timestamp >= {start:DateTime64(3)} "
+                "GROUP BY day ORDER BY day",
+                parameters={"start": start},
+            )
+            for row in r_eff.result_rows:
+                day_str = str(row[0])
+                actual_avg = float(row[1])
+                score = 1.0 - (actual_avg / max_model_cost) if max_model_cost > 0 else 0
+                efficiency_trend.append(EfficiencyTrendPoint(
+                    date=day_str,
+                    score=round(max(0, min(1, score)), 4),
+                ))
+    except Exception:
+        pass
+
+    return RoutingIntelligenceResponse(
+        decisions=decisions,
+        win_rate=win_rate,
+        confidence_distribution=confidence_dist,
+        efficiency_trend=efficiency_trend,
+    )
+
+
+@app.get("/v1/intelligence/advisor", response_model=AdvisorConfigResponse, tags=["intelligence"])
+async def intelligence_advisor():
+    """Training advisor configuration and next training trigger estimate.
+
+    Reads advisor state from memory store and computes next trigger estimate
+    based on data accumulation rate.
+    """
+    from ..harness.memory_store import get_memory_store
+    from ..storage.clickhouse_client import get_client
+    from datetime import datetime, timedelta, timezone
+
+    store = get_memory_store()
+
+    # Get advisor config from settings or defaults
+    threshold = 0.75
+    strategy = "Quality-first with cost optimization"
+    model_targets: list[str] = []
+
+    try:
+        r = get_router()
+        profiles = r.registry.get_all()
+        model_targets = [p.model_id for p in profiles[:5]]
+
+        # Read threshold from settings if available
+        _settings = get_settings()
+        if hasattr(_settings, "training_threshold"):
+            threshold = _settings.training_threshold
+    except Exception:
+        pass
+
+    # Read latest advisor decision for strategy info
+    try:
+        decisions_raw = store.query(
+            agent="training_advisor",
+            category="training_decision",
+            limit=1,
+        )
+        if decisions_raw:
+            ev = getattr(decisions_raw[0], "evaluation", {}) or {}
+            if ev.get("source"):
+                strategy = f"{ev.get('source', 'heuristic').replace('_', ' ').title()} strategy"
+            # Extract threshold from signals if available
+            for sig in ev.get("signals", []):
+                if sig.get("threshold"):
+                    threshold = sig["threshold"]
+                    break
+    except Exception:
+        pass
+
+    # Compute next trigger estimate based on data accumulation
+    traces_since_last = 0
+    data_rate = 0.0
+    next_trigger: str | None = None
+
+    try:
+        ch = get_client()
+    except Exception:
+        ch = None
+
+    if ch is not None:
+        try:
+            # Find last training date
+            last_training_date = None
+            training_cycles_raw = store.query(
+                agent="auto_trainer",
+                category="run_result",
+                limit=1,
+            )
+            if training_cycles_raw:
+                last_dt = getattr(training_cycles_raw[0], "created_at", "")
+                if last_dt:
+                    try:
+                        last_training_date = datetime.fromisoformat(
+                            str(last_dt).replace("Z", "+00:00")
+                        )
+                    except Exception:
+                        pass
+
+            # Also check distillation jobs
+            if last_training_date is None:
+                r_last = ch.query(
+                    "SELECT max(completed_at) FROM distillation_jobs FINAL "
+                    "WHERE status = 'completed'"
+                )
+                if r_last.result_rows and r_last.result_rows[0][0]:
+                    try:
+                        last_training_date = datetime.fromisoformat(
+                            str(r_last.result_rows[0][0]).replace("Z", "+00:00")
+                        )
+                    except Exception:
+                        pass
+
+            # Count traces since last training
+            since = last_training_date or (datetime.now(timezone.utc) - timedelta(days=30))
+            r_count = ch.query(
+                "SELECT count() FROM llm_traces WHERE timestamp >= {since:DateTime64(3)}",
+                parameters={"since": since},
+            )
+            traces_since_last = int(r_count.result_rows[0][0]) if r_count.result_rows else 0
+
+            # Compute data accumulation rate (traces per day)
+            r_rate = ch.query(
+                "SELECT count() / greatest(dateDiff('day', min(timestamp), max(timestamp)), 1) "
+                "FROM llm_traces WHERE timestamp >= {since:DateTime64(3)}",
+                parameters={"since": since},
+            )
+            data_rate = float(r_rate.result_rows[0][0]) if r_rate.result_rows else 0
+
+            # Estimate: next trigger when we accumulate ~500 more traces (configurable)
+            target_traces = 500
+            remaining = max(0, target_traces - traces_since_last)
+            if data_rate > 0 and remaining > 0:
+                days_until = remaining / data_rate
+                trigger_date = datetime.now(timezone.utc) + timedelta(days=days_until)
+                next_trigger = trigger_date.strftime("%Y-%m-%d")
+            elif traces_since_last >= target_traces:
+                next_trigger = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    return AdvisorConfigResponse(
+        threshold=threshold,
+        strategy=strategy,
+        model_targets=model_targets,
+        next_trigger_estimate=next_trigger,
+        data_accumulation_rate=round(data_rate, 1),
+        traces_since_last_training=traces_since_last,
+    )
 
 
 def init_router(

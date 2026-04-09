@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowUpDown, Crown } from 'lucide-react';
+import { ArrowUpDown, Download } from 'lucide-react';
 import {
   Table,
   TableHeader,
@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatCost } from '@/utils/formatUtils';
+import { exportTableToCsv, formatNumber, formatPercent } from '../../utils/intelligenceHelpers';
 import type { UnifiedModelRow } from '../../types';
 
 interface ModelBreakdownTableProps {
@@ -29,6 +30,15 @@ interface ModelBreakdownTableProps {
 
 type SortKey = 'model' | 'provider' | 'requests' | 'accuracy' | 'avgCost' | 'totalCost';
 type SortDir = 'asc' | 'desc';
+
+const COLUMNS: { key: SortKey; label: string; align?: 'right' }[] = [
+  { key: 'model', label: 'Model' },
+  { key: 'provider', label: 'Provider' },
+  { key: 'requests', label: 'Requests', align: 'right' },
+  { key: 'accuracy', label: 'Accuracy', align: 'right' },
+  { key: 'avgCost', label: 'Avg Cost', align: 'right' },
+  { key: 'totalCost', label: 'Total Cost', align: 'right' },
+];
 
 export function ModelBreakdownTable({
   rows,
@@ -59,6 +69,22 @@ export function ModelBreakdownTable({
     });
   }, [rows, sortKey, sortDir]);
 
+  const totalCost = rows.reduce((s, r) => s + r.totalCost, 0);
+  const totalReqs = rows.reduce((s, r) => s + r.requests, 0);
+
+  const handleExport = () => {
+    const headers = COLUMNS.map((c) => c.label);
+    const csvRows = sorted.map((row) => [
+      row.model,
+      row.provider,
+      row.requests,
+      row.accuracy !== null ? formatPercent(row.accuracy) : '—',
+      formatCost(row.avgCost),
+      formatCost(row.totalCost),
+    ]);
+    exportTableToCsv(headers, csvRows, 'model-breakdown');
+  };
+
   if (rows.length === 0) {
     return (
       <Card>
@@ -72,38 +98,31 @@ export function ModelBreakdownTable({
     );
   }
 
-  const columns: { key: SortKey; label: string; align?: 'right' }[] = [
-    { key: 'model', label: 'Model' },
-    { key: 'provider', label: 'Provider' },
-    { key: 'requests', label: 'Requests', align: 'right' },
-    { key: 'accuracy', label: 'Accuracy', align: 'right' },
-    { key: 'avgCost', label: 'Avg Cost', align: 'right' },
-    { key: 'totalCost', label: 'Total Cost', align: 'right' },
-  ];
-
-  const totalCost = rows.reduce((s, r) => s + r.totalCost, 0);
-  const totalReqs = rows.reduce((s, r) => s + r.requests, 0);
-
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">{title}</CardTitle>
         <CardDescription>
-          {rows.length} model{rows.length !== 1 ? 's' : ''} &middot; {totalReqs.toLocaleString()}{' '}
+          {rows.length} model{rows.length !== 1 ? 's' : ''} &middot; {formatNumber(totalReqs)}{' '}
           requests &middot; {formatCost(totalCost)} total cost
         </CardDescription>
         <CardAction>
-          <Badge variant="outline" className="text-xs">
-            Sorted by {columns.find((c) => c.key === sortKey)?.label}{' '}
-            {sortDir === 'desc' ? '↓' : '↑'}
-          </Badge>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="sm" className="h-7 gap-1.5" onClick={handleExport}>
+                <Download className="size-3" />
+                CSV
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Export table as CSV</TooltipContent>
+          </Tooltip>
         </CardAction>
       </CardHeader>
       <CardContent>
         <Table>
           <TableHeader>
             <TableRow>
-              {columns.map((col) => (
+              {COLUMNS.map((col) => (
                 <TableHead key={col.key} className={col.align === 'right' ? 'text-right' : ''}>
                   <Button
                     variant="ghost"
@@ -121,44 +140,22 @@ export function ModelBreakdownTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {sorted.map((row, idx) => (
-              <TableRow key={row.model} className="transition-colors hover:bg-muted/30">
-                <TableCell>
-                  <div className="flex items-center gap-2">
-                    {idx === 0 && sortKey === 'requests' && sortDir === 'desc' && (
-                      <Tooltip>
-                        <TooltipTrigger>
-                          <Crown className="size-3.5 text-amber-500" />
-                        </TooltipTrigger>
-                        <TooltipContent>Most used model</TooltipContent>
-                      </Tooltip>
-                    )}
-                    <span className="font-medium">{row.model}</span>
-                  </div>
-                </TableCell>
+            {sorted.map((row) => (
+              <TableRow key={row.model}>
+                <TableCell className="font-medium">{row.model}</TableCell>
                 <TableCell>
                   <Badge variant="outline" className="text-xs font-normal">
                     {row.provider}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {row.requests.toLocaleString()}
+                  {formatNumber(row.requests)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {row.accuracy !== null ? (
-                    <span
-                      className={
-                        row.accuracy >= 0.8
-                          ? 'text-chart-2'
-                          : row.accuracy >= 0.5
-                            ? 'text-amber-500'
-                            : ''
-                      }
-                    >
-                      {(row.accuracy * 100).toFixed(1)}%
-                    </span>
+                    formatPercent(row.accuracy)
                   ) : (
-                    <span className="text-muted-foreground/50">—</span>
+                    <span className="text-muted-foreground">—</span>
                   )}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{formatCost(row.avgCost)}</TableCell>

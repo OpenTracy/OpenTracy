@@ -1,6 +1,17 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { DollarSign, TrendingUp, Zap, ArrowUpRight, Sparkles } from 'lucide-react';
+import {
+  DollarSign,
+  TrendingUp,
+  Zap,
+  ArrowUpRight,
+  GraduationCap,
+  PiggyBank,
+  Scale,
+  CircleDollarSign,
+  Server,
+  Download,
+} from 'lucide-react';
 import {
   Area,
   AreaChart,
@@ -13,7 +24,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { KpiCard } from '@/components/shared/KpiCard';
 import {
   Card,
   CardAction,
@@ -40,8 +50,16 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatCost } from '@/utils/formatUtils';
+import {
+  formatDateWithYear,
+  formatStatus,
+  formatNumber,
+  exportTableToCsv,
+} from '../utils/intelligenceHelpers';
 import type { IntelligenceData } from '../hooks/useIntelligenceData';
+import { MetricCard } from './shared/MetricCard';
 import { CostsSkeleton, EmptyState, ErrorState } from './shared';
 
 const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)'];
@@ -56,7 +74,12 @@ export function CostAnalysisTab({ data }: CostAnalysisTabProps) {
   if (loading) return <CostsSkeleton />;
   if (error) return <ErrorState error={error} onRetry={refreshData} />;
   if (!costData && !efficiency)
-    return <EmptyState message="No cost data available" onRefresh={refreshData} />;
+    return (
+      <EmptyState
+        message="No cost data available yet. Costs will appear after routing begins."
+        onRefresh={refreshData}
+      />
+    );
 
   return <CostAnalysisContent data={data} />;
 }
@@ -73,10 +96,16 @@ function CostAnalysisContent({ data }: { data: IntelligenceData }) {
   }, [costData, selectedDays]);
 
   const kpis = efficiency?.kpis;
-  const avgCost = kpis?.avg_cost_per_request?.value ?? 0;
-  const costSaved = kpis?.cost_saved?.value ?? 0;
+  const avgCost = (kpis?.avg_cost_per_request as { value: number } | undefined)?.value ?? 0;
+  const costSaved = (kpis?.cost_saved as { value: number } | undefined)?.value ?? 0;
+
+  const cb = efficiency?.cost_breakdown;
+  const distJobs = efficiency?.distillation_jobs ?? [];
 
   const externalProviders = overviewData?.providers?.filter((p) => !p.isLunar) ?? [];
+
+  // Infrastructure cost = training investment from distillation
+  const infrastructureCost = cb?.training_investment ?? 0;
 
   const pieData = useMemo(
     () =>
@@ -132,43 +161,263 @@ function CostAnalysisContent({ data }: { data: IntelligenceData }) {
   );
 
   const costOverTimeConfig = useMemo<ChartConfig>(
-    () => ({
-      cost: { label: 'Cost', color: 'var(--chart-2)' },
-    }),
+    () => ({ cost: { label: 'Cost', color: 'var(--chart-2)' } }),
+    []
+  );
+
+  const costBreakdownBarData = useMemo(() => {
+    if (!cb) return [];
+    const items = [
+      { category: 'Provider', cost: cb.provider_baseline },
+      { category: 'Routing', cost: cb.routing_actual },
+      { category: 'Training', cost: cb.training_investment },
+      { category: 'Infrastructure', cost: infrastructureCost },
+    ];
+    return items.filter((d) => d.cost > 0);
+  }, [cb, infrastructureCost]);
+
+  const costBreakdownConfig = useMemo<ChartConfig>(
+    () => ({ cost: { label: 'Cost', color: 'var(--chart-1)' } }),
     []
   );
 
   const externalRequests = costData?.expensiveRequests?.filter((r) => !r.isLunar) ?? [];
 
+  const handleExportExpensive = () => {
+    const headers = ['Cost', 'Model', 'Tokens', 'Date'];
+    const rows = externalRequests
+      .slice(0, 8)
+      .map((req) => [formatCost(req.cost), req.model, req.promptSize, req.date]);
+    exportTableToCsv(headers, rows, 'expensive-requests');
+  };
+
+  const handleExportTrainingJobs = () => {
+    const headers = ['Name', 'Status', 'Teacher', 'Student', 'Cost', 'Date'];
+    const rows = distJobs
+      .slice(0, 8)
+      .map((job) => [
+        job.name || 'Untitled',
+        formatStatus(job.status),
+        job.teacher_model || '—',
+        job.student_model || '—',
+        formatCost(job.cost_accrued),
+        job.created_at ? formatDateWithYear(job.created_at) : '—',
+      ]);
+    exportTableToCsv(headers, rows, 'training-jobs');
+  };
+
   return (
-    <div className="space-y-6">
-      {/* KPIs */}
+    <div className="space-y-8">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard
+        <MetricCard
           label={`Total Cost (${selectedDays}d)`}
           value={formatCost(totals.totalCost)}
           icon={DollarSign}
+          tooltip="Sum of all external API costs for the selected period"
         />
-        <KpiCard label="Avg Cost / Request" value={`$${Number(avgCost).toFixed(6)}`} icon={Zap} />
-        <KpiCard
+        <MetricCard
+          label="Avg Cost / Request"
+          value={`$${Number(avgCost).toFixed(6)}`}
+          icon={Zap}
+          tooltip="Average cost per routed request across all models"
+        />
+        <MetricCard
           label="Monthly Projection"
           value={formatCost(totals.projected)}
           icon={TrendingUp}
+          tooltip="Projected monthly cost based on current spending rate"
         />
-        <KpiCard
+        <MetricCard
           label="Cost Saved vs Baseline"
           value={`$${Number(costSaved).toFixed(4)}`}
-          icon={DollarSign}
-          subtitle="router vs always-best-model"
+          icon={PiggyBank}
+          tooltip="Total savings from routing vs always using the most expensive model"
         />
       </div>
 
-      {/* Trend Charts */}
+      {cb && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Scale className="size-4 text-muted-foreground" />
+              <CardTitle className="text-base">Cost Breakdown</CardTitle>
+            </div>
+            <CardDescription>
+              Provider, routing, training, and infrastructure costs &middot; {selectedDays}d
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <InlineStat
+                label="Provider Baseline"
+                value={formatCost(cb.provider_baseline)}
+                icon={CircleDollarSign}
+              />
+              <InlineStat
+                label="Routing Cost (Actual)"
+                value={formatCost(cb.routing_actual)}
+                icon={DollarSign}
+              />
+              <InlineStat
+                label="Routing Savings"
+                value={formatCost(cb.routing_savings)}
+                icon={PiggyBank}
+              />
+              <InlineStat
+                label="Training Investment"
+                value={formatCost(cb.training_investment)}
+                icon={GraduationCap}
+              />
+              <InlineStat
+                label="Infrastructure"
+                value={infrastructureCost > 0 ? formatCost(infrastructureCost) : '—'}
+                icon={Server}
+              />
+            </div>
+
+            {cb.net_savings > 0 && (
+              <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3">
+                <PiggyBank className="size-4 shrink-0 text-muted-foreground" />
+                <span className="text-sm font-medium">
+                  Net Savings: {formatCost(cb.net_savings)}
+                </span>
+                {cb.roi_pct > 0 && (
+                  <Badge variant="outline" className="text-xs">
+                    {cb.roi_pct.toFixed(0)}% ROI
+                  </Badge>
+                )}
+                <span className="text-xs text-muted-foreground">
+                  Projected: {formatCost(cb.monthly_projection)}/month
+                </span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {costBreakdownBarData.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Cost Category Comparison</CardTitle>
+            <CardDescription>
+              Provider vs routing vs training vs infrastructure &middot; {selectedDays}d
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ChartContainer config={costBreakdownConfig} className="h-48 w-full">
+              <BarChart data={costBreakdownBarData} layout="vertical" margin={{ left: 0 }}>
+                <YAxis
+                  dataKey="category"
+                  type="category"
+                  tickLine={false}
+                  axisLine={false}
+                  width={100}
+                  tick={{ fontSize: 11 }}
+                />
+                <XAxis dataKey="cost" type="number" hide />
+                <ChartTooltip
+                  cursor={false}
+                  content={
+                    <ChartTooltipContent
+                      formatter={(value: number) => [formatCost(Number(value)), 'Cost']}
+                    />
+                  }
+                />
+                <Bar dataKey="cost" fill="var(--chart-1)" radius={5}>
+                  <LabelList
+                    dataKey="cost"
+                    position="right"
+                    offset={8}
+                    className="fill-foreground"
+                    fontSize={11}
+                    formatter={(value: string | number) => formatCost(Number(value))}
+                  />
+                </Bar>
+              </BarChart>
+            </ChartContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {distJobs.length > 0 && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <GraduationCap className="size-4 text-muted-foreground" />
+              <CardTitle className="text-base">Training Cost Tracker</CardTitle>
+            </div>
+            <CardDescription>Distillation pipeline runs and costs</CardDescription>
+            <CardAction>
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="tabular-nums text-xs">
+                  {distJobs.length} jobs
+                </Badge>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 gap-1.5"
+                      onClick={handleExportTrainingJobs}
+                    >
+                      <Download className="size-3" />
+                      CSV
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Export training jobs as CSV</TooltipContent>
+                </Tooltip>
+              </div>
+            </CardAction>
+          </CardHeader>
+          <CardContent className="px-6">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Teacher</TableHead>
+                  <TableHead>Student</TableHead>
+                  <TableHead className="text-right">Cost</TableHead>
+                  <TableHead>Date</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {distJobs.slice(0, 8).map((job) => (
+                  <TableRow key={job.job_id}>
+                    <TableCell className="font-medium">{job.name || 'Untitled'}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={job.status === 'completed' ? 'default' : 'secondary'}
+                        className="text-xs"
+                      >
+                        {formatStatus(job.status)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="max-w-32 truncate text-sm text-muted-foreground">
+                      {job.teacher_model || '—'}
+                    </TableCell>
+                    <TableCell className="max-w-32 truncate text-sm text-muted-foreground">
+                      {job.student_model || '—'}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatCost(job.cost_accrued)}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {job.created_at ? formatDateWithYear(job.created_at) : '—'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Cost Savings Trend</CardTitle>
-            <CardDescription>Baseline vs Actual &middot; {selectedDays}d</CardDescription>
+            <CardDescription>Baseline vs actual cost &middot; {selectedDays}d</CardDescription>
           </CardHeader>
           <CardContent>
             {efficiency?.cost_savings_trend && efficiency.cost_savings_trend.length > 0 ? (
@@ -180,15 +429,11 @@ function CostAnalysisContent({ data }: { data: IntelligenceData }) {
                       <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0.02} />
                     </linearGradient>
                     <linearGradient id="fillActual" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--chart-2)" stopOpacity={0.35} />
+                      <stop offset="0%" stopColor="var(--chart-2)" stopOpacity={0.3} />
                       <stop offset="100%" stopColor="var(--chart-2)" stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    vertical={false}
-                    className="stroke-border/50"
-                  />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border" />
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
                   <YAxis
                     tick={{ fontSize: 11 }}
@@ -220,10 +465,7 @@ function CostAnalysisContent({ data }: { data: IntelligenceData }) {
                 </AreaChart>
               </ChartContainer>
             ) : (
-              <div className="flex h-56 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60">
-                <TrendingUp className="size-8 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">No cost savings data yet</p>
-              </div>
+              <ChartEmpty icon={TrendingUp} message="No cost savings data yet" />
             )}
           </CardContent>
         </Card>
@@ -242,11 +484,7 @@ function CostAnalysisContent({ data }: { data: IntelligenceData }) {
             {costData?.timeSeries && costData.timeSeries.length > 0 ? (
               <ChartContainer config={costOverTimeConfig} className="h-72 w-full">
                 <AreaChart data={costData.timeSeries}>
-                  <CartesianGrid
-                    vertical={false}
-                    strokeDasharray="3 3"
-                    className="stroke-border/50"
-                  />
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" className="stroke-border" />
                   <XAxis
                     dataKey="date"
                     tickLine={false}
@@ -280,10 +518,7 @@ function CostAnalysisContent({ data }: { data: IntelligenceData }) {
                 </AreaChart>
               </ChartContainer>
             ) : (
-              <div className="flex h-56 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60">
-                <TrendingUp className="size-8 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">No time series data</p>
-              </div>
+              <ChartEmpty icon={TrendingUp} message="No time series data" />
             )}
           </CardContent>
         </Card>
@@ -326,10 +561,7 @@ function CostAnalysisContent({ data }: { data: IntelligenceData }) {
                 </PieChart>
               </ChartContainer>
             ) : (
-              <div className="flex h-56 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60">
-                <DollarSign className="size-8 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">No external provider costs</p>
-              </div>
+              <ChartEmpty icon={DollarSign} message="No external provider costs" />
             )}
           </CardContent>
         </Card>
@@ -386,20 +618,70 @@ function CostAnalysisContent({ data }: { data: IntelligenceData }) {
                 </BarChart>
               </ChartContainer>
             ) : (
-              <div className="flex h-56 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60">
-                <DollarSign className="size-8 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">No cost data</p>
-              </div>
+              <ChartEmpty icon={DollarSign} message="No cost data" />
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Expensive Requests */}
+      {cb && cb.net_savings !== 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Estimated Savings from Trained Model</CardTitle>
+            <CardDescription>
+              Cost savings compared to always using the most expensive model
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1 rounded-lg border p-4">
+                <p className="text-xs text-muted-foreground">Baseline Cost</p>
+                <p className="text-xl font-semibold tabular-nums">
+                  {formatCost(cb.provider_baseline)}
+                </p>
+                <p className="text-xs text-muted-foreground">Cost if always using the best model</p>
+              </div>
+              <div className="space-y-1 rounded-lg border p-4">
+                <p className="text-xs text-muted-foreground">Actual Cost</p>
+                <p className="text-xl font-semibold tabular-nums">
+                  {formatCost(cb.routing_actual)}
+                </p>
+                <p className="text-xs text-muted-foreground">Cost with router + trained model</p>
+              </div>
+              <div className="space-y-1 rounded-lg border p-4">
+                <p className="text-xs text-muted-foreground">Net Savings</p>
+                <p className="text-xl font-semibold tabular-nums">{formatCost(cb.net_savings)}</p>
+                <p className="text-xs text-muted-foreground">
+                  {formatCost(cb.monthly_projection)}/month projected
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Most Expensive Requests</CardTitle>
           <CardDescription>Click a row to view the trace</CardDescription>
+          <CardAction>
+            {externalRequests.length > 0 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5"
+                    onClick={handleExportExpensive}
+                  >
+                    <Download className="size-3" />
+                    CSV
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Export as CSV</TooltipContent>
+              </Tooltip>
+            )}
+          </CardAction>
         </CardHeader>
         <CardContent className="px-6">
           {externalRequests.length > 0 ? (
@@ -417,7 +699,7 @@ function CostAnalysisContent({ data }: { data: IntelligenceData }) {
                 {externalRequests.slice(0, 8).map((req, i) => (
                   <TableRow
                     key={req.id || i}
-                    className="cursor-pointer transition-colors hover:bg-muted/50"
+                    className="cursor-pointer"
                     onClick={() => navigate(`/traces?trace=${req.id}`)}
                   >
                     <TableCell>
@@ -427,7 +709,7 @@ function CostAnalysisContent({ data }: { data: IntelligenceData }) {
                     </TableCell>
                     <TableCell className="font-medium">{req.model}</TableCell>
                     <TableCell className="tabular-nums text-muted-foreground">
-                      {req.promptSize.toLocaleString()}
+                      {formatNumber(req.promptSize)}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{req.date}</TableCell>
                     <TableCell className="text-right">
@@ -440,13 +722,43 @@ function CostAnalysisContent({ data }: { data: IntelligenceData }) {
               </TableBody>
             </Table>
           ) : (
-            <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60">
-              <Sparkles className="size-6 text-muted-foreground/30" />
+            <div className="flex h-32 flex-col items-center justify-center gap-2">
               <p className="text-sm text-muted-foreground">No expensive requests recorded</p>
             </div>
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function InlineStat({
+  label,
+  value,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  icon: React.ElementType;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border px-4 py-3">
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="truncate text-base font-semibold tabular-nums">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function ChartEmpty({ icon: Icon, message }: { icon: React.ElementType; message: string }) {
+  return (
+    <div className="flex h-56 flex-col items-center justify-center gap-3">
+      <div className="flex size-12 items-center justify-center rounded-full bg-muted">
+        <Icon className="size-5 text-muted-foreground" />
+      </div>
+      <p className="text-sm text-muted-foreground">{message}</p>
     </div>
   );
 }

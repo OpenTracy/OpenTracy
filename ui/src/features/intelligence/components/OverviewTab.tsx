@@ -1,8 +1,17 @@
 import { useMemo } from 'react';
-import { DollarSign, Target, Hash, Activity, Clock, AlertCircle } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
-import { Bar, BarChart, LabelList } from 'recharts';
-import { KpiCard } from '@/components/shared/KpiCard';
+import {
+  Hash,
+  DollarSign,
+  Target,
+  Clock,
+  AlertCircle,
+  Activity,
+  TrendingDown,
+  ArrowRight,
+  GraduationCap,
+  PiggyBank,
+} from 'lucide-react';
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, LabelList } from 'recharts';
 import {
   Card,
   CardAction,
@@ -20,8 +29,10 @@ import {
   ChartLegendContent,
 } from '@/components/ui/chart';
 import { Badge } from '@/components/ui/badge';
+import { formatCost } from '@/utils/formatUtils';
+import { formatNumber, formatPercent } from '../utils/intelligenceHelpers';
 import type { IntelligenceData } from '../hooks/useIntelligenceData';
-import { ModelBreakdownTable } from './shared/ModelBreakdownTable';
+import { MetricCard } from './shared/MetricCard';
 import { OverviewSkeleton, EmptyState, ErrorState } from './shared';
 
 const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)'];
@@ -36,22 +47,38 @@ export function OverviewTab({ data }: OverviewTabProps) {
   if (loading) return <OverviewSkeleton />;
   if (error) return <ErrorState error={error} onRetry={refreshData} />;
   if (!efficiency && !overviewData)
-    return <EmptyState message="No data available" onRefresh={refreshData} />;
+    return (
+      <EmptyState
+        message="No data available yet. Start routing requests to see metrics."
+        onRefresh={refreshData}
+      />
+    );
 
   return <OverviewContent data={data} />;
 }
 
 function OverviewContent({ data }: { data: IntelligenceData }) {
-  const { efficiency, overviewData, unifiedModelRows, selectedDays } = data;
+  const {
+    efficiency,
+    overviewData,
+    performanceData,
+    routingIntelligence,
+    unifiedModelRows,
+    selectedDays,
+  } = data;
 
   const kpis = efficiency?.kpis;
-  const costSaved = kpis?.cost_saved?.value ?? 0;
-  const quality = kpis?.quality_score?.value ?? 0;
-  const totalReqs = kpis?.requests_routed?.value ?? 0;
+  const costSaved = (kpis?.cost_saved as { value: number } | undefined)?.value ?? 0;
+  const quality = (kpis?.quality_score as { value: number } | undefined)?.value ?? 0;
+  const totalReqs = (kpis?.requests_routed as { value: number } | undefined)?.value ?? 0;
 
   const externalCost = overviewData?.kpis?.find((k) => k.icon === 'dollar')?.value ?? '$0.00';
   const latencyP95 = overviewData?.kpis?.find((k) => k.icon === 'trending')?.value ?? '0ms';
   const errorRate = overviewData?.kpis?.find((k) => k.icon === 'alert')?.value ?? '0.0%';
+
+  const cb = efficiency?.cost_breakdown;
+
+  const topModels = useMemo(() => unifiedModelRows.slice(0, 5), [unifiedModelRows]);
 
   const modelNames = useMemo(() => {
     if (!efficiency?.model_distribution?.length) return [];
@@ -99,29 +126,127 @@ function OverviewContent({ data }: { data: IntelligenceData }) {
     return cfg;
   }, [overviewData]);
 
+  const latencyHistogram = performanceData?.latencyHistogram ?? [];
+  const latencyConfig = useMemo<ChartConfig>(
+    () => ({ count: { label: 'Requests', color: 'var(--chart-2)' } }),
+    []
+  );
+
+  // Real efficiency trend from /v1/intelligence/routing
+  const efficiencyTrend = routingIntelligence?.efficiency_trend ?? [];
+  const efficiencyTrendConfig = useMemo<ChartConfig>(
+    () => ({ score: { label: 'Efficiency', color: 'var(--chart-1)' } }),
+    []
+  );
+
   return (
-    <div className="space-y-6">
-      {/* KPIs */}
+    <div className="space-y-8">
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-        <KpiCard
+        <MetricCard
+          label="Requests Routed"
+          value={formatNumber(Number(totalReqs))}
+          icon={Hash}
+          tooltip="Total number of requests processed by the router in this period"
+        />
+        <MetricCard
           label="Cost Saved"
           value={`$${Number(costSaved).toFixed(4)}`}
           icon={DollarSign}
-          subtitle="vs baseline"
+          tooltip="Cost savings compared to always routing to the most expensive model"
         />
-        <KpiCard
+        <MetricCard
           label="Quality Score"
-          value={`${(Number(quality) * 100).toFixed(1)}%`}
+          value={formatPercent(Number(quality))}
           icon={Target}
-          subtitle="routing win rate"
+          tooltip="Percentage of requests where the router chose the optimal model"
         />
-        <KpiCard label="Requests Routed" value={String(totalReqs)} icon={Hash} />
-        <KpiCard label={`API Cost (${selectedDays}d)`} value={externalCost} icon={DollarSign} />
-        <KpiCard label="Latency P95" value={latencyP95} icon={Clock} />
-        <KpiCard label="Error Rate" value={errorRate} icon={AlertCircle} />
+        <MetricCard
+          label={`API Cost (${selectedDays}d)`}
+          value={externalCost}
+          icon={DollarSign}
+          tooltip="Total cost of external API calls to LLM providers"
+        />
+        <MetricCard
+          label="Latency P95"
+          value={latencyP95}
+          icon={Clock}
+          tooltip="95th percentile response time across all requests"
+        />
+        <MetricCard
+          label="Error Rate"
+          value={errorRate}
+          icon={AlertCircle}
+          tooltip="Percentage of requests that returned an error"
+        />
       </div>
 
-      {/* Charts */}
+      {cb && (cb.provider_baseline > 0 || cb.training_investment > 0) && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <PiggyBank className="size-4 text-muted-foreground" />
+              <CardTitle className="text-base">Cost Comparison</CardTitle>
+            </div>
+            <CardDescription>
+              Provider baseline vs actual routing cost &middot; {selectedDays}d
+            </CardDescription>
+            <CardAction>
+              {cb.net_savings > 0 && (
+                <Badge variant="outline" className="gap-1 text-xs font-semibold">
+                  <TrendingDown className="size-3" />
+                  {formatCost(cb.net_savings)} saved
+                </Badge>
+              )}
+            </CardAction>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-6 lg:grid-cols-5">
+              <div className="space-y-4 lg:col-span-3">
+                <CostBar
+                  label="Provider Baseline (most expensive model)"
+                  value={cb.provider_baseline}
+                  max={cb.provider_baseline}
+                  color="var(--chart-1)"
+                />
+                <CostBar
+                  label="Actual Router Cost"
+                  value={cb.routing_actual}
+                  max={cb.provider_baseline}
+                  color="var(--chart-2)"
+                />
+                {cb.training_investment > 0 && (
+                  <CostBar
+                    label="Training Investment"
+                    value={cb.training_investment}
+                    max={cb.provider_baseline}
+                    color="var(--chart-3)"
+                  />
+                )}
+              </div>
+              <div className="flex flex-col justify-center gap-3 lg:col-span-2">
+                <StatBox
+                  icon={TrendingDown}
+                  label="Routing Savings"
+                  value={formatCost(cb.routing_savings)}
+                />
+                {cb.training_investment > 0 && (
+                  <StatBox
+                    icon={GraduationCap}
+                    label="Training ROI"
+                    value={`${cb.roi_pct.toFixed(0)}%`}
+                  />
+                )}
+                <StatBox
+                  icon={ArrowRight}
+                  label="Monthly Projection"
+                  value={`${formatCost(cb.monthly_projection)}/mo`}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-3">
           <CardHeader>
@@ -134,11 +259,11 @@ function OverviewContent({ data }: { data: IntelligenceData }) {
                 <AreaChart data={efficiency.model_distribution}>
                   <defs>
                     {modelNames.map((name, i) => (
-                      <linearGradient key={name} id={`fill-${name}`} x1="0" y1="0" x2="0" y2="1">
+                      <linearGradient key={name} id={`fill-ov-${name}`} x1="0" y1="0" x2="0" y2="1">
                         <stop
                           offset="0%"
                           stopColor={CHART_COLORS[i % CHART_COLORS.length]}
-                          stopOpacity={0.5}
+                          stopOpacity={0.4}
                         />
                         <stop
                           offset="100%"
@@ -148,11 +273,7 @@ function OverviewContent({ data }: { data: IntelligenceData }) {
                       </linearGradient>
                     ))}
                   </defs>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    vertical={false}
-                    className="stroke-border/50"
-                  />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border" />
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
                   <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={40} />
                   <ChartTooltip content={<ChartTooltipContent />} />
@@ -163,7 +284,7 @@ function OverviewContent({ data }: { data: IntelligenceData }) {
                       type="monotone"
                       dataKey={name}
                       stackId="1"
-                      fill={`url(#fill-${name})`}
+                      fill={`url(#fill-ov-${name})`}
                       stroke={CHART_COLORS[i % CHART_COLORS.length]}
                       strokeWidth={1.5}
                     />
@@ -171,10 +292,7 @@ function OverviewContent({ data }: { data: IntelligenceData }) {
                 </AreaChart>
               </ChartContainer>
             ) : (
-              <div className="flex h-56 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60">
-                <Activity className="size-8 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">No distribution data yet</p>
-              </div>
+              <ChartEmpty icon={Activity} message="No distribution data yet" />
             )}
           </CardContent>
         </Card>
@@ -210,24 +328,186 @@ function OverviewContent({ data }: { data: IntelligenceData }) {
                     <LabelList
                       dataKey="requests"
                       position="right"
-                      formatter={(value: string | number) => Number(value).toLocaleString()}
+                      formatter={(value: string | number) => formatNumber(Number(value))}
                       className="fill-foreground text-xs"
                     />
                   </Bar>
                 </BarChart>
               </ChartContainer>
             ) : (
-              <div className="flex h-56 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60">
-                <Activity className="size-8 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">No model usage data</p>
-              </div>
+              <ChartEmpty icon={Activity} message="No model usage data" />
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Table */}
-      <ModelBreakdownTable rows={unifiedModelRows} />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Latency Distribution</CardTitle>
+            <CardDescription>Request count by response time bucket</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {latencyHistogram.length > 0 ? (
+              <ChartContainer config={latencyConfig} className="h-64 w-full">
+                <BarChart data={latencyHistogram}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border" />
+                  <XAxis
+                    dataKey="bucket"
+                    tick={{ fontSize: 11 }}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={40} />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Bar dataKey="count" fill="var(--chart-2)" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ChartContainer>
+            ) : (
+              <ChartEmpty icon={Clock} message="No latency data yet" />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Router Efficiency Trend</CardTitle>
+            <CardDescription>
+              Routing optimization score over time &middot; {selectedDays}d
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ChartContainer config={efficiencyTrendConfig} className="h-64 w-full">
+              <AreaChart data={efficiencyTrend}>
+                <defs>
+                  <linearGradient id="fillEffTrend" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.3} />
+                    <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border" />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v) => {
+                    const d = new Date(v);
+                    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                  }}
+                />
+                <YAxis
+                  tick={{ fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={40}
+                  tickFormatter={(v) => formatPercent(Number(v))}
+                  domain={[0, 1]}
+                />
+                <ChartTooltip
+                  content={
+                    <ChartTooltipContent formatter={(v: number) => formatPercent(Number(v))} />
+                  }
+                />
+                <Area
+                  type="monotone"
+                  dataKey="score"
+                  fill="url(#fillEffTrend)"
+                  stroke="var(--chart-1)"
+                  strokeWidth={2}
+                />
+              </AreaChart>
+            </ChartContainer>
+          </CardContent>
+        </Card>
+      </div>
+
+      {topModels.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Top 5 Most-Used Models</CardTitle>
+            <CardDescription>By request volume &middot; {selectedDays}d</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              {topModels.map((m) => (
+                <div key={m.model} className="space-y-1 rounded-lg border p-4">
+                  <p className="truncate text-sm font-medium">{m.model}</p>
+                  <p className="text-xs text-muted-foreground">{m.provider}</p>
+                  <div className="flex items-baseline gap-2 pt-1">
+                    <span className="text-lg font-semibold tabular-nums">
+                      {formatNumber(m.requests)}
+                    </span>
+                    <span className="text-xs text-muted-foreground">requests</span>
+                  </div>
+                  <p className="text-xs tabular-nums text-muted-foreground">
+                    {m.trafficPct.toFixed(1)}% traffic &middot; {formatCost(m.totalCost)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function CostBar({
+  label,
+  value,
+  max,
+  color,
+}: {
+  label: string;
+  value: number;
+  max: number;
+  color: string;
+}) {
+  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-semibold tabular-nums">{formatCost(value)}</span>
+      </div>
+      <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${pct}%`, backgroundColor: color }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function StatBox({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border px-4 py-3">
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
+      <div>
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="text-lg font-semibold tabular-nums">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function ChartEmpty({ icon: Icon, message }: { icon: React.ElementType; message: string }) {
+  return (
+    <div className="flex h-56 flex-col items-center justify-center gap-3">
+      <div className="flex size-12 items-center justify-center rounded-full bg-muted">
+        <Icon className="size-5 text-muted-foreground" />
+      </div>
+      <p className="text-sm text-muted-foreground">{message}</p>
     </div>
   );
 }

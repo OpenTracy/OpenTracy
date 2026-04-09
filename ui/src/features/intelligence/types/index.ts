@@ -1,4 +1,11 @@
-export type IntelligenceTabId = 'overview' | 'costs' | 'performance' | 'models';
+export type IntelligenceTabId =
+  | 'overview'
+  | 'costs'
+  | 'performance'
+  | 'models'
+  | 'routing'
+  | 'training';
+
 export type Period = '7d' | '14d' | '30d';
 
 export const PERIOD_TO_DAYS: Record<Period, number> = {
@@ -15,4 +22,34 @@ export interface UnifiedModelRow {
   accuracy: number | null;
   avgCost: number;
   totalCost: number;
+}
+
+export interface RoutingDecision {
+  requestId: string;
+  cluster: number;
+  modelChosen: string;
+  reason: string;
+  cost: number;
+  latency: number;
+  outcome: 'success' | 'error';
+  timestamp: string;
+}
+
+export interface TrainingRunDetail {
+  runId: string;
+  date: string;
+  outcome: 'promoted' | 'rejected';
+  confidence: number;
+  cost: number;
+  duration: string;
+  reason: string;
+}
+
+export interface ModelCapability {
+  model: string;
+  provider: string;
+  contextWindow: number;
+  supportsVision: boolean;
+  supportsFunctionCalling: boolean;
+  costTier: 'low' | 'medium' | 'high' | 'premium';
 }
