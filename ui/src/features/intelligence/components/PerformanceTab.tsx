@@ -8,7 +8,6 @@ import {
   BarChart3,
   TrendingUp,
   GraduationCap,
-  DollarSign,
   CheckCircle2,
   XCircle,
   Loader2,
@@ -62,26 +61,24 @@ import {
 import type { IntelligenceData } from '../hooks/useIntelligenceData';
 import { MetricCard } from './shared/MetricCard';
 import { PerformanceSkeleton, EmptyState, ErrorState } from './shared';
-import { ModelPerformanceContent } from './ModelPerformanceSection';
 
 interface PerformanceTabProps {
   data: IntelligenceData;
 }
 
 export function PerformanceTab({ data }: PerformanceTabProps) {
-  const { loading, error, training, models, performanceData, refreshData } = data;
+  const { loading, error, training, performanceData, refreshData } = data;
 
   if (loading) return <PerformanceSkeleton />;
   if (error) return <ErrorState error={error} onRetry={refreshData} />;
-  if (!training && !models && !performanceData)
+  if (!training && !performanceData)
     return <EmptyState message="No performance data available yet." onRefresh={refreshData} />;
 
   return <PerformanceContent data={data} />;
 }
 
 function PerformanceContent({ data }: { data: IntelligenceData }) {
-  const { training, models, costData, performanceData, overviewData, trainingRuns, selectedDays } =
-    data;
+  const { training, costData, performanceData, overviewData, trainingRuns, selectedDays } = data;
 
   const kpis = training?.kpis as Record<string, unknown> | undefined;
   const advisorStatus = kpis?.advisor_status as
@@ -140,16 +137,18 @@ function PerformanceContent({ data }: { data: IntelligenceData }) {
   );
 
   const handleExportRuns = () => {
-    const headers = ['Run ID', 'Date', 'Outcome', 'Confidence', 'Cost', 'Duration', 'Reason'];
-    const rows = trainingRuns.map((r) => [
-      r.runId,
-      formatDateWithYear(r.date),
-      formatStatus(r.outcome),
-      formatPercent(r.confidence, false),
-      formatCost(r.cost),
-      r.duration,
-      r.reason,
-    ]);
+    const headers = ['Name', 'Date', 'Outcome', 'Confidence', 'Cost', 'Duration', 'Details'];
+    const rows = trainingRuns
+      .slice(0, 10)
+      .map((r) => [
+        r.name,
+        formatDateWithYear(r.date),
+        formatStatus(r.outcome),
+        formatPercent(r.confidence, false),
+        formatCost(r.cost),
+        r.duration,
+        r.reason,
+      ]);
     exportTableToCsv(headers, rows, 'training-runs');
   };
 
@@ -250,35 +249,58 @@ function PerformanceContent({ data }: { data: IntelligenceData }) {
           <CardHeader>
             <div className="flex items-center gap-2">
               <GraduationCap className="size-4 text-muted-foreground" />
-              <CardTitle className="text-base">Distillation Overview</CardTitle>
+              <CardTitle className="text-base">Distillation Pipeline</CardTitle>
             </div>
-            <CardDescription>Model training pipeline status and costs</CardDescription>
+            <CardDescription>Model training pipeline status</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <StatBlock icon={CheckCircle2} label="Completed" value={distSummary.completed_jobs} />
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-center gap-6">
+              <div className="flex items-center gap-2">
+                <div className="flex size-8 items-center justify-center rounded-full bg-emerald-500/10">
+                  <CheckCircle2 className="size-4 text-emerald-500" />
+                </div>
+                <div>
+                  <p className="text-lg font-semibold tabular-nums">{distSummary.completed_jobs}</p>
+                  <p className="text-xs text-muted-foreground">Completed</p>
+                </div>
+              </div>
               {distSummary.running_jobs > 0 && (
-                <StatBlock
-                  icon={Loader2}
-                  label="Running"
-                  value={distSummary.running_jobs}
-                  iconClassName="animate-spin"
-                />
+                <div className="flex items-center gap-2">
+                  <div className="flex size-8 items-center justify-center rounded-full bg-blue-500/10">
+                    <Loader2 className="size-4 animate-spin text-blue-500" />
+                  </div>
+                  <div>
+                    <p className="text-lg font-semibold tabular-nums">{distSummary.running_jobs}</p>
+                    <p className="text-xs text-muted-foreground">Running</p>
+                  </div>
+                </div>
               )}
               {distSummary.failed_jobs > 0 && (
-                <StatBlock icon={XCircle} label="Failed" value={distSummary.failed_jobs} />
+                <div className="flex items-center gap-2">
+                  <div className="flex size-8 items-center justify-center rounded-full bg-destructive/10">
+                    <XCircle className="size-4 text-destructive" />
+                  </div>
+                  <div>
+                    <p className="text-lg font-semibold tabular-nums">{distSummary.failed_jobs}</p>
+                    <p className="text-xs text-muted-foreground">Failed</p>
+                  </div>
+                </div>
               )}
-              <StatBlock
-                icon={DollarSign}
-                label="Total Training Cost"
-                value={formatCost(distSummary.total_training_cost)}
-              />
+              <div className="flex items-center gap-2">
+                <div className="flex size-8 items-center justify-center rounded-full bg-muted">
+                  <GraduationCap className="size-4 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-lg font-semibold tabular-nums">{distSummary.total_jobs}</p>
+                  <p className="text-xs text-muted-foreground">Total jobs</p>
+                </div>
+              </div>
             </div>
 
             {distSummary.latest_completed_job && (
-              <div className="mt-4 flex flex-wrap items-center gap-4 rounded-lg border px-4 py-3">
+              <div className="flex flex-wrap items-center gap-4 rounded-lg border bg-muted/30 px-4 py-3">
                 <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Latest Distillation
+                  Latest
                 </span>
                 <span className="text-sm font-semibold">
                   {distSummary.latest_completed_job.name}
@@ -295,9 +317,6 @@ function PerformanceContent({ data }: { data: IntelligenceData }) {
                     {distSummary.latest_completed_job.student_model || '—'}
                   </Badge>
                 </div>
-                <span className="text-sm tabular-nums text-muted-foreground">
-                  {formatCost(distSummary.latest_completed_job.cost)} cost
-                </span>
               </div>
             )}
           </CardContent>
@@ -332,19 +351,19 @@ function PerformanceContent({ data }: { data: IntelligenceData }) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Run ID</TableHead>
+                  <TableHead>Name</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Outcome</TableHead>
                   <TableHead className="text-right">Confidence</TableHead>
                   <TableHead className="text-right">Cost</TableHead>
                   <TableHead>Duration</TableHead>
-                  <TableHead>Reason</TableHead>
+                  <TableHead>Details</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {trainingRuns.slice(0, 10).map((run) => (
                   <TableRow key={run.runId}>
-                    <TableCell className="font-mono text-xs">{run.runId}</TableCell>
+                    <TableCell className="max-w-48 truncate font-medium">{run.name}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {formatDateWithYear(run.date)}
                     </TableCell>
@@ -357,7 +376,7 @@ function PerformanceContent({ data }: { data: IntelligenceData }) {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatPercent(run.confidence, false)}
+                      {run.confidence > 0 ? formatPercent(run.confidence, false) : '—'}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatCost(run.cost)}
@@ -490,30 +509,6 @@ function PerformanceContent({ data }: { data: IntelligenceData }) {
             )}
           </CardContent>
         </Card>
-      </div>
-
-      {models && <ModelPerformanceContent data={models} />}
-    </div>
-  );
-}
-
-function StatBlock({
-  icon: Icon,
-  label,
-  value,
-  iconClassName,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: number | string;
-  iconClassName?: string;
-}) {
-  return (
-    <div className="flex items-center gap-3 rounded-lg border px-4 py-3">
-      <Icon className={`size-4 shrink-0 text-muted-foreground ${iconClassName ?? ''}`} />
-      <div>
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="text-base font-semibold tabular-nums">{String(value)}</p>
       </div>
     </div>
   );

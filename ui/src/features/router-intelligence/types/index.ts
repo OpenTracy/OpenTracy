@@ -116,6 +116,7 @@ export interface TrainingActivityData {
   distillation_summary: DistillationSummary | null;
   training_runs_detail: {
     run_id: string;
+    name: string;
     date: string;
     outcome: string;
     confidence: number;

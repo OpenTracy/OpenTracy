@@ -37,6 +37,7 @@ import {
 } from '../utils/intelligenceHelpers';
 import type { IntelligenceData } from '../hooks/useIntelligenceData';
 import { MetricCard } from './shared/MetricCard';
+import { BaselineComparison } from './shared/BaselineComparison';
 import { RoutingSkeleton, EmptyState, ErrorState } from './shared';
 
 const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)'];
@@ -371,44 +372,7 @@ function RoutingContent({ data }: { data: IntelligenceData }) {
         </Card>
       )}
 
-      {cb && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Baseline Model Comparison</CardTitle>
-            <CardDescription>Router actual cost vs always-cheapest vs always-best</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-1 rounded-lg border p-4">
-                <p className="text-xs text-muted-foreground">Router (Actual)</p>
-                <p className="text-xl font-semibold tabular-nums">
-                  {formatCost(cb.routing_actual)}
-                </p>
-                <p className="text-xs text-muted-foreground">Smart routing with trained model</p>
-              </div>
-              <div className="space-y-1 rounded-lg border p-4">
-                <p className="text-xs text-muted-foreground">Always Best Model</p>
-                <p className="text-xl font-semibold tabular-nums">
-                  {formatCost(cb.provider_baseline)}
-                </p>
-                <p className="text-xs text-muted-foreground">Most accurate, most expensive</p>
-              </div>
-              <div className="space-y-1 rounded-lg border p-4">
-                <p className="text-xs text-muted-foreground">Savings</p>
-                <p className="text-xl font-semibold tabular-nums">
-                  {formatCost(cb.routing_savings)}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {cb.provider_baseline > 0
-                    ? formatPercent(cb.routing_savings / cb.provider_baseline)
-                    : '0.0%'}{' '}
-                  reduction
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {cb && <BaselineComparison cb={cb} variant="compact" />}
     </div>
   );
 }

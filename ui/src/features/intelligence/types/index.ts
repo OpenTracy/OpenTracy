@@ -1,10 +1,4 @@
-export type IntelligenceTabId =
-  | 'overview'
-  | 'costs'
-  | 'performance'
-  | 'models'
-  | 'routing'
-  | 'training';
+export type IntelligenceTabId = 'overview' | 'costs' | 'performance' | 'models' | 'routing';
 
 export type Period = '7d' | '14d' | '30d';
 
@@ -37,6 +31,7 @@ export interface RoutingDecision {
 
 export interface TrainingRunDetail {
   runId: string;
+  name: string;
   date: string;
   outcome: 'promoted' | 'rejected';
   confidence: number;

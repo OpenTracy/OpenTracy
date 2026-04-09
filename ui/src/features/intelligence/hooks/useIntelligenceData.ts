@@ -5,14 +5,12 @@ import {
   fetchModelPerformanceData,
   fetchTrainingActivityData,
   fetchRoutingIntelligenceData,
-  fetchAdvisorConfig,
 } from '@/features/router-intelligence/api/routerIntelligenceService';
 import type {
   EfficiencyData,
   ModelPerformanceData,
   TrainingActivityData,
   RoutingIntelligenceData,
-  AdvisorConfigData,
 } from '@/features/router-intelligence/types';
 import type {
   OverviewData,
@@ -40,7 +38,6 @@ export interface IntelligenceData {
   models: ModelPerformanceData | null;
   training: TrainingActivityData | null;
   routingIntelligence: RoutingIntelligenceData | null;
-  advisorConfig: AdvisorConfigData | null;
 
   selectedDays: number;
   unifiedModelRows: UnifiedModelRow[];
@@ -188,6 +185,7 @@ function buildTrainingRuns(
   if (training?.training_runs_detail?.length) {
     return training.training_runs_detail.map((r) => ({
       runId: r.run_id,
+      name: r.name || 'Training run',
       date: r.date,
       outcome: r.outcome === 'promoted' ? 'promoted' : 'rejected',
       confidence: r.confidence,
@@ -205,6 +203,7 @@ function buildTrainingRuns(
       const h = training.training_history[i];
       runs.push({
         runId: `run_${String(i + 1).padStart(3, '0')}`,
+        name: 'Training run',
         date: h.date,
         outcome: h.promoted ? 'promoted' : 'rejected',
         confidence: 0,
@@ -230,12 +229,13 @@ function buildTrainingRuns(
         }
         runs.push({
           runId: job.job_id,
+          name: job.name || 'Distillation run',
           date: job.created_at,
           outcome: job.status === 'completed' ? 'promoted' : 'rejected',
           confidence: 0,
           cost: job.cost_accrued,
           duration,
-          reason: job.name || 'Distillation run',
+          reason: 'Distillation run',
         });
       }
     }
@@ -263,7 +263,6 @@ export function useIntelligenceData(period: Period): IntelligenceData {
   const [routingIntelligence, setRoutingIntelligence] = useState<RoutingIntelligenceData | null>(
     null
   );
-  const [advisorConfig, setAdvisorConfig] = useState<AdvisorConfigData | null>(null);
   const [riLoading, setRiLoading] = useState(false);
   const [riError, setRiError] = useState<string | null>(null);
 
@@ -275,18 +274,16 @@ export function useIntelligenceData(period: Period): IntelligenceData {
     setRiLoading(true);
     setRiError(null);
     try {
-      const [eff, mod, trn, ri, adv] = await Promise.all([
+      const [eff, mod, trn, ri] = await Promise.all([
         fetchEfficiencyData(days),
         fetchModelPerformanceData(),
         fetchTrainingActivityData(days),
         fetchRoutingIntelligenceData(days),
-        fetchAdvisorConfig(),
       ]);
       setEfficiency(eff);
       setModels(mod);
       setTraining(trn);
       setRoutingIntelligence(ri);
-      setAdvisorConfig(adv);
     } catch (err) {
       setRiError(err instanceof Error ? err.message : 'Failed to fetch intelligence data');
     } finally {
@@ -373,7 +370,6 @@ export function useIntelligenceData(period: Period): IntelligenceData {
     models,
     training,
     routingIntelligence,
-    advisorConfig,
     selectedDays: days,
     unifiedModelRows,
     routingDecisions,

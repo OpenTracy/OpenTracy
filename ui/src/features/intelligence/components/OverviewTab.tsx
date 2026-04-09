@@ -1,16 +1,5 @@
 import { useMemo } from 'react';
-import {
-  Hash,
-  DollarSign,
-  Target,
-  Clock,
-  AlertCircle,
-  Activity,
-  TrendingDown,
-  ArrowRight,
-  GraduationCap,
-  PiggyBank,
-} from 'lucide-react';
+import { Hash, DollarSign, Target, Clock, AlertCircle, Activity } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, LabelList } from 'recharts';
 import {
   Card,
@@ -33,6 +22,7 @@ import { formatCost } from '@/utils/formatUtils';
 import { formatNumber, formatPercent } from '../utils/intelligenceHelpers';
 import type { IntelligenceData } from '../hooks/useIntelligenceData';
 import { MetricCard } from './shared/MetricCard';
+import { BaselineComparison } from './shared/BaselineComparison';
 import { OverviewSkeleton, EmptyState, ErrorState } from './shared';
 
 const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)'];
@@ -180,73 +170,6 @@ function OverviewContent({ data }: { data: IntelligenceData }) {
         />
       </div>
 
-      {cb && (cb.provider_baseline > 0 || cb.training_investment > 0) && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <PiggyBank className="size-4 text-muted-foreground" />
-              <CardTitle className="text-base">Cost Comparison</CardTitle>
-            </div>
-            <CardDescription>
-              Provider baseline vs actual routing cost &middot; {selectedDays}d
-            </CardDescription>
-            <CardAction>
-              {cb.net_savings > 0 && (
-                <Badge variant="outline" className="gap-1 text-xs font-semibold">
-                  <TrendingDown className="size-3" />
-                  {formatCost(cb.net_savings)} saved
-                </Badge>
-              )}
-            </CardAction>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-6 lg:grid-cols-5">
-              <div className="space-y-4 lg:col-span-3">
-                <CostBar
-                  label="Provider Baseline (most expensive model)"
-                  value={cb.provider_baseline}
-                  max={cb.provider_baseline}
-                  color="var(--chart-1)"
-                />
-                <CostBar
-                  label="Actual Router Cost"
-                  value={cb.routing_actual}
-                  max={cb.provider_baseline}
-                  color="var(--chart-2)"
-                />
-                {cb.training_investment > 0 && (
-                  <CostBar
-                    label="Training Investment"
-                    value={cb.training_investment}
-                    max={cb.provider_baseline}
-                    color="var(--chart-3)"
-                  />
-                )}
-              </div>
-              <div className="flex flex-col justify-center gap-3 lg:col-span-2">
-                <StatBox
-                  icon={TrendingDown}
-                  label="Routing Savings"
-                  value={formatCost(cb.routing_savings)}
-                />
-                {cb.training_investment > 0 && (
-                  <StatBox
-                    icon={GraduationCap}
-                    label="Training ROI"
-                    value={`${cb.roi_pct.toFixed(0)}%`}
-                  />
-                )}
-                <StatBox
-                  icon={ArrowRight}
-                  label="Monthly Projection"
-                  value={`${formatCost(cb.monthly_projection)}/mo`}
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-3">
           <CardHeader>
@@ -340,6 +263,10 @@ function OverviewContent({ data }: { data: IntelligenceData }) {
           </CardContent>
         </Card>
       </div>
+
+      {cb && (cb.provider_baseline > 0 || cb.routing_actual > 0) && (
+        <BaselineComparison cb={cb} variant="full" />
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
@@ -449,54 +376,6 @@ function OverviewContent({ data }: { data: IntelligenceData }) {
           </CardContent>
         </Card>
       )}
-    </div>
-  );
-}
-
-function CostBar({
-  label,
-  value,
-  max,
-  color,
-}: {
-  label: string;
-  value: number;
-  max: number;
-  color: string;
-}) {
-  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-semibold tabular-nums">{formatCost(value)}</span>
-      </div>
-      <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full transition-all duration-500"
-          style={{ width: `${pct}%`, backgroundColor: color }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function StatBox({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="flex items-center gap-3 rounded-lg border px-4 py-3">
-      <Icon className="size-4 shrink-0 text-muted-foreground" />
-      <div>
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="text-lg font-semibold tabular-nums">{value}</p>
-      </div>
     </div>
   );
 }

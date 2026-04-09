@@ -1,3 +1,4 @@
+export { BaselineComparison } from './BaselineComparison';
 export { MetricCard } from './MetricCard';
 export { ModelBreakdownTable } from './ModelBreakdownTable';
 export { EmptyState, ErrorState } from './States';

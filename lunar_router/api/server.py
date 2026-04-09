@@ -2724,11 +2724,11 @@ async def intelligence_models():
     try:
         r = get_router()
     except Exception:
-        return ModelPerformanceResponse()
+        r = None
 
-    profiles = r.registry.get_all()
+    profiles = r.registry.get_all() if r else []
     if not profiles:
-        return ModelPerformanceResponse()
+        return _build_model_perf_from_ch()
 
     # KPIs
     best = min(profiles, key=lambda p: p.overall_error_rate)
@@ -2804,14 +2804,144 @@ async def intelligence_models():
     )
 
 
+def _build_model_perf_from_ch() -> "ModelPerformanceResponse":
+    """Fallback: build model performance data from ClickHouse when router registry is empty."""
+    from ..storage.clickhouse_client import get_client as _get_ch
+    ch = _get_ch()
+    if ch is None:
+        return ModelPerformanceResponse()
+
+    try:
+        # Per-model stats from llm_traces
+        r_models = ch.query(
+            "SELECT selected_model, "
+            "count() AS reqs, "
+            "countIf(is_error = 1) AS errs, "
+            "avg(total_cost_usd) AS avg_cost, "
+            "sum(total_cost_usd) AS total_cost "
+            "FROM llm_traces "
+            "GROUP BY selected_model ORDER BY reqs DESC"
+        )
+        if not r_models.result_rows:
+            return ModelPerformanceResponse()
+
+        models_data = []
+        for row in r_models.result_rows:
+            model = str(row[0])
+            reqs = int(row[1])
+            errs = int(row[2])
+            avg_cost = float(row[3])
+            total_cost = float(row[4])
+            accuracy = round(1.0 - (errs / max(reqs, 1)), 4)
+            models_data.append({
+                "model": model, "reqs": reqs, "errs": errs,
+                "avg_cost": avg_cost, "total_cost": total_cost,
+                "accuracy": accuracy,
+            })
+
+        best = max(models_data, key=lambda m: m["accuracy"])
+        cheapest = min(models_data, key=lambda m: m["avg_cost"])
+        best_value = max(
+            models_data,
+            key=lambda m: m["accuracy"] / max(m["avg_cost"], 1e-10),
+        )
+
+        kpis = {
+            "models_profiled": len(models_data),
+            "best_model": {"model": best["model"], "accuracy": best["accuracy"]},
+            "cheapest_model": {"model": cheapest["model"], "cost": round(cheapest["avg_cost"], 6)},
+            "best_value": {
+                "model": best_value["model"],
+                "ratio": round(best_value["accuracy"] / max(best_value["avg_cost"], 1e-10), 1),
+            },
+        }
+
+        # Per-model per-cluster accuracy from llm_traces
+        cluster_accuracy = []
+        try:
+            r_clust = ch.query(
+                "SELECT selected_model, cluster_id, "
+                "count() AS reqs, countIf(is_error = 1) AS errs "
+                "FROM llm_traces GROUP BY selected_model, cluster_id "
+                "ORDER BY selected_model, cluster_id"
+            )
+            model_clusters: dict[str, dict[str, float]] = {}
+            for row in r_clust.result_rows:
+                m = str(row[0])
+                c = str(int(row[1]))
+                reqs = int(row[2])
+                errs = int(row[3])
+                acc = round(1.0 - (errs / max(reqs, 1)), 4)
+                if m not in model_clusters:
+                    model_clusters[m] = {}
+                model_clusters[m][c] = acc
+            for m, clusters in model_clusters.items():
+                cluster_accuracy.append({"model": m, "clusters": clusters})
+        except Exception:
+            pass
+
+        # Leaderboard
+        leaderboard = []
+        for m in models_data:
+            model_name = m["model"]
+            # Find best/worst clusters for this model
+            ca = next((c for c in cluster_accuracy if c["model"] == model_name), None)
+            strong: list[int] = []
+            weak: list[int] = []
+            if ca and ca["clusters"]:
+                sorted_c = sorted(ca["clusters"].items(), key=lambda x: -x[1])
+                strong = [int(c) for c, _ in sorted_c[:3]]
+                weak = [int(c) for c, _ in sorted_c[-3:]]
+            leaderboard.append({
+                "model": model_name,
+                "accuracy": m["accuracy"],
+                "cost": round(m["avg_cost"], 6),
+                "strongest_clusters": strong,
+                "weakest_clusters": weak,
+            })
+        leaderboard.sort(key=lambda x: -x["accuracy"])
+
+        # Teacher-student from latest distillation
+        teacher_student = None
+        try:
+            import json as _json
+            r_dist = ch.query(
+                "SELECT config FROM distillation_jobs "
+                "WHERE status = 'completed' ORDER BY created_at DESC LIMIT 1"
+            )
+            if r_dist.result_rows:
+                cfg = _json.loads(r_dist.result_rows[0][0]) if isinstance(r_dist.result_rows[0][0], str) else {}
+                teacher = cfg.get("teacher_model", "")
+                student = cfg.get("student_model", "")
+                if teacher:
+                    t_data = next((m for m in models_data if m["model"] == teacher), None)
+                    teacher_student = {
+                        "teacher": teacher,
+                        "student": student,
+                        "teacher_accuracy": t_data["accuracy"] if t_data else 0,
+                        "teacher_cost": round(t_data["avg_cost"], 6) if t_data else 0,
+                    }
+        except Exception:
+            pass
+
+        return ModelPerformanceResponse(
+            kpis=kpis,
+            cluster_accuracy=cluster_accuracy,
+            leaderboard=leaderboard,
+            teacher_student=teacher_student,
+        )
+    except Exception:
+        return ModelPerformanceResponse()
+
+
 def _build_training_runs_detail(ch, training_history: list[dict]) -> list[dict]:
     """Build detailed training runs from distillation_jobs with real duration/confidence."""
     runs: list[dict] = []
     if ch is None:
-        # Fall back to training_history with what we have
         for i, h in enumerate(training_history):
             runs.append({
                 "run_id": f"run_{i+1:03d}",
+                "name": "Training run",
                 "date": h.get("date", ""),
                 "outcome": "promoted" if h.get("promoted") else "rejected",
                 "confidence": 0,
@@ -2823,6 +2953,8 @@ def _build_training_runs_detail(ch, training_history: list[dict]) -> list[dict]:
 
     try:
         import json as _json
+        from datetime import datetime
+
         r_jobs = ch.query(
             "SELECT job_id, name, status, config, cost_accrued, results, "
             "toString(created_at) AS created_at, "
@@ -2830,9 +2962,27 @@ def _build_training_runs_detail(ch, training_history: list[dict]) -> list[dict]:
             "FROM distillation_jobs FINAL "
             "ORDER BY created_at DESC LIMIT 30"
         )
+
+        # Batch-fetch metrics for all jobs at once
+        all_job_ids = [str(row[0]) for row in r_jobs.result_rows]
+        metrics_map: dict[str, float] = {}
+        if all_job_ids:
+            try:
+                r_met = ch.query(
+                    "SELECT job_id, argMax(reward_improvement, step) AS best_reward "
+                    "FROM distillation_metrics "
+                    "WHERE job_id IN ({jids:Array(String)}) "
+                    "GROUP BY job_id",
+                    parameters={"jids": all_job_ids},
+                )
+                for mrow in r_met.result_rows:
+                    metrics_map[str(mrow[0])] = float(mrow[1])
+            except Exception:
+                pass
+
         for row in r_jobs.result_rows:
             job_id = str(row[0])
-            name = str(row[1])
+            name = str(row[1]) or "Distillation run"
             status = str(row[2])
             config_raw = row[3]
             cost = float(row[4])
@@ -2840,22 +2990,27 @@ def _build_training_runs_detail(ch, training_history: list[dict]) -> list[dict]:
             created_at = str(row[6])
             completed_at = str(row[7]) if row[7] else None
 
-            # Compute real duration
+            # Compute real duration with second-level precision
             duration = "—"
             if completed_at and created_at and completed_at != "" and created_at != "":
                 try:
-                    from datetime import datetime
                     dt_start = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
                     dt_end = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
-                    mins = max(1, round((dt_end - dt_start).total_seconds() / 60))
-                    if mins >= 60:
-                        duration = f"{mins // 60}h {mins % 60}m"
+                    total_secs = max(0, round((dt_end - dt_start).total_seconds()))
+                    if total_secs < 60:
+                        duration = f"{total_secs}s"
+                    elif total_secs < 3600:
+                        mins = total_secs // 60
+                        secs = total_secs % 60
+                        duration = f"{mins}m {secs}s" if secs > 0 else f"{mins}m"
                     else:
-                        duration = f"{mins}m"
+                        hrs = total_secs // 3600
+                        mins = (total_secs % 3600) // 60
+                        duration = f"{hrs}h {mins}m" if mins > 0 else f"{hrs}h"
                 except Exception:
                     pass
 
-            # Get real confidence from results or distillation_metrics
+            # Get confidence: results → metrics → config eval_score
             confidence = 0.0
             try:
                 results = _json.loads(results_raw) if isinstance(results_raw, str) and results_raw else {}
@@ -2864,24 +3019,35 @@ def _build_training_runs_detail(ch, training_history: list[dict]) -> list[dict]:
                 pass
 
             if confidence == 0:
-                # Try distillation_metrics for the latest reward
+                confidence = min(1.0, max(0, metrics_map.get(job_id, 0)))
+
+            if confidence == 0:
                 try:
-                    r_met = ch.query(
-                        "SELECT reward_improvement FROM distillation_metrics "
-                        "WHERE job_id = {jid:String} "
-                        "ORDER BY step DESC LIMIT 1",
-                        parameters={"jid": job_id},
-                    )
-                    if r_met.result_rows:
-                        confidence = min(1.0, max(0, float(r_met.result_rows[0][0])))
+                    config = _json.loads(config_raw) if isinstance(config_raw, str) and config_raw else {}
+                    confidence = config.get("eval_score", config.get("quality_score", 0))
                 except Exception:
                     pass
 
             outcome = "promoted" if status == "completed" else "rejected"
-            reason = name or "Distillation run"
+
+            # Extract a meaningful reason from config or results
+            reason = ""
+            try:
+                config = _json.loads(config_raw) if isinstance(config_raw, str) and config_raw else {}
+                teacher = config.get("teacher_model", "")
+                student = config.get("student_model", "")
+                if teacher and student:
+                    reason = f"{teacher} → {student}"
+                elif teacher:
+                    reason = f"Teacher: {teacher}"
+            except Exception:
+                pass
+            if not reason:
+                reason = "Distillation run" if status == "completed" else f"Status: {status}"
 
             runs.append({
                 "run_id": job_id,
+                "name": name,
                 "date": created_at,
                 "outcome": outcome,
                 "confidence": round(confidence, 4),
@@ -2899,6 +3065,7 @@ def _build_training_runs_detail(ch, training_history: list[dict]) -> list[dict]:
         if h_date and h_date not in job_dates:
             runs.append({
                 "run_id": f"run_{i+1:03d}",
+                "name": "Training run",
                 "date": h.get("date", ""),
                 "outcome": "promoted" if h.get("promoted") else "rejected",
                 "confidence": 0,
@@ -3054,6 +3221,80 @@ async def intelligence_training(days: int = 30):
                     "total_training_cost": round(total_cost, 4),
                     "latest_completed_job": latest_job,
                 }
+        except Exception:
+            pass
+
+    # If training_history from memory store is empty, build from distillation_jobs
+    if not training_history and _ch is not None:
+        try:
+            import json as _json2
+            r_hist = _ch.query(
+                "SELECT job_id, name, status, config, "
+                "toString(created_at) AS created_at "
+                "FROM distillation_jobs FINAL "
+                "ORDER BY created_at DESC LIMIT 30"
+            )
+            for row in r_hist.result_rows:
+                status = str(row[2])
+                promoted = status == "completed"
+                name = str(row[1]) or "Distillation run"
+                reason = name
+                try:
+                    cfg = _json2.loads(row[3]) if isinstance(row[3], str) and row[3] else {}
+                    teacher = cfg.get("teacher_model", "")
+                    student = cfg.get("student_model", "")
+                    if teacher and student:
+                        reason = f"{teacher} → {student}"
+                except Exception:
+                    pass
+                training_history.append({
+                    "date": str(row[4]),
+                    "promoted": promoted,
+                    "reason": reason,
+                })
+            kpis["training_runs"] = len(training_history)
+            if training_history:
+                kpis["last_training"] = training_history[0]["date"]
+        except Exception:
+            pass
+
+    # If signal_trends is empty, build from llm_traces error/latency data
+    if not signal_trends and _ch is not None:
+        try:
+            r_signals = _ch.query(
+                "SELECT toDate(timestamp) AS dt, "
+                "count() AS total, "
+                "countIf(is_error = 1) AS errors, "
+                "avg(latency_ms) AS avg_lat "
+                "FROM llm_traces "
+                "GROUP BY dt ORDER BY dt"
+            )
+            for row in r_signals.result_rows:
+                dt_str = str(row[0])
+                total = int(row[1])
+                errors = int(row[2])
+                avg_lat = float(row[3])
+                error_rate = round(errors / max(total, 1) * 100, 2)
+                # Drift ratio: normalized latency deviation from 500ms baseline
+                drift = round(min(abs(avg_lat - 500) / 500, 5.0), 2)
+                signal_trends.append({
+                    "date": dt_str,
+                    "signal": "error_rate_increase",
+                    "value": error_rate,
+                    "triggered": error_rate > 10,
+                })
+                signal_trends.append({
+                    "date": dt_str,
+                    "signal": "drift_ratio",
+                    "value": drift,
+                    "triggered": drift > 2.0,
+                })
+                signal_trends.append({
+                    "date": dt_str,
+                    "signal": "high_severity_issues",
+                    "value": errors,
+                    "triggered": errors > 5,
+                })
         except Exception:
             pass
 
