@@ -228,6 +228,23 @@ export function useDatasetsPage() {
     [importDataset, setupAutoCollect]
   );
 
+  const handleAnalyzeTraces = useCallback(
+    async (data: any[]) => {
+      return await service.analyzeTraces(accessToken, data);
+    },
+    [accessToken, service]
+  );
+
+  const handleImportTraces = useCallback(
+    async (name: string, data: any[], mapping: any, description?: string) => {
+      const result = await service.importTraces(accessToken, name, data, mapping, description);
+      toast.success(`Imported "${result.name}" with ${result.samples_count} samples`);
+      refreshDatasets();
+      return result;
+    },
+    [accessToken, service, refreshDatasets]
+  );
+
   const handlePollGenerate = useCallback(
     async (datasetId: string) => {
       const result = await getDataset(datasetId, { include_samples: false });
@@ -268,6 +285,8 @@ export function useDatasetsPage() {
     handleCreateFromTopic,
     handleGenerate,
     handleImport,
+    handleAnalyzeTraces,
+    handleImportTraces,
     handlePollGenerate,
     handleGenerateBackground,
     handleCloseCreateModal,

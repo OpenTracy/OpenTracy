@@ -100,6 +100,8 @@ export default function DatasetsPage() {
         onPollGenerate={page.handlePollGenerate}
         onGenerateBackground={page.handleGenerateBackground}
         onImport={page.handleImport}
+        onAnalyzeTraces={page.handleAnalyzeTraces}
+        onImportTraces={page.handleImportTraces}
         traces={page.traces}
         tracesLoading={page.tracesLoading}
         onCreateFromTraces={page.handleCreateFromTraces}
