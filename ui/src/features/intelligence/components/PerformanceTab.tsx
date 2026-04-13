@@ -110,7 +110,6 @@ const SIGNAL_CHART_CONFIG: ChartConfig = {
   high_severity_issues: { label: 'Issues', color: 'var(--chart-4)' },
 };
 
-
 interface PerformanceTabProps {
   data: IntelligenceData;
 }
@@ -203,8 +202,6 @@ function PerformanceContent({ data }: { data: IntelligenceData }) {
       {data.models?.teacher_student && <TeacherVsStudentCard ts={data.models.teacher_student} />}
 
       {training && <TrainingActivitySection training={training} selectedDays={selectedDays} />}
-
-      {trainingRuns.length > 0 && <RunsTable runs={trainingRuns} days={selectedDays} />}
       {trainingRuns.length > 0 && <RunsTable runs={trainingRuns} days={selectedDays} />}
     </div>
   );
