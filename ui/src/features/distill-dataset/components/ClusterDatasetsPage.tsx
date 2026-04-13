@@ -77,7 +77,11 @@ function ClusterDatasetRow({
     ),
     dataset.avg_cost_usd > 0 && (
       <span key="cost" className="tabular-nums">
-        ${dataset.avg_cost_usd < 0.01 ? dataset.avg_cost_usd.toFixed(5) : dataset.avg_cost_usd.toFixed(3)}/req
+        $
+        {dataset.avg_cost_usd < 0.01
+          ? dataset.avg_cost_usd.toFixed(5)
+          : dataset.avg_cost_usd.toFixed(3)}
+        /req
       </span>
     ),
   ].filter(Boolean) as React.ReactNode[];
@@ -140,7 +144,7 @@ const STATUS_OPTIONS = [
 export default function ClusterDatasetsPage() {
   const page = useClusterDatasets();
   const navigate = useNavigate();
-  const [clusterDays, setClusterDays] = useState(30);
+  const [clusterDays] = useState(30);
 
   // "active" = hide rejected (default view)
   const visibleDatasets =
@@ -156,7 +160,12 @@ export default function ClusterDatasetsPage() {
         title="Domain Datasets"
         action={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={page.refreshDatasets} disabled={page.loading}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={page.refreshDatasets}
+              disabled={page.loading}
+            >
               <RefreshCw className="size-4" />
             </Button>
             <Button
@@ -164,7 +173,11 @@ export default function ClusterDatasetsPage() {
               onClick={() => page.triggerClustering(clusterDays)}
               disabled={page.running}
             >
-              {page.running ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+              {page.running ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
               {page.running ? 'Clustering...' : 'Cluster from Traces'}
             </Button>
           </div>
@@ -186,7 +199,9 @@ export default function ClusterDatasetsPage() {
                 className="h-8 rounded-md border bg-background px-2 text-sm"
               >
                 {STATUS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
                 ))}
               </select>
             }
@@ -214,7 +229,9 @@ export default function ClusterDatasetsPage() {
                     dataset={dataset}
                     onExport={page.exportDataset}
                     onQualify={page.qualifyDataset}
-                    onClick={() => navigate(`/distill-datasets/${dataset.run_id}/${dataset.cluster_id}`)}
+                    onClick={() =>
+                      navigate(`/distill-datasets/${dataset.run_id}/${dataset.cluster_id}`)
+                    }
                   />
                 ))}
               </ItemGroup>

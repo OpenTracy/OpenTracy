@@ -81,9 +81,7 @@ export function SmartImportMode({
               disabled={disabled}
             />
             <Upload className="size-8 mx-auto text-muted-foreground" />
-            <p className="text-sm text-muted-foreground mt-2">
-              Upload any JSON file with traces
-            </p>
+            <p className="text-sm text-muted-foreground mt-2">Upload any JSON file with traces</p>
             <p className="text-xs text-muted-foreground mt-1">
               We auto-detect the schema and map fields for you
             </p>
@@ -135,12 +133,8 @@ export function SmartImportMode({
         <div className="flex items-center gap-2 text-sm">
           <FileText className="size-4 text-primary" />
           <span className="font-medium">{file?.name}</span>
-          <span className="text-muted-foreground">
-            {recordCount} records
-          </span>
-          <span className="text-xs bg-muted px-1.5 py-0.5 rounded">
-            {analysis.source_format}
-          </span>
+          <span className="text-muted-foreground">{recordCount} records</span>
+          <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{analysis.source_format}</span>
         </div>
 
         <div className="space-y-2">
@@ -176,11 +170,17 @@ export function SmartImportMode({
                 <div key={i} className="border rounded-md p-2.5 text-xs space-y-1">
                   <div>
                     <span className="font-medium text-muted-foreground">Input: </span>
-                    <span className="break-all">{sample.input.slice(0, 150)}{sample.input.length > 150 ? '...' : ''}</span>
+                    <span className="break-all">
+                      {sample.input.slice(0, 150)}
+                      {sample.input.length > 150 ? '...' : ''}
+                    </span>
                   </div>
                   <div>
                     <span className="font-medium text-muted-foreground">Output: </span>
-                    <span className="break-all">{sample.expected_output.slice(0, 150)}{sample.expected_output.length > 150 ? '...' : ''}</span>
+                    <span className="break-all">
+                      {sample.expected_output.slice(0, 150)}
+                      {sample.expected_output.length > 150 ? '...' : ''}
+                    </span>
                   </div>
                 </div>
               ))}

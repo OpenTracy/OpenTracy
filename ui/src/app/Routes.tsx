@@ -8,10 +8,14 @@ const Observability = lazy(() => import('@/features/observability'));
 const Traces = lazy(() => import('@/views/Traces'));
 const DataSources = lazy(() => import('@/views/DataSources'));
 const DistillDatasets = lazy(() => import('@/features/distill-dataset'));
-const ClusterDatasetDetail = lazy(
-  () => import('@/features/distill-dataset/components/ClusterDatasetDetailPage')
+const DatasetDetail = lazy(
+  () => import('@/features/distill-dataset/components/DatasetDetail/DatasetDetailPage')
 );
-const DistillMetrics = lazy(() => import('@/features/evaluations'));
+const Evaluations = lazy(() => import('@/features/evaluations'));
+const DistillJobs = lazy(() => import('@/views/DistillJobs'));
+const NewDistillationJob = lazy(() => import('@/views/NewDistillationJob'));
+const DistillationJobView = lazy(() => import('@/views/DistillationJobView'));
+const DistillationResults = lazy(() => import('@/views/DistillationResults'));
 const RouterIntelligence = lazy(() => import('@/features/router-intelligence'));
 
 export function AppRoutes() {
@@ -25,8 +29,13 @@ export function AppRoutes() {
           <Route path="observability" element={<Observability />} />
           <Route path="data-sources" element={<DataSources />} />
           <Route path="distill-datasets" element={<DistillDatasets />} />
-          <Route path="distill-datasets/:runId/:clusterId" element={<ClusterDatasetDetail />} />
-          <Route path="distill-metrics" element={<DistillMetrics />} />
+          <Route path="distill-datasets/:datasetId" element={<DatasetDetail />} />
+          <Route path="distill-datasets/:datasetId/:tab" element={<DatasetDetail />} />
+          <Route path="distill-jobs" element={<DistillJobs />} />
+          <Route path="distill-new" element={<NewDistillationJob />} />
+          <Route path="distill-job/:jobId" element={<DistillationJobView />} />
+          <Route path="distill-job/:jobId/results" element={<DistillationResults />} />
+          <Route path="distill-metrics" element={<Evaluations />} />
           <Route path="router-intelligence" element={<RouterIntelligence />} />
         </Route>
 

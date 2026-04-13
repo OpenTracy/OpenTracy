@@ -38,13 +38,7 @@ export function JobCard({ job, onClick, onDelete }: JobCardProps) {
       descriptionParts={descriptionParts}
       onClick={onClick}
       size="default"
-      extraContent={
-        <JobMetrics
-          status={job.status}
-          progress={job.progress.overall_progress}
-          cost={job.cost_accrued}
-        />
-      }
+      extraContent={<JobMetrics status={job.status} progress={job.progress.overall_progress} />}
       actions={
         <>
           {canDelete && onDelete && (

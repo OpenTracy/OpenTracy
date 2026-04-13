@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useUser } from '@/contexts/UserContext';
 import { useEvaluationsService } from '../api/evaluationsService';
 import type { TraceIssue, TraceScan } from '../types/evaluationsTypes';
 
@@ -37,7 +36,7 @@ function normalizeIssue(raw: Record<string, unknown>): TraceIssue {
 }
 
 export function useTraceIssues() {
-  const { accessToken } = useUser();
+  const accessToken = '';
   const service = useEvaluationsService();
 
   // Backend trace-issue endpoints don't require auth — use empty string as fallback

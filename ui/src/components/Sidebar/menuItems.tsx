@@ -6,6 +6,7 @@ import {
   Layers,
   Route,
   BookOpen,
+  Sparkles,
 } from 'lucide-react';
 import type { TabKey } from '../../types/tabs';
 
@@ -52,6 +53,13 @@ export const MENU_SECTIONS: MenuSection[] = [
         path: '/distill-datasets',
         icon: <Layers size={20} />,
         description: 'Manage datasets and traces',
+      },
+      {
+        label: 'Jobs',
+        value: 'distill-jobs',
+        path: '/distill-jobs',
+        icon: <Sparkles size={20} />,
+        description: 'Distillation & fine-tuning jobs',
       },
       {
         label: 'Metrics',

@@ -2,7 +2,7 @@ export interface Dataset {
   id: string;
   name: string;
   description?: string;
-  source: 'manual' | 'imported' | 'auto_collected' | 'instruction' | 'synthetic';
+  source: 'manual' | 'imported' | 'auto_collected' | 'instruction';
   samples_count: number;
   created_at: string;
   updated_at: string;
@@ -201,7 +201,7 @@ export interface MetricScore {
 export interface CreateDatasetRequest {
   name: string;
   description?: string;
-  source?: 'manual' | 'imported' | 'auto_collected' | 'instruction' | 'synthetic';
+  source?: 'manual' | 'imported' | 'auto_collected' | 'instruction';
   samples?: Omit<DatasetSample, 'id' | 'created_at'>[];
   auto_collect_instruction?: string;
 }
@@ -222,22 +222,6 @@ export interface CreateFromInstructionResponse {
   samples_count: number;
   traces_scanned: number;
   traces_matched: number;
-}
-
-export interface GenerateDatasetRequest {
-  name: string;
-  instruction: string;
-  description?: string;
-  count?: number;
-  auto_collect_instruction?: string;
-}
-
-export interface GenerateDatasetResponse {
-  dataset_id: string;
-  name: string;
-  source: 'synthetic';
-  samples_count: number;
-  samples_requested: number;
 }
 
 export interface CreateEvaluationRequest {

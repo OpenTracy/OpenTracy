@@ -172,7 +172,7 @@ export function useDatasets() {
     if (loaded.current) return;
     loaded.current = true;
     refreshDatasets();
-  }, [accessToken, refreshDatasets]);
+  }, [refreshDatasets]);
 
   return {
     datasets,

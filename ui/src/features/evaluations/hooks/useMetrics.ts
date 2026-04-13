@@ -30,7 +30,7 @@ export function useMetrics() {
     if (loaded.current) return;
     loaded.current = true;
     refresh();
-  }, [accessToken, refresh]);
+  }, [refresh]);
 
   const createCustomMetric = useCallback(
     async (request: CreateCustomMetricRequest): Promise<EvaluationMetric | null> => {

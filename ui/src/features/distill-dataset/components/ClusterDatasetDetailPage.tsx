@@ -17,8 +17,6 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { SamplesExplorer } from './DatasetDetail/SamplesExplorer';
 import { useClusterDatasetDetail } from '../hooks/useClusterDatasetDetail';
@@ -45,7 +43,9 @@ export default function ClusterDatasetDetailPage() {
   const handleAddSingle = async () => {
     if (!addInput.trim()) return;
     setIsAdding(true);
-    await handleAddTraces([{ input: addInput.trim(), output: addOutput.trim(), model: addModel.trim() || undefined }]);
+    await handleAddTraces([
+      { input: addInput.trim(), output: addOutput.trim(), model: addModel.trim() || undefined },
+    ]);
     setAddInput('');
     setAddOutput('');
     setIsAdding(false);
@@ -64,9 +64,17 @@ export default function ClusterDatasetDetailPage() {
         traces = Array.isArray(parsed) ? parsed : parsed.traces || [];
       } catch {
         // JSONL
-        traces = text.trim().split('\n').map(line => {
-          try { return JSON.parse(line); } catch { return null; }
-        }).filter(Boolean);
+        traces = text
+          .trim()
+          .split('\n')
+          .map((line) => {
+            try {
+              return JSON.parse(line);
+            } catch {
+              return null;
+            }
+          })
+          .filter(Boolean);
       }
       if (traces.length > 0) {
         await handleAddTraces(traces);
@@ -121,7 +129,10 @@ export default function ClusterDatasetDetailPage() {
               <ArrowLeft className="size-4" />
             </Button>
             <h1 className="text-lg font-semibold">{dataset.domain_label}</h1>
-            <Badge variant={dataset.status === 'qualified' ? 'default' : 'secondary'} className="gap-1">
+            <Badge
+              variant={dataset.status === 'qualified' ? 'default' : 'secondary'}
+              className="gap-1"
+            >
               {dataset.status === 'qualified' && <CheckCircle2 className="size-3" />}
               {dataset.status}
             </Badge>
@@ -145,7 +156,9 @@ export default function ClusterDatasetDetailPage() {
             {dataset.top_models.length > 0 && (
               <div className="flex items-center gap-1.5">
                 {dataset.top_models.slice(0, 3).map((m) => (
-                  <Badge key={m} variant="outline" className="text-xs">{m}</Badge>
+                  <Badge key={m} variant="outline" className="text-xs">
+                    {m}
+                  </Badge>
                 ))}
               </div>
             )}
@@ -158,7 +171,13 @@ export default function ClusterDatasetDetailPage() {
               <Upload className="size-4" />
               Import File
             </Button>
-            <input ref={fileInputRef} type="file" accept=".json,.jsonl" className="hidden" onChange={handleFileImport} />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,.jsonl"
+              className="hidden"
+              onChange={handleFileImport}
+            />
             <Button variant="outline" size="sm" onClick={handleExportJSON}>
               <Download className="size-4" />
               Export JSONL
@@ -191,7 +210,12 @@ export default function ClusterDatasetDetailPage() {
           <div className="px-6 py-4 max-w-6xl mx-auto">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm font-medium">Add a trace manually</span>
-              <Button variant="ghost" size="icon" className="size-6" onClick={() => setShowAddForm(false)}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6"
+                onClick={() => setShowAddForm(false)}
+              >
                 <X className="size-3.5" />
               </Button>
             </div>
@@ -220,7 +244,11 @@ export default function ClusterDatasetDetailPage() {
                 onClick={handleAddSingle}
                 disabled={!addInput.trim() || isAdding}
               >
-                {isAdding ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                {isAdding ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Plus className="size-4" />
+                )}
                 Add
               </Button>
             </div>

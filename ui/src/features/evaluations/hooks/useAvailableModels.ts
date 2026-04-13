@@ -25,7 +25,7 @@ export function useAvailableModels() {
     if (loaded.current) return;
     loaded.current = true;
     refresh();
-  }, [accessToken, refresh]);
+  }, [refresh]);
 
   return { models, loading, refresh };
 }

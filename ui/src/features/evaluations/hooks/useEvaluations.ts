@@ -161,7 +161,7 @@ export function useEvaluations() {
     if (loaded.current) return;
     loaded.current = true;
     refresh();
-  }, [accessToken, refresh]);
+  }, [refresh]);
 
   useEffect(() => {
     if (activeEvaluations.length === 0) return;
@@ -207,7 +207,7 @@ export function useEvaluations() {
     pollAll();
     const id = setInterval(pollAll, interval);
     return () => clearInterval(id);
-  }, [accessToken, activeEvaluations, activeSignature, hasQueuedOrStarting, refresh, service]);
+  }, [activeEvaluations, activeSignature, hasQueuedOrStarting, refresh, service]);
 
   return {
     evaluations,

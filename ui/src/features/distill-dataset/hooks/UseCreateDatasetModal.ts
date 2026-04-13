@@ -33,7 +33,12 @@ interface UseCreateDatasetModalOptions {
   onPollGenerate?: (datasetId: string) => Promise<number>;
   onGenerateBackground?: (datasetId: string, name: string, requested: number) => void;
   onAnalyzeTraces?: (data: any[]) => Promise<AnalyzeTracesResponse>;
-  onImportTraces?: (name: string, data: any[], mapping: any, description?: string) => Promise<ImportTracesResponse>;
+  onImportTraces?: (
+    name: string,
+    data: any[],
+    mapping: any,
+    description?: string
+  ) => Promise<ImportTracesResponse>;
 }
 
 export function useCreateDatasetModal({
@@ -80,8 +85,12 @@ export function useCreateDatasetModal({
   // Smart import state
   const [smartImportFile, setSmartImportFile] = useState<File | null>(null);
   const [smartImportRecords, setSmartImportRecords] = useState<any[]>([]);
-  const [smartImportPhase, setSmartImportPhase] = useState<'upload' | 'analyzing' | 'preview' | 'importing'>('upload');
-  const [smartImportAnalysis, setSmartImportAnalysis] = useState<AnalyzeTracesResponse | null>(null);
+  const [smartImportPhase, setSmartImportPhase] = useState<
+    'upload' | 'analyzing' | 'preview' | 'importing'
+  >('upload');
+  const [smartImportAnalysis, setSmartImportAnalysis] = useState<AnalyzeTracesResponse | null>(
+    null
+  );
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const phaseTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -563,7 +572,16 @@ export function useCreateDatasetModal({
         setCreating(false);
       }
     },
-    [mode, name, creating, submitTopic, submitGenerate, submitImport, submitSmartImport, submitManual]
+    [
+      mode,
+      name,
+      creating,
+      submitTopic,
+      submitGenerate,
+      submitImport,
+      submitSmartImport,
+      submitManual,
+    ]
   );
 
   const handleTopicRetry = useCallback(() => {

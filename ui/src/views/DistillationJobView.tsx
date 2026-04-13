@@ -13,7 +13,6 @@ import {
   Download,
   Rocket,
   TrendingUp,
-  DollarSign,
   Zap,
   ChevronDown,
   ChevronUp,
@@ -51,7 +50,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { StepTracker } from '@/components/shared/StepTracker';
 import { TerminalLogs } from '@/components/shared/TerminalLogs';
-import { CostBadge } from '@/components/shared/CostBadge';
 import { KpiCard } from '@/components/shared/KpiCard';
 import { DiffViewer } from '@/components/shared/DiffViewer';
 import { useDistillation } from '@/hooks/useDistillation';
@@ -61,13 +59,11 @@ import type { DistillationJob, DistillationResults, GGUFArtifact } from '@/types
 import {
   TEACHER_MODELS,
   STUDENT_MODELS,
-  TARGET_DEVICES,
   QUANTIZATION_OPTIONS,
   CURATION_AGENTS,
 } from '@/types/distillationTypes';
 import type { CurationSample } from '@/services/distillationService';
 import { useCurationSubscription } from '@/hooks/useCurationSubscription';
-import { useUser } from '@/contexts/UserContext';
 import {
   LineChart,
   Line,
@@ -117,7 +113,6 @@ export default function DistillationJobView() {
     getJobArtifacts,
     deployJob,
   } = useDistillation();
-  const { tenantId } = useUser();
 
   const [job, setJob] = useState<DistillationJob | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -139,7 +134,7 @@ export default function DistillationJobView() {
     events: curationEvents,
     latestEvent,
     connected: subConnected,
-  } = useCurationSubscription(tenantId ?? undefined, jobId, isCurationPhase);
+  } = useCurationSubscription('default', jobId, isCurationPhase);
   const [viewingEventIdx, setViewingEventIdx] = useState<number | null>(null);
 
   // Auto-track latest event
@@ -358,11 +353,6 @@ export default function DistillationJobView() {
   const studentName = studentModel?.name || job.config.student_model;
   const studentParams = studentModel?.params;
 
-  const device = TARGET_DEVICES.find((d) => d.id === job.config.target_device);
-  const deviceName = device
-    ? `${device.name} (${device.vram})`
-    : job.config.target_device || '\u2014';
-
   const quantOption = QUANTIZATION_OPTIONS.find((q) => q.id === job.config.quantization);
   const quantLabel = quantOption?.name || job.config.quantization?.toUpperCase() || '\u2014';
 
@@ -462,7 +452,6 @@ export default function DistillationJobView() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <CostBadge amount={job.cost_accrued} label="accrued" />
               {(job.status === 'running' || job.status === 'pending') && (
                 <Button variant="outline" size="sm" onClick={handleCancel}>
                   <XCircle className="size-4" />
@@ -524,18 +513,12 @@ export default function DistillationJobView() {
 
           {isCompleted && results && (
             <>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <KpiCard
                   label="Quality Score"
                   value={`${((results.quality_score ?? 0) * 100).toFixed(0)}%`}
                   icon={TrendingUp}
                   subtitle={`vs ${teacherName}`}
-                />
-                <KpiCard
-                  label="Cost Savings"
-                  value={`${(results.cost_savings ?? 0).toFixed(1)}%`}
-                  icon={DollarSign}
-                  subtitle="cheaper per request"
                 />
                 <KpiCard
                   label="Speed"
@@ -646,10 +629,6 @@ export default function DistillationJobView() {
                       <p className="text-sm font-medium">
                         {studentParams ? `${studentName} (${studentParams})` : studentName}
                       </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-0.5">Target Device</p>
-                      <p className="text-sm font-medium">{deviceName}</p>
                     </div>
                     <div>
                       <p className="text-xs text-muted-foreground mb-0.5">Quantization</p>
@@ -771,14 +750,14 @@ export default function DistillationJobView() {
 
                             {/* Candidate cards */}
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              {activeEvent.candidates.map((candidate) => {
+                              {activeEvent.candidates.map((candidate, idx) => {
                                 const isWinner =
                                   candidate.candidateIndex === activeEvent.selectedIndex;
                                 const scorePct = Math.round(candidate.score * 100);
 
                                 return (
                                   <Card
-                                    key={candidate.candidateIndex}
+                                    key={`candidate-${idx}`}
                                     className={cn(
                                       isWinner && 'border-primary bg-accent ring-1 ring-primary/10'
                                     )}
@@ -954,11 +933,13 @@ export default function DistillationJobView() {
 
                             {/* Candidate cards */}
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              {sample.candidates.map((c) => {
+                              {sample.candidates.map((c, idx) => {
                                 const scorePct = Math.round(Number(c.scores?.quality ?? 0) * 100);
                                 return (
                                   <Card
-                                    key={c.candidate_idx}
+                                    key={
+                                      c.candidate_id || `${c.prompt_id}-${c.candidate_idx}-${idx}`
+                                    }
                                     className={cn(
                                       c.isWinner &&
                                         'border-primary bg-accent ring-1 ring-primary/10'

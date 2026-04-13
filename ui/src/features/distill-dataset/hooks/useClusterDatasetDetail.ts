@@ -44,19 +44,21 @@ export function useClusterDatasetDetail() {
 
         // Get traces
         const tracesData = await service.getDatasetTraces(runId, Number(clusterId), 1000, 0);
-        const adapted: DatasetSample[] = (tracesData.traces || []).map((t: Record<string, unknown>, idx: number) => ({
-          id: (t.request_id as string) || `trace-${idx}`,
-          input: (t.input_text as string) || '',
-          expected_output: (t.output_text as string) || '',
-          output: (t.output_text as string) || '',
-          metadata: {
-            model: t.selected_model as string,
-            provider: t.provider as string,
-            latency_ms: t.latency_ms as number,
-            cost_usd: t.total_cost_usd as number,
-            is_error: t.is_error as boolean,
-          },
-        }));
+        const adapted: DatasetSample[] = (tracesData.traces || []).map(
+          (t: Record<string, unknown>, idx: number) => ({
+            id: (t.request_id as string) || `trace-${idx}`,
+            input: (t.input_text as string) || '',
+            expected_output: (t.output_text as string) || '',
+            output: (t.output_text as string) || '',
+            metadata: {
+              model: t.selected_model as string,
+              provider: t.provider as string,
+              latency_ms: t.latency_ms as number,
+              cost_usd: t.total_cost_usd as number,
+              is_error: t.is_error as boolean,
+            },
+          })
+        );
         setSamples(adapted);
       } catch (err) {
         toast.error('Failed to load dataset');
@@ -75,7 +77,10 @@ export function useClusterDatasetDetail() {
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
       result = result.filter(
-        (s) => s.input?.toLowerCase().includes(q) || s.output?.toLowerCase().includes(q) || s.expected_output?.toLowerCase().includes(q)
+        (s) =>
+          s.input?.toLowerCase().includes(q) ||
+          s.output?.toLowerCase().includes(q) ||
+          s.expected_output?.toLowerCase().includes(q)
       );
     }
     if (inputLengthFilter) {
@@ -118,16 +123,19 @@ export function useClusterDatasetDetail() {
 
   const handleExportJSON = useCallback(() => {
     if (!runId || !clusterId) return;
-    service.exportDataset(runId, Number(clusterId)).then((blob) => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `dataset_${runId}_${clusterId}.jsonl`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success('Dataset exported');
-    }).catch(() => toast.error('Export failed'));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    service
+      .exportDataset(runId, Number(clusterId))
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `dataset_${runId}_${clusterId}.jsonl`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success('Dataset exported');
+      })
+      .catch(() => toast.error('Export failed'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId, clusterId]);
 
   // Stats
@@ -153,19 +161,21 @@ export function useClusterDatasetDetail() {
         toast.success(`Added ${result.ingested} traces to dataset`);
         // Reload traces
         const tracesData = await service.getDatasetTraces(runId, Number(clusterId), 1000, 0);
-        const adapted: DatasetSample[] = (tracesData.traces || []).map((t: Record<string, unknown>, idx: number) => ({
-          id: (t.request_id as string) || `trace-${idx}`,
-          input: (t.input_text as string) || '',
-          expected_output: (t.output_text as string) || '',
-          output: (t.output_text as string) || '',
-          metadata: {
-            model: t.selected_model as string,
-            provider: t.provider as string,
-            latency_ms: t.latency_ms as number,
-            cost_usd: t.total_cost_usd as number,
-            is_error: t.is_error as boolean,
-          },
-        }));
+        const adapted: DatasetSample[] = (tracesData.traces || []).map(
+          (t: Record<string, unknown>, idx: number) => ({
+            id: (t.request_id as string) || `trace-${idx}`,
+            input: (t.input_text as string) || '',
+            expected_output: (t.output_text as string) || '',
+            output: (t.output_text as string) || '',
+            metadata: {
+              model: t.selected_model as string,
+              provider: t.provider as string,
+              latency_ms: t.latency_ms as number,
+              cost_usd: t.total_cost_usd as number,
+              is_error: t.is_error as boolean,
+            },
+          })
+        );
         setSamples(adapted);
         if (dataset) {
           setDataset({ ...dataset, trace_count: dataset.trace_count + result.ingested });

@@ -125,3 +125,9 @@ weights/
 
 # Keep dist for packaged weights
 !dist/weights-*.zip
+
+# Runtime data & caches
+data/
+.vite/
+outputs/
+unsloth_compiled_cache/
