@@ -87,7 +87,15 @@ def _insert_rows(table: str, rows: list[dict[str, Any]]) -> None:
 
 
 
-def create_dataset(tenant_id: str, *, name: str, description: str = "", source: str = "manual") -> dict[str, Any]:
+def create_dataset(
+    tenant_id: str,
+    *,
+    name: str,
+    description: str = "",
+    source: str = "manual",
+    status: str = "active",
+    rationale: str = "",
+) -> dict[str, Any]:
     dataset_id = str(uuid.uuid4())
     now = _now()
     row = {
@@ -99,11 +107,67 @@ def create_dataset(tenant_id: str, *, name: str, description: str = "", source: 
         "samples_count": 0,
         "created_at": now,
         "updated_at": now,
+        "status": status,
+        "rationale": rationale,
     }
     _insert_row("eval_datasets", row)
     row["created_at"] = now.isoformat()
     row["updated_at"] = now.isoformat()
     return row
+
+
+def list_pending_datasets(tenant_id: str) -> list[dict[str, Any]]:
+    """Return datasets with status='pending_curation' for the given tenant."""
+    return _query_rows(
+        """
+        SELECT *
+        FROM eval_datasets FINAL
+        WHERE tenant_id = {tenant_id:String}
+          AND status = 'pending_curation'
+        ORDER BY created_at DESC
+        """,
+        {"tenant_id": tenant_id},
+    )
+
+
+def _set_dataset_status(tenant_id: str, dataset_id: str, status: str) -> dict[str, Any] | None:
+    current = get_dataset(tenant_id, dataset_id)
+    if not current:
+        return None
+    current["status"] = status
+    current["updated_at"] = _now()
+    _insert_row("eval_datasets", current)
+    return current
+
+
+def approve_dataset(tenant_id: str, dataset_id: str) -> dict[str, Any] | None:
+    return _set_dataset_status(tenant_id, dataset_id, "active")
+
+
+def reject_dataset(tenant_id: str, dataset_id: str) -> dict[str, Any] | None:
+    return _set_dataset_status(tenant_id, dataset_id, "rejected")
+
+
+def _set_sample_status(
+    tenant_id: str, dataset_id: str, sample_id: str, status: str
+) -> dict[str, Any] | None:
+    current = get_sample(tenant_id, dataset_id, sample_id)
+    if not current:
+        return None
+    current["status"] = status
+    # ReplacingMergeTree order-key is (tenant_id, dataset_id, sample_id) so
+    # re-inserting with a newer created_at will supersede.
+    current["created_at"] = _now()
+    _insert_row("eval_samples", current)
+    return current
+
+
+def approve_sample(tenant_id: str, dataset_id: str, sample_id: str) -> dict[str, Any] | None:
+    return _set_sample_status(tenant_id, dataset_id, sample_id, "curated")
+
+
+def reject_sample(tenant_id: str, dataset_id: str, sample_id: str) -> dict[str, Any] | None:
+    return _set_sample_status(tenant_id, dataset_id, sample_id, "rejected")
 
 
 def get_dataset(tenant_id: str, dataset_id: str) -> dict[str, Any] | None:
@@ -168,6 +232,7 @@ def add_samples(tenant_id: str, dataset_id: str, samples: list[dict[str, Any]]) 
             "metadata": s.get("metadata") or {},
             "trace_id": s.get("trace_id", ""),
             "created_at": now,
+            "status": s.get("status", "curated"),
         })
     _insert_rows("eval_samples", rows)
     _update_samples_count(tenant_id, dataset_id, len(rows))

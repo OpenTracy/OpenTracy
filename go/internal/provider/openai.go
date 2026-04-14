@@ -108,8 +108,45 @@ func (p *OpenAIProvider) buildBody(req *ChatRequest) ([]byte, error) {
 		var m map[string]any
 		if err := json.Unmarshal(req.RawBody, &m); err == nil {
 			m["stream"] = req.Stream
+			if req.Stream {
+				// Ensure usage is included in the final stream chunk so we can
+				// record full trace metrics (tokens, cost) for streaming requests.
+				opts, _ := m["stream_options"].(map[string]any)
+				if opts == nil {
+					opts = map[string]any{}
+				}
+				opts["include_usage"] = true
+				m["stream_options"] = opts
+			}
 			return json.Marshal(m)
 		}
+	}
+	if req.Stream {
+		m := map[string]any{
+			"model":          req.Model,
+			"messages":       req.Messages,
+			"stream":         true,
+			"stream_options": map[string]any{"include_usage": true},
+		}
+		if req.MaxTokens != nil {
+			m["max_tokens"] = *req.MaxTokens
+		}
+		if req.Temperature != nil {
+			m["temperature"] = *req.Temperature
+		}
+		if req.TopP != nil {
+			m["top_p"] = *req.TopP
+		}
+		if len(req.Tools) > 0 {
+			m["tools"] = req.Tools
+		}
+		if req.ToolChoice != nil {
+			m["tool_choice"] = req.ToolChoice
+		}
+		if req.Stop != nil {
+			m["stop"] = req.Stop
+		}
+		return json.Marshal(m)
 	}
 	return json.Marshal(req)
 }

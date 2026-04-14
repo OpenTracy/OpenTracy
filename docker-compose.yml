@@ -86,8 +86,13 @@ services:
       LUNAR_CH_DATABASE: lunar_router
       LUNAR_CH_USERNAME: default
       LUNAR_CH_PASSWORD: lunar
+      LUNAR_ENGINE_URL: http://lunar-engine:8080
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AUTO_OPERATOR: ${AUTO_OPERATOR:-false}
+      AUTO_TRAINER: ${AUTO_TRAINER:-false}
+    volumes:
+      - weights-data:/app/weights
     depends_on:
       clickhouse:
         condition: service_healthy

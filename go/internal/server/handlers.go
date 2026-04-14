@@ -1235,7 +1235,76 @@ func (s *Server) handleStreamingProxy(
 
 	ttftRecorded := false
 	var ttftMs float64
+
+	// Parse SSE chunks as they flow through so we can reconstruct usage and content
+	// for the trace while still proxying raw bytes to the client.
+	var contentBuf strings.Builder
+	var finishReason string
+	var usage *provider.Usage
+	var responseToolCalls []provider.ToolCall
+	toolCallAcc := map[int]*provider.ToolCall{}
+	toolArgAcc := map[int]*strings.Builder{}
+	pending := make([]byte, 0, 8192)
 	buf := make([]byte, 4096)
+
+	processEvent := func(data []byte) {
+		data = bytes.TrimSpace(data)
+		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
+			return
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta *struct {
+					Content   string `json:"content"`
+					ToolCalls []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Type     string `json:"type"`
+						Function *struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+				FinishReason *string `json:"finish_reason"`
+			} `json:"choices"`
+			Usage *provider.Usage `json:"usage"`
+		}
+		if err := json.Unmarshal(data, &chunk); err != nil {
+			return
+		}
+		if chunk.Usage != nil {
+			usage = chunk.Usage
+		}
+		for _, ch := range chunk.Choices {
+			if ch.Delta != nil {
+				contentBuf.WriteString(ch.Delta.Content)
+				for _, tc := range ch.Delta.ToolCalls {
+					acc, ok := toolCallAcc[tc.Index]
+					if !ok {
+						acc = &provider.ToolCall{Type: "function", Function: &provider.FunctionCall{}}
+						toolCallAcc[tc.Index] = acc
+						toolArgAcc[tc.Index] = &strings.Builder{}
+					}
+					if tc.ID != "" {
+						acc.ID = tc.ID
+					}
+					if tc.Type != "" {
+						acc.Type = tc.Type
+					}
+					if tc.Function != nil {
+						if tc.Function.Name != "" && acc.Function != nil {
+							acc.Function.Name = tc.Function.Name
+						}
+						toolArgAcc[tc.Index].WriteString(tc.Function.Arguments)
+					}
+				}
+			}
+			if ch.FinishReason != nil && *ch.FinishReason != "" {
+				finishReason = *ch.FinishReason
+			}
+		}
+	}
 
 	for {
 		n, err := stream.Read(buf)
@@ -1246,26 +1315,111 @@ func (s *Server) handleStreamingProxy(
 			}
 			w.Write(buf[:n])
 			flusher.Flush()
+
+			pending = append(pending, buf[:n]...)
+			for {
+				idx := bytes.Index(pending, []byte("\n\n"))
+				if idx < 0 {
+					break
+				}
+				evt := pending[:idx]
+				pending = pending[idx+2:]
+				for _, line := range bytes.Split(evt, []byte("\n")) {
+					if bytes.HasPrefix(line, []byte("data:")) {
+						processEvent(bytes.TrimPrefix(line, []byte("data:")))
+					}
+				}
+			}
 		}
 		if err != nil {
 			break
 		}
 	}
+	// Finalize any buffered tool calls
+	for i, acc := range toolCallAcc {
+		if acc.Function != nil && toolArgAcc[i] != nil {
+			acc.Function.Arguments = toolArgAcc[i].String()
+		}
+		responseToolCalls = append(responseToolCalls, *acc)
+	}
 
 	latencyMs := float64(time.Since(start).Microseconds()) / 1000.0
+
+	tokensIn, tokensOut, totalTokens := 0, 0, 0
+	if usage != nil {
+		tokensIn = usage.PromptTokens
+		tokensOut = usage.CompletionTokens
+		totalTokens = usage.TotalTokens
+	}
+	var inputCost, outputCost, totalCost float64
+	if pricing := provider.GetPricing(req.Model); pricing != nil {
+		inputCost, outputCost, totalCost = pricing.ComputeCost(tokensIn, tokensOut)
+	}
+	tokensPerS := 0.0
+	if latencyMs > 0 && totalTokens > 0 {
+		tokensPerS = float64(totalTokens) / (latencyMs / 1000.0)
+	}
+
 	ssm := metrics.RequestMetrics{
-		LatencyMs: latencyMs,
-		TTFTMs:    ttftMs,
-		RoutingMs: routingMs,
-		Error:     0,
-		Provider:  prov.Name(),
-		Model:     req.Model,
-		Stream:    true,
+		LatencyMs:     latencyMs,
+		TTFTMs:        ttftMs,
+		RoutingMs:     routingMs,
+		TokensIn:      tokensIn,
+		TokensOut:     tokensOut,
+		TotalTokens:   totalTokens,
+		InputCostUSD:  inputCost,
+		OutputCostUSD: outputCost,
+		TotalCostUSD:  totalCost,
+		Error:         0,
+		Provider:      prov.Name(),
+		Model:         req.Model,
+		Stream:        true,
 	}
 	s.Metrics.Record(ssm)
+
 	if !isInternal && s.CHWriter != nil {
-		s.CHWriter.Record(ssm, chw.TraceExtra{RequestType: "chat_stream"})
+		inputMsgsJSON := "[]"
+		if b, e := json.Marshal(req.Messages); e == nil {
+			inputMsgsJSON = string(b)
+		}
+		reqToolsJSON := "[]"
+		if len(req.Tools) > 0 {
+			if b, e := json.Marshal(req.Tools); e == nil {
+				reqToolsJSON = string(b)
+			}
+		}
+		outputText := contentBuf.String()
+		outputMsg := ""
+		if b, e := json.Marshal(provider.Message{Role: "assistant", Content: json.RawMessage(mustJSON(outputText)), ToolCalls: responseToolCalls}); e == nil {
+			outputMsg = string(b)
+		}
+		responseToolCallsJSON := "[]"
+		hasTC := len(responseToolCalls) > 0
+		if hasTC {
+			if b, e := json.Marshal(responseToolCalls); e == nil {
+				responseToolCallsJSON = string(b)
+			}
+		}
+		s.CHWriter.Record(ssm, chw.TraceExtra{
+			RequestType:       "chat_stream",
+			InputText:         lastUserMessage(req.Messages),
+			OutputText:        outputText,
+			InputMessages:     inputMsgsJSON,
+			OutputMessage:     outputMsg,
+			FinishReason:      finishReason,
+			RequestTools:      reqToolsJSON,
+			ResponseToolCalls: responseToolCallsJSON,
+			HasToolCalls:      hasTC,
+			ToolCallsCount:    len(responseToolCalls),
+			ExecutionTimeline: "[]",
+			TokensPerS:        tokensPerS,
+		})
 	}
+}
+
+func mustJSON(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 func lastUserMessage(messages []provider.Message) string {
