@@ -96,6 +96,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Builtin metrics seeding skipped: {e}")
 
+    # Run operator metadata migration (idempotent).
+    try:
+        _run_operator_migration()
+    except Exception as e:
+        logger.warning(f"Operator migration skipped: {e}")
+
+    # Run eval_datasets tenant-alignment migration (idempotent).
+    try:
+        _run_sql_migration("011_eval_datasets_tenant.sql")
+    except Exception as e:
+        logger.warning(f"eval_datasets tenant migration skipped: {e}")
+
     # Start scan scheduler if enabled
     from ..harness.scheduler import get_scheduler
 
@@ -103,6 +115,37 @@ async def lifespan(app: FastAPI):
     if scheduler.config.enabled:
         scheduler.start()
         logger.info("Scan scheduler started on lifespan")
+
+    # Start autonomous operator loop if enabled via env flag.
+    operator = None
+    if os.getenv("AUTO_OPERATOR", "false").lower() == "true":
+        try:
+            from ..harness.operator import get_operator
+
+            operator = get_operator()
+            operator.start()
+            logger.info("OperatorLoop started on lifespan (AUTO_OPERATOR=true)")
+        except Exception as e:
+            logger.warning(f"OperatorLoop start failed: {e}")
+
+    # Start auto-trainer background loop if enabled and weights are ready.
+    training_manager = None
+    try:
+        from ..training.runtime import get_training_manager
+
+        training_manager = get_training_manager()
+        if os.getenv("AUTO_TRAINER", "false").lower() == "true":
+            if training_manager.weights_ready:
+                training_manager.start_scheduled(interval_seconds=3600)
+                logger.info("AUTO_TRAINER=true: ScheduledTrainer started")
+            else:
+                logger.warning(
+                    "AUTO_TRAINER=true but weights dir %s is empty; training disabled. "
+                    "Run `python -m lunar_router.scripts.bootstrap_weights` first.",
+                    training_manager.weights_path,
+                )
+    except Exception as e:
+        logger.warning(f"TrainingManager init failed: {e}")
 
     # Cleanup stale vLLM deployments from previous runs
     try:
@@ -116,6 +159,16 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     scheduler.stop()
+    if operator is not None:
+        try:
+            operator.stop()
+        except Exception as e:
+            logger.debug(f"OperatorLoop stop error: {e}")
+    if training_manager is not None:
+        try:
+            training_manager.stop_scheduled()
+        except Exception as e:
+            logger.debug(f"TrainingManager stop error: {e}")
     logger.info("UniRoute API shutting down...")
 
 
@@ -187,6 +240,61 @@ def _run_datasets_migration():
                 # Ignore "already exists" errors
                 if "already exists" not in str(e).lower():
                     logger.warning("Migration statement failed: %s — %s", stmt[:80], e)
+
+
+def _run_sql_migration(filename: str):
+    """Execute a ClickHouse SQL migration file; ignore idempotent-failure errors."""
+    import pathlib
+    from ..storage.clickhouse_client import get_client
+
+    client = get_client()
+    if client is None:
+        return
+    migration_file = pathlib.Path(__file__).resolve().parents[2] / "clickhouse" / filename
+    if not migration_file.exists():
+        logger.debug("Migration file not found: %s", migration_file)
+        return
+    sql = migration_file.read_text()
+    # Strip SQL line comments so a stray `;` in a comment doesn't split badly.
+    cleaned = "\n".join(
+        line for line in sql.splitlines() if not line.lstrip().startswith("--")
+    )
+    for statement in cleaned.split(";"):
+        stmt = statement.strip()
+        if not stmt:
+            continue
+        try:
+            client.command(stmt)
+        except Exception as e:
+            msg = str(e).lower()
+            if any(s in msg for s in ("already exists", "already has column", "cannot add column", "no such column")):
+                continue
+            logger.warning("Migration %s statement failed: %s — %s", filename, stmt[:80], e)
+
+
+def _run_operator_migration():
+    """Apply operator metadata columns + operator_decisions table (idempotent)."""
+    import pathlib
+    from ..storage.clickhouse_client import get_client
+
+    client = get_client()
+    if client is None:
+        return
+    migration_file = pathlib.Path(__file__).resolve().parents[2] / "clickhouse" / "010_operator_metadata.sql"
+    if not migration_file.exists():
+        logger.debug("Operator migration file not found: %s", migration_file)
+        return
+    sql = migration_file.read_text()
+    for statement in sql.split(";"):
+        stmt = statement.strip()
+        if stmt:
+            try:
+                client.command(stmt)
+            except Exception as e:
+                msg = str(e).lower()
+                if "already exists" in msg or "already has column" in msg or "cannot add column" in msg:
+                    continue
+                logger.warning("Operator migration statement failed: %s — %s", stmt[:80], e)
 
 
 app = FastAPI(
@@ -624,6 +732,162 @@ async def dismiss_trace_issue(issue_id: str, body: Optional[dict] = None):
     if not success:
         raise HTTPException(status_code=404, detail=f"Issue '{issue_id}' not found")
     return {"dismissed": True, "id": issue_id, "feedback_id": feedback_id}
+
+
+# ---------------------------------------------------------------------------
+# Operator loop endpoints (Phase 1 of autonomous curation)
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/operator/status", tags=["operator"])
+async def operator_status():
+    """Return operator loop running state + next tick info."""
+    from ..harness.operator import get_operator
+
+    op = get_operator()
+    return op.get_status()
+
+
+@app.get("/v1/operator/decisions", tags=["operator"])
+async def operator_decisions(limit: int = 50):
+    """Return recent operator tick decisions (most recent first)."""
+    from ..harness.operator import get_operator
+
+    op = get_operator()
+    return {"decisions": op.list_decisions(limit=limit)}
+
+
+@app.post("/v1/operator/pause", tags=["operator"])
+async def operator_pause():
+    from ..harness.operator import get_operator
+
+    op = get_operator()
+    op.pause()
+    return op.get_status()
+
+
+@app.post("/v1/operator/resume", tags=["operator"])
+async def operator_resume():
+    from ..harness.operator import get_operator
+
+    op = get_operator()
+    op.resume()
+    return op.get_status()
+
+
+# ---------------------------------------------------------------------------
+# Training endpoints (continuous auto-training)
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/training/status", tags=["training"])
+async def training_status():
+    from ..training.runtime import get_training_manager
+
+    return get_training_manager().status()
+
+
+@app.get("/v1/training/runs", tags=["training"])
+async def training_runs(limit: int = 20):
+    from ..training.runtime import get_training_manager
+
+    return {"runs": get_training_manager().history(limit=limit)}
+
+
+@app.post("/v1/training/run_now", tags=["training"])
+async def training_run_now(request: Request):
+    if request.headers.get("x-admin", "").lower() != "true":
+        raise HTTPException(status_code=403, detail="X-Admin: true header required")
+    from ..training.runtime import get_training_manager
+
+    tenant = request.headers.get("x-tenant-id", "default")
+    tm = get_training_manager()
+    result = await tm.run_once(trigger="manual", tenant_id=tenant)
+    return result
+
+
+@app.post("/v1/training/pause", tags=["training"])
+async def training_pause():
+    from ..training.runtime import get_training_manager
+
+    tm = get_training_manager()
+    tm.pause()
+    return tm.status()
+
+
+@app.post("/v1/training/resume", tags=["training"])
+async def training_resume():
+    from ..training.runtime import get_training_manager
+
+    tm = get_training_manager()
+    tm.resume()
+    return tm.status()
+
+
+# ---------------------------------------------------------------------------
+# Dataset curation endpoints (human approval of operator proposals)
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/datasets/pending", tags=["datasets"])
+async def list_pending_datasets(request: Request):
+    """Return datasets awaiting human curation review."""
+    from ..datasets import repository as ds_repo
+
+    tenant = request.headers.get("x-tenant-id", "default")
+    try:
+        rows = ds_repo.list_pending_datasets(tenant)
+    except Exception as e:
+        # eval_datasets schema may not match (pre-existing Go vs Python table
+        # mismatch — TODO(operator-phase-2): unify schemas).
+        logger.warning("list_pending_datasets failed: %s", e)
+        rows = []
+    for d in rows:
+        d["id"] = d.get("dataset_id") or d.get("id", "")
+    return {"datasets": rows, "total": len(rows)}
+
+
+@app.post("/v1/datasets/{dataset_id}/approve", tags=["datasets"])
+async def approve_dataset(dataset_id: str, request: Request):
+    from ..datasets import repository as ds_repo
+
+    tenant = request.headers.get("x-tenant-id", "default")
+    ds = ds_repo.approve_dataset(tenant, dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    ds["id"] = ds.get("dataset_id") or dataset_id
+    return ds
+
+
+@app.post("/v1/datasets/{dataset_id}/reject", tags=["datasets"])
+async def reject_dataset(dataset_id: str, request: Request):
+    from ..datasets import repository as ds_repo
+
+    tenant = request.headers.get("x-tenant-id", "default")
+    ds = ds_repo.reject_dataset(tenant, dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    ds["id"] = ds.get("dataset_id") or dataset_id
+    return ds
+
+
+@app.post("/v1/datasets/{dataset_id}/samples/{sample_id}/approve", tags=["datasets"])
+async def approve_sample(dataset_id: str, sample_id: str, request: Request):
+    from ..datasets import repository as ds_repo
+
+    tenant = request.headers.get("x-tenant-id", "default")
+    s = ds_repo.approve_sample(tenant, dataset_id, sample_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Sample not found")
+    return s
+
+
+@app.post("/v1/datasets/{dataset_id}/samples/{sample_id}/reject", tags=["datasets"])
+async def reject_sample(dataset_id: str, sample_id: str, request: Request):
+    from ..datasets import repository as ds_repo
+
+    tenant = request.headers.get("x-tenant-id", "default")
+    s = ds_repo.reject_sample(tenant, dataset_id, sample_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Sample not found")
+    return s
 
 
 @app.get("/v1/trace-issues/schedule", tags=["trace-issues"])

@@ -47,7 +47,7 @@ var PricingTable = map[string]ModelPricing{
 
 	// Mistral
 	"mistral-large":         {InputPerMillion: 2.00, OutputPerMillion: 6.00},
-	"mistral-small":         {InputPerMillion: 0.10, OutputPerMillion: 0.30},
+	"mistral-small":         {InputPerMillion: 0.20, OutputPerMillion: 0.60},
 	"ministral-8b":          {InputPerMillion: 0.10, OutputPerMillion: 0.10},
 	"ministral-3b":          {InputPerMillion: 0.04, OutputPerMillion: 0.04},
 	"codestral":             {InputPerMillion: 0.30, OutputPerMillion: 0.90},

@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir -e ".[api,clickhouse]" 2>/dev/null || \
 
 # Copy source
 COPY lunar_router/ lunar_router/
+COPY clickhouse/ clickhouse/
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir -e ".[api,clickhouse]"
 
