@@ -67,7 +67,44 @@ async def curate_candidates(
         Summary dict with curation statistics.
     """
     invoker = ModelInvoker()
-    judge_model = config.get("judge_model", JUDGE_MODEL)
+    judge_model = config.get("judge_model") or config.get("teacher_model") or JUDGE_MODEL
+
+    # Verify judge model connectivity before starting (with retry for rate limits)
+    for attempt in range(5):
+        try:
+            test_result = await asyncio.to_thread(
+                invoker.invoke, judge_model, "Say OK", temperature=0.0, max_tokens=8,
+            )
+            if not test_result.get("output"):
+                raise RuntimeError("Empty response from judge model")
+            break
+        except Exception as e:
+            err = str(e)
+            if ("429" in err or "rate" in err.lower()) and attempt < 4:
+                delay = 10 * (2 ** attempt)
+                logger.info("Judge model rate limited, waiting %ds (attempt %d/5)", delay, attempt + 1)
+                repo.append_log(tenant_id, job_id, f"Rate limited by judge model, waiting {delay}s...")
+                await asyncio.sleep(delay)
+                continue
+            elif "401" in err or "API key" in err or "Unauthorized" in err:
+                raise RuntimeError(
+                    f"Curation failed: the judge model '{judge_model}' requires an API key. "
+                    f"Please add a valid API key in Settings > API Keys and try again."
+                ) from e
+            elif "402" in err or "insufficient" in err.lower() or "quota" in err.lower() or "credit" in err.lower():
+                raise RuntimeError(
+                    f"Curation failed: insufficient credits for '{judge_model}'. "
+                    f"Please check your billing/credits with the provider and try again."
+                ) from e
+            elif "timeout" in err.lower() or "connect" in err.lower():
+                raise RuntimeError(
+                    f"Curation failed: could not connect to the provider for '{judge_model}'. "
+                    f"Please check your network connection."
+                ) from e
+            else:
+                raise RuntimeError(
+                    f"Curation failed: judge model '{judge_model}' returned an error: {err}"
+                ) from e
 
     # Fetch all candidates for this job
     candidates = repo.get_candidates(job_id, limit=100_000)
@@ -147,13 +184,20 @@ async def _select_best_candidate(
         prompt_text = candidate.get("prompt", "")
         response_text = candidate.get("response", "")
 
-        try:
-            score = await asyncio.to_thread(
-                _score_response, invoker, judge_model, prompt_text, response_text
-            )
-        except Exception as e:
-            logger.warning("Failed to score candidate %s: %s", candidate.get("candidate_id", ""), e)
-            score = 0.5
+        score = 0.5
+        for attempt in range(5):
+            try:
+                score = await asyncio.to_thread(
+                    _score_response, invoker, judge_model, prompt_text, response_text
+                )
+                break
+            except Exception as e:
+                err = str(e)
+                if ("429" in err or "rate" in err.lower()) and attempt < 4:
+                    await asyncio.sleep(5 * (2 ** attempt))
+                    continue
+                logger.warning("Failed to score candidate %s: %s", candidate.get("candidate_id", ""), e)
+                break
 
         # Update score in ClickHouse (non-blocking)
         try:

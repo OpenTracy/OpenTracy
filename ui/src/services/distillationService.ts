@@ -192,7 +192,7 @@ function mapConfig(backendConfig: Record<string, unknown>): DistillationConfig {
 function mapResults(
   results?: BackendJobDetails['results'] | null
 ): DistillationResults | undefined {
-  if (!results) return undefined;
+  if (!results || Object.keys(results).length === 0) return undefined;
   return {
     quality_score: results.quality_score ?? 0,
     cost_savings: results.cost_savings ?? 0,

@@ -91,7 +91,24 @@ async def _run_pipeline(
         )
 
         if gen_result["total_candidates"] == 0:
-            raise RuntimeError("Data generation produced no candidates")
+            last_error = gen_result.get("last_error", "")
+            if "401" in last_error or "API key" in last_error or "Unauthorized" in last_error:
+                raise RuntimeError(
+                    f"Data generation failed: the teacher model '{config.teacher_model}' "
+                    f"could not be reached — API key is missing or invalid. "
+                    f"Please add a valid API key in Settings > API Keys and try again."
+                )
+            elif "429" in last_error or "rate" in last_error.lower():
+                raise RuntimeError(
+                    f"Data generation failed: rate limit exceeded for '{config.teacher_model}'. "
+                    f"Please wait a few minutes and try again."
+                )
+            elif last_error:
+                raise RuntimeError(
+                    f"Data generation produced no candidates. Last error: {last_error}"
+                )
+            else:
+                raise RuntimeError("Data generation produced no candidates")
 
         repo.append_log(
             tenant_id, job_id,

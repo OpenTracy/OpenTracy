@@ -11,6 +11,7 @@ import {
   Together,
   Gemini,
   Bedrock,
+  HuggingFace,
 } from '@lobehub/icons';
 
 export type ProviderModel = {
@@ -27,6 +28,7 @@ export const INTEGRATION_MODELS: ProviderModel[] = [
   { name: 'DeepSeek', key: 'deepseek_api_key', icon: DeepSeek },
   { name: 'Gemini', key: 'gemini_api_key', icon: Gemini },
   { name: 'Groq', key: 'groq_api_key', icon: Groq },
+  { name: 'HuggingFace', key: 'huggingface_api_key', icon: HuggingFace },
   { name: 'Mistral', key: 'mistral_api_key', icon: Mistral },
   { name: 'OpenAI', key: 'openai_api_key', icon: OpenAI },
   { name: 'Perplexity', key: 'perplexity_api_key', icon: Perplexity },

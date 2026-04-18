@@ -72,6 +72,16 @@ async def start_export(
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
     }
 
+    # Pull HuggingFace token from secrets (for gated repos)
+    try:
+        from ..storage.secrets import get_secret
+        hf_token = get_secret("huggingface")
+        if hf_token:
+            env["HF_TOKEN"] = hf_token
+            env["HUGGING_FACE_HUB_TOKEN"] = hf_token
+    except Exception:
+        pass
+
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "lunar_router.distillation.export",
         str(config_path),
@@ -124,7 +134,9 @@ def _resolve_base_model(model_id: str, adapter_dir: str) -> str:
     """
     original = model_id
 
-    if "bnb-4bit" not in model_id and "bnb-8bit" not in model_id:
+    # Skip resolution only if the model has no quantization or unsloth suffix
+    if ("bnb-4bit" not in model_id and "bnb-8bit" not in model_id
+            and not model_id.endswith("-unsloth")):
         return model_id
 
     # Try adapter_config.json/
@@ -133,7 +145,7 @@ def _resolve_base_model(model_id: str, adapter_dir: str) -> str:
         try:
             cfg = json.loads(adapter_config_path.read_text())
             base = cfg.get("base_model_name_or_path", "")
-            if base and "bnb" not in base.lower():
+            if base and "bnb" not in base.lower() and not base.endswith("-unsloth"):
                 print(f"[EXPORT] Using base_model from adapter_config: {base}")
                 return base
         except Exception:
@@ -142,14 +154,38 @@ def _resolve_base_model(model_id: str, adapter_dir: str) -> str:
     # Strip quantization suffixes
     org = model_id.split("/")[0] if "/" in model_id else "unsloth"
     model_name = model_id.split("/")[-1]
-    model_name = re.sub(r"-bnb-[48]bit$", "", model_name)
+    model_name_no_quant = re.sub(r"-bnb-[48]bit$", "", model_name)
+    # Also strip trailing "-unsloth" tag (e.g. Qwen3-0.6B-unsloth → Qwen3-0.6B)
+    model_name_clean = re.sub(r"-unsloth$", "", model_name_no_quant)
+
+    # Map known model families to upstream orgs
+    upstream_org = None
+    lower = model_name_clean.lower()
+    if lower.startswith("qwen"):
+        upstream_org = "Qwen"
+    elif lower.startswith("llama"):
+        upstream_org = "meta-llama"
+    elif lower.startswith("mistral"):
+        upstream_org = "mistralai"
+    elif lower.startswith("gemma"):
+        upstream_org = "google"
+    elif lower.startswith("phi"):
+        upstream_org = "microsoft"
 
     candidates = []
+    candidates.append(f"unsloth/{model_name_no_quant}")
+    if model_name_clean != model_name_no_quant:
+        candidates.append(f"unsloth/{model_name_clean}")
+    if upstream_org:
+        candidates.append(f"{upstream_org}/{model_name_clean}")
     if org != "unsloth":
-        candidates.append(f"unsloth/{model_name}")
-    candidates.append(f"{org}/{model_name}")
+        candidates.append(f"{org}/{model_name_no_quant}")
 
-    # 3. Verify which candidate actually exists on HuggingFace
+    # Deduplicate
+    seen = set()
+    candidates = [c for c in candidates if not (c in seen or seen.add(c))]
+
+    # Verify which candidate actually exists on HuggingFace
     try:
         from huggingface_hub import model_info
         for candidate in candidates:
@@ -520,6 +556,31 @@ def _merge_adapter(base_model_id: str, adapter_dir: str, output_dir: str, max_se
             last_error = e
             continue
 
+    err_str = str(last_error)
+    is_gated = (
+        "401" in err_str or "403" in err_str
+        or "gated" in err_str.lower()
+        or "authorization" in err_str.lower()
+        or "authenticated" in err_str.lower()
+        or "access to model" in err_str.lower()
+        or "is not a valid model identifier" in err_str.lower()
+        or "is not a local folder" in err_str.lower()
+        or "must be authenticated" in err_str.lower()
+    )
+    if is_gated:
+        attempted = ", ".join(model_ids_to_try)
+        raise RuntimeError(
+            f"Could not load base model — HuggingFace access required.\n\n"
+            f"Tried: {attempted}\n\n"
+            f"This model is either gated, private, or requires authentication. "
+            f"To unlock it:\n"
+            f"  1. Go to https://huggingface.co/settings/tokens and create a 'read' token\n"
+            f"  2. Make sure you've accepted the model's license on its HuggingFace page\n"
+            f"  3. In the Lunar UI, go to Settings → Integrations and add your "
+            f"HuggingFace API key (provider: 'HuggingFace')\n"
+            f"  4. Re-run the training job\n\n"
+            f"Original error: {err_str[:200]}"
+        )
     raise RuntimeError(f"Could not load base model for merge: {last_error}")
 
 
@@ -566,26 +627,22 @@ def _find_quantize_binary(llama_cpp_dir: Path | None) -> Path | None:
 
 
 def _convert_with_pip(model_dir: str, output_path: str) -> None:
-    """Try converting using pip-installed gguf package."""
-    try:
-        _run_cmd([sys.executable, "-m", "gguf.convert",
-                   "--model", model_dir, "--outfile", output_path, "--outtype", "f16"])
-    except Exception:
-        # Fallback: try the convert script from llama-cpp-python
-        try:
-            import llama_cpp
-            scripts_dir = Path(llama_cpp.__file__).parent.parent
-            convert_script = scripts_dir / "scripts" / "convert_hf_to_gguf.py"
-            if convert_script.exists():
-                _run_cmd([sys.executable, str(convert_script), model_dir,
-                           "--outfile", output_path, "--outtype", "f16"])
-            else:
-                raise RuntimeError("No GGUF conversion tool found")
-        except ImportError:
-            raise RuntimeError(
-                "No GGUF conversion tool found. Install llama-cpp-python or "
-                "clone llama.cpp to /opt/llama.cpp"
-            )
+    """Convert HF model to GGUF via llama.cpp's convert_hf_to_gguf.py script."""
+    candidates = [
+        Path("/opt/llama.cpp/convert_hf_to_gguf.py"),
+        Path.home() / ".unsloth" / "llama.cpp" / "convert_hf_to_gguf.py",
+        Path.home() / "llama.cpp" / "convert_hf_to_gguf.py",
+    ]
+    for script in candidates:
+        if script.exists():
+            _run_cmd([sys.executable, str(script), model_dir,
+                       "--outfile", output_path, "--outtype", "f16"])
+            return
+
+    raise RuntimeError(
+        "No GGUF conversion tool found. Expected llama.cpp at /opt/llama.cpp "
+        "(rebuild Docker image)."
+    )
 
 
 def _run_cmd(cmd: list[str], cwd: Path | str | None = None) -> None:

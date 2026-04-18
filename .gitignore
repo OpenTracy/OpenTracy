@@ -140,3 +140,15 @@ dist_multi/
 
 # Claude Code local state (memory, tasks, session notes)
 .claude/
+
+# Training artifacts (accumulate when distillation jobs run locally)
+wandb/
+mlruns/
+checkpoints/
+checkpoint-*/
+*.safetensors
+*.gguf
+*.pth
+adapter_model.*
+tokenizer.model
+training_state.json

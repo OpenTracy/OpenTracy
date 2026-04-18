@@ -103,6 +103,16 @@ async def start_training(
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
     }
 
+    # Pull HuggingFace token from secrets (for gated repos)
+    try:
+        from ..storage.secrets import get_secret
+        hf_token = get_secret("huggingface")
+        if hf_token:
+            env["HF_TOKEN"] = hf_token
+            env["HUGGING_FACE_HUB_TOKEN"] = hf_token
+    except Exception:
+        pass
+
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "lunar_router.distillation.trainer",
         str(config_path),
@@ -184,13 +194,38 @@ def _run_training(config_path: str) -> None:
 
     # Load model
     print(f"[TRAIN] Loading model: {base_model}")
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=base_model,
-        max_seq_length=max_seq_length,
-        dtype=None,
-        load_in_4bit=True,
-        device_map="sequential",
-    )
+    try:
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=base_model,
+            max_seq_length=max_seq_length,
+            dtype=None,
+            load_in_4bit=True,
+            device_map="sequential",
+        )
+    except Exception as e:
+        err_str = str(e)
+        is_gated = (
+            "401" in err_str or "403" in err_str
+            or "gated" in err_str.lower()
+            or "authorization" in err_str.lower()
+            or "authenticated" in err_str.lower()
+            or "access to model" in err_str.lower()
+            or "is not a valid model identifier" in err_str.lower()
+            or "is not a local folder" in err_str.lower()
+            or "must be authenticated" in err_str.lower()
+        )
+        if is_gated:
+            raise RuntimeError(
+                f"Could not load base model '{base_model}' — HuggingFace access required.\n\n"
+                f"This model is gated, private, or requires authentication. To unlock it:\n"
+                f"  1. Visit https://huggingface.co/{base_model} and accept the model's license\n"
+                f"  2. Create a 'read' token at https://huggingface.co/settings/tokens\n"
+                f"  3. In the Lunar UI, go to Settings → Integrations and add your "
+                f"HuggingFace API key (provider: 'HuggingFace')\n"
+                f"  4. Re-run the training job\n\n"
+                f"Original error: {err_str[:200]}"
+            ) from e
+        raise
     tokenizer.padding_side = "right"
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token

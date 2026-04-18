@@ -49,6 +49,51 @@ async def generate_data(
     total_prompts = len(prompts)
     total_candidates = 0
     errors = 0
+    last_error = ""
+
+    # Verify teacher model connectivity before starting (with retry for rate limits)
+    for attempt in range(5):
+        try:
+            test_result = await asyncio.to_thread(
+                invoker.invoke_with_messages, teacher_model,
+                [{"role": "user", "content": "Say OK"}],
+                temperature=0.0, max_tokens=8,
+            )
+            if not test_result.get("output"):
+                raise RuntimeError("Empty response from teacher model")
+            break
+        except Exception as e:
+            err = str(e)
+            if ("429" in err or "rate" in err.lower()) and attempt < 4:
+                delay = 10 * (2 ** attempt)
+                logger.info("Teacher model rate limited on pre-check, waiting %ds (attempt %d/5)", delay, attempt + 1)
+                repo.append_log(tenant_id, job_id, f"Rate limited by teacher model, waiting {delay}s...")
+                await asyncio.sleep(delay)
+                continue
+            elif "401" in err or "API key" in err or "Unauthorized" in err:
+                raise RuntimeError(
+                    f"Data generation failed: the teacher model '{teacher_model}' requires an API key. "
+                    f"Please add a valid API key in Settings > API Keys and try again."
+                ) from e
+            elif "402" in err or "insufficient" in err.lower() or "quota" in err.lower() or "credit" in err.lower():
+                raise RuntimeError(
+                    f"Data generation failed: insufficient credits for '{teacher_model}'. "
+                    f"Please check your billing/credits with the provider and try again."
+                ) from e
+            elif "429" in err or "rate" in err.lower():
+                raise RuntimeError(
+                    f"Data generation failed: rate limit exceeded for '{teacher_model}' after 5 retries. "
+                    f"Please wait a few minutes and try again."
+                ) from e
+            elif "timeout" in err.lower() or "connect" in err.lower():
+                raise RuntimeError(
+                    f"Data generation failed: could not connect to the provider for '{teacher_model}'. "
+                    f"Please check your network connection."
+                ) from e
+            else:
+                raise RuntimeError(
+                    f"Data generation failed: teacher model '{teacher_model}' returned an error: {err}"
+                ) from e
 
     repo.append_log(tenant_id, job_id, f"Data generation: {total_prompts} prompts × {n_samples} candidates")
     _update_phase_progress(tenant_id, job_id, "data_generation", 0, {
@@ -67,32 +112,47 @@ async def generate_data(
             candidates_batch: list[dict[str, Any]] = []
 
             for sample_idx in range(n_samples):
-                try:
-                    messages: list[dict[str, str]] = []
-                    if system_prompt:
-                        messages.append({"role": "system", "content": system_prompt})
-                    messages.append({"role": "user", "content": prompt_text})
+                messages: list[dict[str, str]] = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": prompt_text})
 
-                    # Pass tools to model if the prompt has tool definitions
-                    extra_kwargs: dict[str, Any] = {}
-                    tools_str = prompt_data.get("tools", "")
-                    if tools_str:
-                        try:
-                            tools_list = json.loads(tools_str) if isinstance(tools_str, str) else tools_str
-                            if isinstance(tools_list, list) and tools_list:
-                                extra_kwargs["tools"] = tools_list
-                        except (json.JSONDecodeError, TypeError):
-                            pass
+                # Pass tools to model if the prompt has tool definitions
+                extra_kwargs: dict[str, Any] = {}
+                tools_str = prompt_data.get("tools", "")
+                if tools_str:
+                    try:
+                        tools_list = json.loads(tools_str) if isinstance(tools_str, str) else tools_str
+                        if isinstance(tools_list, list) and tools_list:
+                            extra_kwargs["tools"] = tools_list
+                    except (json.JSONDecodeError, TypeError):
+                        pass
 
-                    result = await asyncio.to_thread(
-                        invoker.invoke_with_messages,
-                        teacher_model,
-                        messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        **extra_kwargs,
-                    )
+                result = None
+                for attempt in range(5):
+                    try:
+                        result = await asyncio.to_thread(
+                            invoker.invoke_with_messages,
+                            teacher_model,
+                            messages,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            **extra_kwargs,
+                        )
+                        break
+                    except Exception as e:
+                        err = str(e)
+                        if ("429" in err or "rate" in err.lower()) and attempt < 4:
+                            delay = 5 * (2 ** attempt)
+                            logger.info("Rate limited, waiting %ds (attempt %d/5)", delay, attempt + 1)
+                            await asyncio.sleep(delay)
+                            continue
+                        logger.warning("Failed to generate candidate %d for prompt %s: %s", sample_idx, prompt_id[:8], e)
+                        errors += 1
+                        last_error = err
+                        break
 
+                if result:
                     candidates_batch.append({
                         "candidate_id": str(uuid.uuid4()),
                         "job_id": job_id,
@@ -108,10 +168,6 @@ async def generate_data(
                         "selected": 0,
                         "usage": json.dumps(result.get("usage", {})),
                     })
-
-                except Exception as e:
-                    logger.warning("Failed to generate candidate %d for prompt %s: %s", sample_idx, prompt_id[:8], e)
-                    errors += 1
 
             # Insert batch of candidates
             if candidates_batch:
@@ -142,6 +198,7 @@ async def generate_data(
         "total_prompts": total_prompts,
         "total_candidates": total_candidates,
         "errors": errors,
+        "last_error": last_error,
     }
 
 

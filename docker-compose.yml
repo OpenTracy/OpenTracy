@@ -59,6 +59,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - weights-data:/weights
+      - lunar-secrets:/root/.lunar
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -77,9 +78,11 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    runtime: nvidia
     ports:
       - "8000:8000"
     environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
       LUNAR_CH_ENABLED: "true"
       LUNAR_CH_HOST: clickhouse
       LUNAR_CH_HTTP_PORT: "8123"
@@ -93,6 +96,8 @@ services:
       AUTO_TRAINER: ${AUTO_TRAINER:-false}
     volumes:
       - weights-data:/app/weights
+      - lunar-secrets:/root/.lunar
+      - distillation-data:/app/data
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -133,3 +138,5 @@ services:
 volumes:
   clickhouse-data:
   weights-data:
+  lunar-secrets:
+  distillation-data:
