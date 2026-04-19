@@ -55,10 +55,10 @@ interface PlaygroundSession {
   createdAt: Date;
 }
 
-// Check if model is provided by Lunar (deployment or lunar provider)
-function isLunarModel(model: AvailableModel): boolean {
+// Check if model is provided by OpenTracy (deployment or opentracy provider)
+function isOpentracyModel(model: AvailableModel): boolean {
   const providerLower = model.provider?.toLowerCase() || '';
-  return model.type === 'deployment' || providerLower === 'lunar' || providerLower === 'deployment';
+  return model.type === 'deployment' || providerLower === 'opentracy' || providerLower === 'deployment';
 }
 
 // Check if model is a Bedrock model (based on provider or providers array only)
@@ -84,12 +84,12 @@ function getModelIconsFromAvailable(model: AvailableModel): {
   isBedrock: boolean;
   isLunar: boolean;
 } {
-  const isLunar = isLunarModel(model);
+  const isLunar = isOpentracyModel(model);
   const isBedrock = isBedrockModelFromAvailable(model);
 
   if (isLunar) {
     return {
-      providerIcon: MODEL_ICONS.lunarIcon,
+      providerIcon: MODEL_ICONS.opentracyIcon,
       isBedrock: false,
       isLunar: true,
     };
@@ -113,8 +113,8 @@ function getModelIconsFromAvailable(model: AvailableModel): {
 
 // Get display provider name
 function getProviderDisplayName(model: AvailableModel): string {
-  if (isLunarModel(model)) {
-    return 'Lunar';
+  if (isOpentracyModel(model)) {
+    return 'OpenTracy';
   }
   if (isBedrockModelFromAvailable(model)) {
     return 'AWS Bedrock';
@@ -148,9 +148,9 @@ function getFirstAvailableModelsSortedByProvider(
     const providerA = getProviderDisplayName(a);
     const providerB = getProviderDisplayName(b);
 
-    // Lunar always comes first
-    if (providerA === 'Lunar' && providerB !== 'Lunar') return -1;
-    if (providerA !== 'Lunar' && providerB === 'Lunar') return 1;
+    // OpenTracy always comes first
+    if (providerA === 'OpenTracy' && providerB !== 'OpenTracy') return -1;
+    if (providerA !== 'OpenTracy' && providerB === 'OpenTracy') return 1;
 
     // If both are same provider, sort by model name
     if (providerA === providerB) {
@@ -164,10 +164,10 @@ function getFirstAvailableModelsSortedByProvider(
   return sorted.slice(0, count);
 }
 
-// Get display model name (with lunar/ or bedrock/ prefix for special models)
+// Get display model name (with opentracy/ or bedrock/ prefix for special models)
 function getModelDisplayName(model: AvailableModel): string {
-  if (isLunarModel(model)) {
-    return `lunar/${model.name}`;
+  if (isOpentracyModel(model)) {
+    return `opentracy/${model.name}`;
   }
   if (isBedrockModelFromAvailable(model)) {
     return `bedrock/${model.name}`;
@@ -356,7 +356,7 @@ export default function Compare() {
         m.name.toLowerCase().includes(s) ||
         m.id.toLowerCase().includes(s) ||
         m.provider.toLowerCase().includes(s) ||
-        (isLunarModel(m) && 'lunar'.includes(s)) ||
+        (isOpentracyModel(m) && 'opentracy'.includes(s)) ||
         (isBedrockModelFromAvailable(m) && 'bedrock'.includes(s))
     );
   }, [deduplicatedModels, modelSearch]);
@@ -1184,9 +1184,9 @@ export default function Compare() {
             <div className="max-h-80 overflow-y-auto">
               {Object.entries(groupedModels)
                 .sort(([providerA], [providerB]) => {
-                  // Lunar always comes first
-                  if (providerA === 'Lunar' && providerB !== 'Lunar') return -1;
-                  if (providerA !== 'Lunar' && providerB === 'Lunar') return 1;
+                  // OpenTracy always comes first
+                  if (providerA === 'OpenTracy' && providerB !== 'OpenTracy') return -1;
+                  if (providerA !== 'OpenTracy' && providerB === 'OpenTracy') return 1;
                   // Otherwise sort alphabetically
                   return providerA.localeCompare(providerB);
                 })

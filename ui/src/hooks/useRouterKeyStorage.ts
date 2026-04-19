@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 
-const ROUTER_KEY_STORAGE_KEY = 'lunar_router_key';
+const ROUTER_KEY_STORAGE_KEY = 'opentracy_key';
 
 export interface RouterKeyStorage {
   routerKey: string | null;

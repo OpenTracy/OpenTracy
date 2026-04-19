@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	chw "github.com/lunar-org-ai/lunar-router/go/internal/clickhouse"
-	"github.com/lunar-org-ai/lunar-router/go/internal/metrics"
-	"github.com/lunar-org-ai/lunar-router/go/internal/provider"
-	"github.com/lunar-org-ai/lunar-router/go/internal/router"
+	chw "github.com/OpenTracy/opentracy/go/internal/clickhouse"
+	"github.com/OpenTracy/opentracy/go/internal/metrics"
+	"github.com/OpenTracy/opentracy/go/internal/provider"
+	"github.com/OpenTracy/opentracy/go/internal/router"
 )
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
@@ -794,7 +794,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	// Internal calls (clustering pipeline, labeling) are not traced
-	isInternal := r.Header.Get("X-Lunar-Internal") == "true"
+	isInternal := r.Header.Get("X-OpenTracy-Internal") == "true"
 
 	// Read raw body (for pass-through)
 	rawBody, err := io.ReadAll(r.Body)
@@ -838,10 +838,10 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		req.Model = selectedModel
 
 		// Set routing headers
-		w.Header().Set("X-Lunar-Selected-Model", selectedModel)
-		w.Header().Set("X-Lunar-Cluster-ID", strconv.Itoa(decision.ClusterID))
-		w.Header().Set("X-Lunar-Expected-Error", fmt.Sprintf("%.4f", decision.ExpectedError))
-		w.Header().Set("X-Lunar-Routing-Ms", fmt.Sprintf("%.2f", routingMs))
+		w.Header().Set("X-OpenTracy-Selected-Model", selectedModel)
+		w.Header().Set("X-OpenTracy-Cluster-ID", strconv.Itoa(decision.ClusterID))
+		w.Header().Set("X-OpenTracy-Expected-Error", fmt.Sprintf("%.4f", decision.ExpectedError))
+		w.Header().Set("X-OpenTracy-Routing-Ms", fmt.Sprintf("%.2f", routingMs))
 	}
 
 	// Find provider for the model
@@ -875,13 +875,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 // It follows the standard OpenAI tool-call pattern:
 //   - The gateway NEVER executes tools itself.
 //   - If the model returns finish_reason="tool_calls", the response is returned
-//     to the client AS-IS (with tool_calls field), along with an X-Lunar-Session-Id
+//     to the client AS-IS (with tool_calls field), along with an X-OpenTracy-Session-Id
 //     header so the client can correlate follow-up turns.
-//   - When the client sends back tool results, it includes X-Lunar-Session-Id so
+//   - When the client sends back tool results, it includes X-OpenTracy-Session-Id so
 //     the gateway can accumulate the full ExecutionTimeline across turns.
 //   - When the conversation ends (stop/length/…), the session is finalized, the
 //     complete aggregated trace (with full timeline) is written to ClickHouse,
-//     and X-Lunar-Session-Done: true is set on the final response.
+//     and X-OpenTracy-Session-Done: true is set on the final response.
 func (s *Server) handleNonStreamingProxy(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -894,7 +894,7 @@ func (s *Server) handleNonStreamingProxy(
 	ctx := context.Background()
 	requestArrivedAt := start
 
-	sessionID := r.Header.Get("X-Lunar-Session-Id")
+	sessionID := r.Header.Get("X-OpenTracy-Session-Id")
 	var session *ToolCallSession
 	var isExistingSession bool
 
@@ -1049,7 +1049,7 @@ func (s *Server) handleNonStreamingProxy(
 				s.Sessions.Set(sessionID, session)
 			}
 			session.Touch()
-			w.Header().Set("X-Lunar-Session-Id", sessionID)
+			w.Header().Set("X-OpenTracy-Session-Id", sessionID)
 		} else {
 			persistFinalTrace := true
 			if isExistingSession && session != nil {
@@ -1164,7 +1164,7 @@ func (s *Server) handleNonStreamingProxy(
 
 			if isExistingSession {
 				s.Sessions.Delete(sessionID)
-				w.Header().Set("X-Lunar-Session-Done", "true")
+				w.Header().Set("X-OpenTracy-Session-Done", "true")
 			}
 			}
 		}

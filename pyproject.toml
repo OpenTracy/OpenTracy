@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lunar-router"
+name = "opentracy"
 version = "0.2.1"
 description = "Auto-distillation layer for your LLM calls — drop-in OpenAI-compatible SDK that turns every request into training data for cheaper custom models."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "Lunar Team"}
+    {name = "OpenTracy Team"}
 ]
 keywords = [
     "llm", "distillation", "fine-tuning", "routing",
@@ -78,11 +78,11 @@ server = [
 
 # ── Kitchen sink ────────────────────────────────────────────────────
 all = [
-    "lunar-router[anthropic,mistral,google,groq,distill,research,server]",
+    "opentracy[anthropic,mistral,google,groq,distill,research,server]",
 ]
 
 dev = [
-    "lunar-router[all]",
+    "opentracy[all]",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
@@ -92,27 +92,29 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/lunar-org-ai/lunar-router"
-Documentation = "https://github.com/lunar-org-ai/lunar-router#readme"
-Repository = "https://github.com/lunar-org-ai/lunar-router"
-Issues = "https://github.com/lunar-org-ai/lunar-router/issues"
+Homepage = "https://github.com/OpenTracy/opentracy"
+Documentation = "https://github.com/OpenTracy/opentracy#readme"
+Repository = "https://github.com/OpenTracy/opentracy"
+Issues = "https://github.com/OpenTracy/opentracy/issues"
 
 [project.scripts]
-lunar-router = "lunar_router.cli:main"
+opentracy = "opentracy.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["lunar_router*"]
+# Ship the `opentracy` package plus the `lunar_router` backwards-compat shim,
+# which redirects legacy imports via a MetaPathFinder.
+include = ["opentracy*", "lunar_router"]
 
-# Ship the per-platform Go binary inside the wheel so `pip install lunar-router`
-# works out of the box. _find_binary() loads lunar_router/_bin/lunar-engine-<tag>
+# Ship the per-platform Go binary inside the wheel so `pip install opentracy`
+# works out of the box. _find_binary() loads opentracy/_bin/opentracy-engine-<tag>
 # at runtime. Each CI job builds for its platform and publishes a platform-tagged
 # wheel; pip will resolve the right one automatically.
 [tool.setuptools.package-data]
-lunar_router = [
+opentracy = [
     # Per-platform Go binary + the onnxruntime shared library it dlopens.
-    "_bin/lunar-engine-*",
-    "_bin/lunar-engine-*.exe",
+    "_bin/opentracy-engine-*",
+    "_bin/opentracy-engine-*.exe",
     "_bin/libonnxruntime.so*",
     "_bin/libonnxruntime.dylib",
     "_bin/onnxruntime.dll",

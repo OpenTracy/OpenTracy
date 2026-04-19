@@ -5,9 +5,9 @@ import numpy as np
 import pytest
 from pathlib import Path
 
-from lunar_router.models.llm_profile import LLMProfile
-from lunar_router.models.llm_registry import LLMRegistry
-from lunar_router.models.llm_client import (
+from opentracy.models.llm_profile import LLMProfile
+from opentracy.models.llm_registry import LLMRegistry
+from opentracy.models.llm_client import (
     LLMResponse,
     MockLLMClient,
     create_client,

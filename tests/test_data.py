@@ -4,7 +4,7 @@ import json
 import pytest
 from pathlib import Path
 
-from lunar_router.data.dataset import PromptDataset, PromptSample
+from opentracy.data.dataset import PromptDataset, PromptSample
 
 
 class TestPromptSample:

@@ -1,4 +1,4 @@
-# Lunar Router — Developer Makefile
+# OpenTracy — Developer Makefile
 #
 #   make start          ← fastest way to get running (build + launch gateway)
 #   make start-full     ← full stack with ClickHouse analytics
@@ -36,35 +36,35 @@ start: build ## Build + run engine in gateway mode (proxy to all providers, no w
 	@echo "  \033[32m✓ Engine ready at http://localhost:8080\033[0m"
 	@echo "  \033[32m✓ Use provider/model syntax: openai/gpt-4o-mini, anthropic/claude-3-5-sonnet, etc.\033[0m"
 	@echo ""
-	@echo "  Python SDK:  import lunar_router as lr"
+	@echo "  Python SDK:  import opentracy as lr"
 	@echo "               lr.completion(model='openai/gpt-4o-mini', messages=[...])"
 	@echo ""
 	@echo "  OpenAI SDK:  OpenAI(base_url='http://localhost:8080/v1', api_key='any')"
 	@echo ""
-	./go/bin/lunar-engine --gateway
+	./go/bin/opentracy-engine --gateway
 
 start-full: build ## Build + run full stack with ClickHouse analytics via Docker
 	docker compose up clickhouse -d
 	@echo "Waiting for ClickHouse..."
-	@until docker compose exec -T clickhouse clickhouse-client --password lunar -q "SELECT 1" > /dev/null 2>&1; do sleep 1; done
+	@until docker compose exec -T clickhouse clickhouse-client --password opentracy -q "SELECT 1" > /dev/null 2>&1; do sleep 1; done
 	@echo ""
 	@echo "  \033[32m✓ ClickHouse ready at localhost:8123\033[0m"
 	@echo "  \033[32m✓ Engine ready at http://localhost:8080\033[0m"
 	@echo ""
-	LUNAR_CH_ENABLED=true \
-	LUNAR_CH_HOST=localhost \
-	LUNAR_CH_PASSWORD=lunar \
-	LUNAR_CH_DATABASE=lunar_router \
-	./go/bin/lunar-engine --gateway
+	OPENTRACY_CH_ENABLED=true \
+	OPENTRACY_CH_HOST=localhost \
+	OPENTRACY_CH_PASSWORD=opentracy \
+	OPENTRACY_CH_DATABASE=opentracy \
+	./go/bin/opentracy-engine --gateway
 
 start-router: build ## Build + run engine with semantic routing (requires weights)
-	@WEIGHTS_PATH="$$(lunar-router path weights-mmlu-v1 2>/dev/null || echo ./weights)"; \
+	@WEIGHTS_PATH="$$(opentracy path weights-mmlu-v1 2>/dev/null || echo ./weights)"; \
 	echo "Loading weights from: $$WEIGHTS_PATH"; \
-	LUNAR_CH_ENABLED=true \
-	LUNAR_CH_HOST=localhost \
-	LUNAR_CH_PASSWORD=lunar \
-	LUNAR_CH_DATABASE=lunar_router \
-	./go/bin/lunar-engine --weights "$$WEIGHTS_PATH" --no-embedder
+	OPENTRACY_CH_ENABLED=true \
+	OPENTRACY_CH_HOST=localhost \
+	OPENTRACY_CH_PASSWORD=opentracy \
+	OPENTRACY_CH_DATABASE=opentracy \
+	./go/bin/opentracy-engine --weights "$$WEIGHTS_PATH" --no-embedder
 
 stop: ## Stop all running services
 	-docker compose down 2>/dev/null
@@ -85,7 +85,7 @@ install-all: ## Install everything (Python dev deps + Go + UI)
 
 install-train: ## Install training/distillation dependencies (requires CUDA GPU)
 	@echo "Installing training dependencies..."
-	pip install -r lunar_router/requirements-train.txt
+	pip install -r opentracy/requirements-train.txt
 	@echo ""
 	@python3 -c "import torch; print('  PyTorch', torch.__version__, '— CUDA:', torch.cuda.is_available())" 2>/dev/null || \
 		echo "  ⚠ PyTorch not found. Install: pip install torch --index-url https://download.pytorch.org/whl/cu126"
@@ -96,16 +96,16 @@ install-train: ## Install training/distillation dependencies (requires CUDA GPU)
 	@python3 -c "import datasets; print('  ✓ datasets OK')" 2>/dev/null || echo "  ✗ datasets failed"
 
 download-weights: ## Download pre-trained routing weights from HuggingFace
-	lunar-router download weights-mmlu-v1
+	opentracy download weights-mmlu-v1
 
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
 
-build: ## Build the Go engine binary → go/bin/lunar-engine
+build: ## Build the Go engine binary → go/bin/opentracy-engine
 	@cd go && go build -ldflags "-X main.version=$$(git describe --tags --always 2>/dev/null || echo dev)" \
-		-o bin/lunar-engine ./cmd/lunar-engine
-	@echo "  \033[32m✓ Built go/bin/lunar-engine\033[0m"
+		-o bin/opentracy-engine ./cmd/opentracy-engine
+	@echo "  \033[32m✓ Built go/bin/opentracy-engine\033[0m"
 
 build-docker: ## Build all Docker images
 	docker compose build
@@ -118,16 +118,16 @@ dev: ## Start full stack via Docker Compose
 	docker compose up --build
 
 dev-go: build ## Run Go engine locally (with weights + ClickHouse)
-	LUNAR_CH_ENABLED=true \
-	LUNAR_CH_HOST=localhost \
-	LUNAR_CH_PASSWORD=lunar \
-	LUNAR_CH_DATABASE=lunar_router \
-	./go/bin/lunar-engine \
-		--weights "$$(lunar-router path weights-mmlu-v1 2>/dev/null || echo ./weights)" \
+	OPENTRACY_CH_ENABLED=true \
+	OPENTRACY_CH_HOST=localhost \
+	OPENTRACY_CH_PASSWORD=opentracy \
+	OPENTRACY_CH_DATABASE=opentracy \
+	./go/bin/opentracy-engine \
+		--weights "$$(opentracy path weights-mmlu-v1 2>/dev/null || echo ./weights)" \
 		--no-embedder
 
 dev-python: ## Run Python API server locally
-	uvicorn lunar_router.api.server:app --reload --host 0.0.0.0 --port 8000
+	uvicorn opentracy.api.server:app --reload --host 0.0.0.0 --port 8000
 
 dev-ui: ## Run UI dev server
 	cd ui && npm run dev -- --port 3000
@@ -137,17 +137,17 @@ dev-ui: ## Run UI dev server
 # ---------------------------------------------------------------------------
 
 # Env vars shared by Go engine and Python API
-export LUNAR_CH_ENABLED  := true
-export LUNAR_CH_HOST     := localhost
-export LUNAR_CH_PASSWORD := lunar
-export LUNAR_CH_DATABASE := lunar_router
+export OPENTRACY_CH_ENABLED  := true
+export OPENTRACY_CH_HOST     := localhost
+export OPENTRACY_CH_PASSWORD := opentracy
+export OPENTRACY_CH_DATABASE := opentracy
 
 dev-all: build ## Start everything: ClickHouse, Go engine, Python API, UI
 	@# Clean up any stale processes first
 	@-lsof -ti :8080 | xargs kill -9 2>/dev/null || true
 	@-lsof -ti :8000 | xargs kill -9 2>/dev/null || true
 	@-lsof -ti :3000 | xargs kill -9 2>/dev/null || true
-	@-rm -f /tmp/lunar-engine.pid /tmp/lunar-api.pid /tmp/lunar-ui.pid
+	@-rm -f /tmp/opentracy-engine.pid /tmp/opentracy-api.pid /tmp/opentracy-ui.pid
 	@sleep 1
 	@echo ""
 	@echo "  \033[1m Starting full local stack …\033[0m"
@@ -155,33 +155,33 @@ dev-all: build ## Start everything: ClickHouse, Go engine, Python API, UI
 	@# 1. ClickHouse (Docker) -----------------------------------------------
 	@docker compose up clickhouse -d
 	@echo "  Waiting for ClickHouse …"
-	@until docker compose exec -T clickhouse clickhouse-client --password lunar -q "SELECT 1" > /dev/null 2>&1; do sleep 1; done
+	@until docker compose exec -T clickhouse clickhouse-client --password opentracy -q "SELECT 1" > /dev/null 2>&1; do sleep 1; done
 	@echo "  \033[32m✓ ClickHouse ready       — localhost:8123\033[0m"
 	@# 2. Go engine (background) --------------------------------------------
-	@LUNAR_CH_ENABLED=true LUNAR_CH_HOST=localhost LUNAR_CH_PASSWORD=lunar LUNAR_CH_DATABASE=lunar_router \
-		nohup ./go/bin/lunar-engine --gateway > /tmp/lunar-engine.log 2>&1 & echo $$! > /tmp/lunar-engine.pid
+	@OPENTRACY_CH_ENABLED=true OPENTRACY_CH_HOST=localhost OPENTRACY_CH_PASSWORD=opentracy OPENTRACY_CH_DATABASE=opentracy \
+		nohup ./go/bin/opentracy-engine --gateway > /tmp/opentracy-engine.log 2>&1 & echo $$! > /tmp/opentracy-engine.pid
 	@sleep 2
-	@if kill -0 $$(cat /tmp/lunar-engine.pid) 2>/dev/null; then \
-		echo "  \033[32m✓ Go engine ready        — localhost:8080  (pid $$(cat /tmp/lunar-engine.pid))\033[0m"; \
+	@if kill -0 $$(cat /tmp/opentracy-engine.pid) 2>/dev/null; then \
+		echo "  \033[32m✓ Go engine ready        — localhost:8080  (pid $$(cat /tmp/opentracy-engine.pid))\033[0m"; \
 	else \
-		echo "  \033[31m✗ Go engine failed to start — check /tmp/lunar-engine.log\033[0m"; exit 1; \
+		echo "  \033[31m✗ Go engine failed to start — check /tmp/opentracy-engine.log\033[0m"; exit 1; \
 	fi
 	@# 3. Python API (background) -------------------------------------------
-	@LUNAR_CH_ENABLED=true LUNAR_CH_HOST=localhost LUNAR_CH_PASSWORD=lunar LUNAR_CH_DATABASE=lunar_router \
-		nohup uvicorn lunar_router.api.server:app --host 0.0.0.0 --port 8000 > /tmp/lunar-api.log 2>&1 & echo $$! > /tmp/lunar-api.pid
+	@OPENTRACY_CH_ENABLED=true OPENTRACY_CH_HOST=localhost OPENTRACY_CH_PASSWORD=opentracy OPENTRACY_CH_DATABASE=opentracy \
+		nohup uvicorn opentracy.api.server:app --host 0.0.0.0 --port 8000 > /tmp/opentracy-api.log 2>&1 & echo $$! > /tmp/opentracy-api.pid
 	@sleep 3
-	@if kill -0 $$(cat /tmp/lunar-api.pid) 2>/dev/null; then \
-		echo "  \033[32m✓ Python API ready       — localhost:8000  (pid $$(cat /tmp/lunar-api.pid))\033[0m"; \
+	@if kill -0 $$(cat /tmp/opentracy-api.pid) 2>/dev/null; then \
+		echo "  \033[32m✓ Python API ready       — localhost:8000  (pid $$(cat /tmp/opentracy-api.pid))\033[0m"; \
 	else \
-		echo "  \033[31m✗ Python API failed to start — check /tmp/lunar-api.log\033[0m"; exit 1; \
+		echo "  \033[31m✗ Python API failed to start — check /tmp/opentracy-api.log\033[0m"; exit 1; \
 	fi
 	@# 4. UI dev server (background) ----------------------------------------
-	@cd ui && nohup npm run dev -- --port 3000 > /tmp/lunar-ui.log 2>&1 & echo $$! > /tmp/lunar-ui.pid
+	@cd ui && nohup npm run dev -- --port 3000 > /tmp/opentracy-ui.log 2>&1 & echo $$! > /tmp/opentracy-ui.pid
 	@sleep 3
-	@if kill -0 $$(cat /tmp/lunar-ui.pid) 2>/dev/null; then \
-		echo "  \033[32m✓ UI dev server ready    — localhost:3000  (pid $$(cat /tmp/lunar-ui.pid))\033[0m"; \
+	@if kill -0 $$(cat /tmp/opentracy-ui.pid) 2>/dev/null; then \
+		echo "  \033[32m✓ UI dev server ready    — localhost:3000  (pid $$(cat /tmp/opentracy-ui.pid))\033[0m"; \
 	else \
-		echo "  \033[31m✗ UI failed to start — check /tmp/lunar-ui.log\033[0m"; exit 1; \
+		echo "  \033[31m✗ UI failed to start — check /tmp/opentracy-ui.log\033[0m"; exit 1; \
 	fi
 	@echo ""
 	@echo "  \033[1mAll services running!\033[0m"
@@ -196,17 +196,17 @@ dev-all: build ## Start everything: ClickHouse, Go engine, Python API, UI
 
 stop-all: ## Stop all local services (Go, Python API, UI, ClickHouse)
 	@echo "  Stopping services …"
-	@-if [ -f /tmp/lunar-ui.pid ]; then \
-		kill $$(cat /tmp/lunar-ui.pid) 2>/dev/null && echo "  ✓ UI stopped (pid)" || true; \
-		rm -f /tmp/lunar-ui.pid; \
+	@-if [ -f /tmp/opentracy-ui.pid ]; then \
+		kill $$(cat /tmp/opentracy-ui.pid) 2>/dev/null && echo "  ✓ UI stopped (pid)" || true; \
+		rm -f /tmp/opentracy-ui.pid; \
 	fi
-	@-if [ -f /tmp/lunar-api.pid ]; then \
-		kill $$(cat /tmp/lunar-api.pid) 2>/dev/null && echo "  ✓ Python API stopped (pid)" || true; \
-		rm -f /tmp/lunar-api.pid; \
+	@-if [ -f /tmp/opentracy-api.pid ]; then \
+		kill $$(cat /tmp/opentracy-api.pid) 2>/dev/null && echo "  ✓ Python API stopped (pid)" || true; \
+		rm -f /tmp/opentracy-api.pid; \
 	fi
-	@-if [ -f /tmp/lunar-engine.pid ]; then \
-		kill $$(cat /tmp/lunar-engine.pid) 2>/dev/null && echo "  ✓ Go engine stopped (pid)" || true; \
-		rm -f /tmp/lunar-engine.pid; \
+	@-if [ -f /tmp/opentracy-engine.pid ]; then \
+		kill $$(cat /tmp/opentracy-engine.pid) 2>/dev/null && echo "  ✓ Go engine stopped (pid)" || true; \
+		rm -f /tmp/opentracy-engine.pid; \
 	fi
 	@# Also kill by port as fallback (handles orphan processes)
 	@-lsof -ti :8080 | xargs kill -9 2>/dev/null && echo "  ✓ Go engine stopped (port 8080)" || true
@@ -228,7 +228,7 @@ test-python: ## Run Python tests
 	pytest tests/ -v
 
 test-clickhouse: ## Run ClickHouse integration tests
-	cd go && LUNAR_CH_ENABLED=true LUNAR_CH_PASSWORD=lunar \
+	cd go && OPENTRACY_CH_ENABLED=true OPENTRACY_CH_PASSWORD=opentracy \
 		go test -v -run TestIntegration ./internal/clickhouse/
 
 # ---------------------------------------------------------------------------
@@ -241,7 +241,7 @@ lint-go: ## Lint Go code
 	cd go && go vet ./...
 
 lint-python: ## Lint Python code
-	ruff check lunar_router/ tests/
+	ruff check opentracy/ tests/
 
 # ---------------------------------------------------------------------------
 # ClickHouse
@@ -254,7 +254,7 @@ clickhouse-down: ## Stop ClickHouse container
 	docker compose down clickhouse
 
 clickhouse-shell: ## Open ClickHouse SQL shell
-	docker compose exec clickhouse clickhouse-client --database lunar_router --password lunar
+	docker compose exec clickhouse clickhouse-client --database opentracy --password opentracy
 
 # ---------------------------------------------------------------------------
 # Cleanup

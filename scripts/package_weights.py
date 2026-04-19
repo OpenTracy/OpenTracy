@@ -137,9 +137,9 @@ def main():
 
         print(f"\n📦 Ready to upload: {args.output}")
         print("\nUpload to:")
-        print("  - GitHub Releases: https://github.com/YOUR_ORG/lunar-router-data/releases")
+        print("  - GitHub Releases: https://github.com/YOUR_ORG/opentracy-data/releases")
         print("  - S3: aws s3 cp dist/weights.zip s3://your-bucket/")
-        print("  - HuggingFace: huggingface-cli upload YOUR_ORG/lunar-router-weights ./dist/")
+        print("  - HuggingFace: huggingface-cli upload YOUR_ORG/opentracy-weights ./dist/")
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

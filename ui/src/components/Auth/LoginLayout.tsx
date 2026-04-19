@@ -1,6 +1,6 @@
 import type { FC, ReactNode } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
-import LunarLogo from '@/assets/lunar-logo.png';
+import OpentracyLogo from '@/assets/opentracy-logo.png';
 
 interface LoginLayoutProps {
   children: ReactNode;
@@ -25,7 +25,7 @@ export const LoginLayout: FC<LoginLayoutProps> = ({ children }) => {
       <div className="w-full max-w-105 mx-auto px-6 relative z-10">
         {/* Logo */}
         <div className="flex justify-center mb-8">
-          <img src={LunarLogo} alt="Lunar" className="h-8 w-auto invert dark:invert-0" />
+          <img src={OpentracyLogo} alt="OpenTracy" className="h-8 w-auto invert dark:invert-0" />
         </div>
 
         {/* Main card */}

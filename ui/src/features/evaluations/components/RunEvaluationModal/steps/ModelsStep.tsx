@@ -8,13 +8,13 @@ import { cn } from '@/lib/utils';
 import type { AvailableModel } from '../../../types';
 import { getModelCategory, getProviderIconByBackend, getCleanModelName } from '@/utils/modelUtils';
 
-function isLunarModel(model: AvailableModel): boolean {
+function isOpentracyModel(model: AvailableModel): boolean {
   const providerLower = model.provider?.toLowerCase() || '';
-  return model.type === 'deployment' || providerLower === 'lunar' || providerLower === 'deployment';
+  return model.type === 'deployment' || providerLower === 'opentracy' || providerLower === 'deployment';
 }
 
 function getCategory(model: AvailableModel): string {
-  return isLunarModel(model) ? 'Lunar' : getModelCategory(model.id);
+  return isOpentracyModel(model) ? 'OpenTracy' : getModelCategory(model.id);
 }
 
 interface ModelsStepProps {
@@ -48,8 +48,8 @@ export function ModelsStep({ models, selectedModels, onToggle }: ModelsStepProps
             const isSelected = selectedModels.includes(model.id);
             const iconUrl = getProviderIconByBackend(model.provider, model.id);
             const category = getCategory(model);
-            const displayName = isLunarModel(model)
-              ? `lunar/${model.name}`
+            const displayName = isOpentracyModel(model)
+              ? `opentracy/${model.name}`
               : getCleanModelName(model.name);
 
             return (

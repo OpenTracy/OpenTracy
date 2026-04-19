@@ -4,12 +4,12 @@ import numpy as np
 import pytest
 from pathlib import Path
 
-from lunar_router.core.clustering import (
+from opentracy.core.clustering import (
     ClusterResult,
     KMeansClusterAssigner,
     load_cluster_assigner,
 )
-from lunar_router.core.embeddings import PromptEmbedder
+from opentracy.core.embeddings import PromptEmbedder
 
 
 # ── ClusterResult ─────────────────────────────────────────────────────────────

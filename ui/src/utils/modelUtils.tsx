@@ -138,7 +138,7 @@ export const BACKEND_PROVIDER_ICONS: Record<string, string> = {
   sambanova: MODEL_ICONS.sambanovaIcon,
   cerebras: MODEL_ICONS.cerebrasIcon,
   huggingface: MODEL_ICONS.huggingFaceIcon,
-  lunar: MODEL_ICONS.lunarIcon,
+  opentracy: MODEL_ICONS.opentracyIcon,
   bedrock: MODEL_ICONS.bedrockIcon,
   amazon: MODEL_ICONS.bedrockIcon,
   aws: MODEL_ICONS.bedrockIcon,
@@ -159,7 +159,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   sambanova: 'SambaNova',
   cerebras: 'Cerebras',
   huggingface: 'HuggingFace',
-  lunar: 'Lunar',
+  opentracy: 'OpenTracy',
   bedrock: 'bedrock',
   amazon: 'bedrock',
   aws: 'bedrock',
@@ -350,9 +350,9 @@ export function getModelDisplayInfo(modelId: string): {
   // Check if it's a deployment (UUID)
   if (isDeploymentModel(modelId)) {
     return {
-      displayName: 'Lunar',
-      icon: MODEL_ICONS.lunarIcon,
-      provider: 'Lunar',
+      displayName: 'OpenTracy',
+      icon: MODEL_ICONS.opentracyIcon,
+      provider: 'OpenTracy',
       isDeployment: true,
       isBedrock: false,
     };
@@ -388,11 +388,11 @@ export function getProviderDisplayInfo(providerId: string): {
 } {
   const providerLower = providerId.toLowerCase();
 
-  // Check if it's a deployment/Lunar
-  if (providerLower === 'deployment' || providerLower === 'lunar') {
+  // Check if it's a deployment/OpenTracy
+  if (providerLower === 'deployment' || providerLower === 'opentracy') {
     return {
-      displayName: 'Lunar',
-      icon: MODEL_ICONS.lunarIcon,
+      displayName: 'OpenTracy',
+      icon: MODEL_ICONS.opentracyIcon,
     };
   }
 

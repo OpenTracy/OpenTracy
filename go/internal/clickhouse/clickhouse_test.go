@@ -6,16 +6,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lunar-org-ai/lunar-router/go/internal/metrics"
+	"github.com/OpenTracy/opentracy/go/internal/metrics"
 )
 
 // Integration test — requires a running ClickHouse on localhost:9000.
-// Run with: LUNAR_CH_ENABLED=true LUNAR_CH_PASSWORD=lunar go test -v -run TestIntegration ./internal/clickhouse/
+// Run with: LUNAR_CH_ENABLED=true LUNAR_CH_PASSWORD=opentracy go test -v -run TestIntegration ./internal/clickhouse/
 
 func testConfig() Config {
 	cfg := DefaultConfig()
 	cfg.Enabled = true
-	cfg.Password = "lunar"
+	cfg.Password = "opentracy"
 	cfg.BatchSize = 10
 	cfg.FlushInterval = 500 * time.Millisecond
 	cfg.ApplyEnvOverrides()
@@ -275,7 +275,7 @@ func TestMain(m *testing.M) {
 		os.Setenv("LUNAR_CH_ENABLED", "true")
 	}
 	if os.Getenv("LUNAR_CH_PASSWORD") == "" {
-		os.Setenv("LUNAR_CH_PASSWORD", "lunar")
+		os.Setenv("LUNAR_CH_PASSWORD", "opentracy")
 	}
 	os.Exit(m.Run())
 }

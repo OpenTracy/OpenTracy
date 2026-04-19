@@ -6,15 +6,15 @@ import { MODEL_ICONS } from '../constants/models';
 // UUID regex pattern for deployment detection
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Check if provider is Lunar (internal deployment)
-function isLunarProvider(provider: string): boolean {
-  return provider?.toLowerCase() === 'lunar';
+// Check if provider is OpenTracy (internal deployment)
+function isOpentracyProvider(provider: string): boolean {
+  return provider?.toLowerCase() === 'opentracy';
 }
 
 // Helper to format model name for display
 function formatModelNameForDisplay(modelId: string, provider?: string): string {
-  if (isLunarProvider(provider || '')) {
-    return `lunar/${modelId}`;
+  if (isOpentracyProvider(provider || '')) {
+    return `opentracy/${modelId}`;
   }
   if (modelId.includes('/')) {
     return modelId.split('/')[1];
@@ -230,8 +230,8 @@ export function useDashboardMetricsService() {
       // Use top_cost_models which has real cost_usd
       for (const model of metrics.leaders.top_cost_models) {
         const provider = providerMap.get(model.model_id) || 'unknown';
-        const isLunar = isLunarProvider(provider);
-        const displayProvider = isLunar ? 'Lunar' : formatProviderName(provider);
+        const isLunar = isOpentracyProvider(provider);
+        const displayProvider = isLunar ? 'OpenTracy' : formatProviderName(provider);
 
         if (!providerCosts[displayProvider]) {
           providerCosts[displayProvider] = { cost: 0, requests: 0, isLunar };
@@ -245,7 +245,7 @@ export function useDashboardMetricsService() {
           provider,
           cost: data.cost,
           icon: data.isLunar
-            ? MODEL_ICONS.lunarIcon
+            ? MODEL_ICONS.opentracyIcon
             : getProviderIconByBackend(provider.toLowerCase()),
           isLunar: data.isLunar,
         }))
@@ -290,9 +290,9 @@ export function useDashboardMetricsService() {
       // Format models with real data
       const models = series.by_model.map((model) => {
         const provider = providerMap.get(model.model_id) || '';
-        const isLunar = isLunarProvider(provider);
+        const isLunar = isOpentracyProvider(provider);
         const displayName = formatModelNameForDisplay(model.model_id, provider);
-        const icon = isLunar ? MODEL_ICONS.lunarIcon : getProviderIconByBackend(provider);
+        const icon = isLunar ? MODEL_ICONS.opentracyIcon : getProviderIconByBackend(provider);
 
         return {
           model: displayName,
@@ -305,7 +305,7 @@ export function useDashboardMetricsService() {
         };
       });
 
-      // Separate Lunar and external models
+      // Separate OpenTracy and external models
       const lunarModels = models.filter((m) => m.isLunar);
       const externalModels = models.filter((m) => !m.isLunar);
 
@@ -358,7 +358,7 @@ export function useDashboardMetricsService() {
         providers: formatProviders(metrics),
         models,
         alerts: generateInsights(metrics),
-        lunar: lunarSummary,
+        opentracy: lunarSummary,
         external: externalSummary,
       };
     },
@@ -392,9 +392,9 @@ export function useDashboardMetricsService() {
       // Cost by model using real cost_usd
       const costByTask = leaders.top_cost_models.map((model) => {
         const provider = providerMap.get(model.model_id) || '';
-        const isLunar = isLunarProvider(provider);
+        const isLunar = isOpentracyProvider(provider);
         const displayName = formatModelNameForDisplay(model.model_id, provider);
-        const icon = isLunar ? MODEL_ICONS.lunarIcon : getProviderIconByBackend(provider);
+        const icon = isLunar ? MODEL_ICONS.opentracyIcon : getProviderIconByBackend(provider);
 
         return {
           task: displayName,
@@ -405,17 +405,17 @@ export function useDashboardMetricsService() {
         };
       });
 
-      // Separate Lunar and external costs
-      const lunarCosts = costByTask.filter((c) => c.isLunar);
+      // Separate OpenTracy and external costs
+      const opentracyCosts = costByTask.filter((c) => c.isLunar);
       const externalCosts = costByTask.filter((c) => !c.isLunar);
 
       // Expensive requests from raw_sample
       const expensiveRequests = (raw_sample || [])
         .filter((sample) => sample.cost_usd > 0)
         .map((sample, index) => {
-          const isLunar = isLunarProvider(sample.provider);
+          const isLunar = isOpentracyProvider(sample.provider);
           const displayName = formatModelNameForDisplay(sample.model, sample.provider);
-          const icon = isLunar ? MODEL_ICONS.lunarIcon : getProviderIconByBackend(sample.provider);
+          const icon = isLunar ? MODEL_ICONS.opentracyIcon : getProviderIconByBackend(sample.provider);
 
           return {
             id: `req_${index}`,
@@ -435,7 +435,7 @@ export function useDashboardMetricsService() {
         .sort((a, b) => b.cost - a.cost)
         .slice(0, 10);
 
-      return { timeSeries, costByTask, expensiveRequests, lunarCosts, externalCosts };
+      return { timeSeries, costByTask, expensiveRequests, opentracyCosts, externalCosts };
     },
     [buildProviderMap]
   );
@@ -449,9 +449,9 @@ export function useDashboardMetricsService() {
       // Latency by model using real p95 values
       const latencyBy = leaders.slowest_models_p95_latency.map((model) => {
         const provider = providerMap.get(model.model_id) || '';
-        const isLunar = isLunarProvider(provider);
+        const isLunar = isOpentracyProvider(provider);
         const displayName = formatModelNameForDisplay(model.model_id, provider);
-        const icon = isLunar ? MODEL_ICONS.lunarIcon : getProviderIconByBackend(provider);
+        const icon = isLunar ? MODEL_ICONS.opentracyIcon : getProviderIconByBackend(provider);
 
         return {
           key: displayName,

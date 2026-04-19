@@ -20,10 +20,10 @@ const STEPS: GettingStartedStep[] = [
   },
   {
     icon: Code2,
-    title: 'Use the lunar/ prefix',
+    title: 'Use the opentracy/ prefix',
     description: (apiModelId) => (
       <>
-        Reference your model as <span className="font-mono text-xs">{`lunar/${apiModelId}`}</span>{' '}
+        Reference your model as <span className="font-mono text-xs">{`opentracy/${apiModelId}`}</span>{' '}
         in every request.
       </>
     ),

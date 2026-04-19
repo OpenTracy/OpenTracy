@@ -10,15 +10,15 @@ import numpy as np
 import pytest
 from pathlib import Path
 
-from lunar_router.core.embeddings import PromptEmbedder, MockEmbeddingProvider
-from lunar_router.core.clustering import KMeansClusterAssigner
-from lunar_router.models.llm_profile import LLMProfile
-from lunar_router.models.llm_registry import LLMRegistry
-from lunar_router.models.llm_client import MockLLMClient, create_client
-from lunar_router.router.uniroute import UniRouteRouter
-from lunar_router.data.dataset import PromptDataset, PromptSample
-from lunar_router.hub import Hub
-from lunar_router.weights import (
+from opentracy.core.embeddings import PromptEmbedder, MockEmbeddingProvider
+from opentracy.core.clustering import KMeansClusterAssigner
+from opentracy.models.llm_profile import LLMProfile
+from opentracy.models.llm_registry import LLMRegistry
+from opentracy.models.llm_client import MockLLMClient, create_client
+from opentracy.router.uniroute import UniRouteRouter
+from opentracy.data.dataset import PromptDataset, PromptSample
+from opentracy.hub import Hub
+from opentracy.weights import (
     download_weights,
     get_weights_path,
     list_available_weights,
@@ -375,7 +375,7 @@ class TestRealEmbeddings:
     """Integration tests with real SentenceTransformerProvider."""
 
     def test_real_embeddings_route(self, tmp_path):
-        from lunar_router.core.embeddings import SentenceTransformerProvider
+        from opentracy.core.embeddings import SentenceTransformerProvider
 
         create_test_weights(tmp_path)
 
@@ -408,7 +408,7 @@ class TestRealEmbeddings:
 
     def test_real_load_router_from_hub(self):
         """Test load_router with real weights from hub (if downloaded)."""
-        from lunar_router import load_router
+        from opentracy import load_router
 
         weights_path = get_weights_path("default")
         if not weights_path.exists():

@@ -35,7 +35,7 @@ export interface Alert {
 export interface TimeSeriesData {
   date: string;
   cost: number;
-  lunarCost?: number;
+  opentracyCost?: number;
   externalCost?: number;
 }
 
@@ -82,7 +82,7 @@ export interface ErrorTableItem {
   requestId: string;
 }
 
-// Separate overview data for Lunar vs External providers
+// Separate overview data for OpenTracy vs External providers
 export interface ProviderSummary {
   totalCost: number;
   totalRequests: number;
@@ -96,7 +96,7 @@ export interface OverviewData {
   models: UsageByModel[];
   alerts: Alert[];
   // Separated data
-  lunar: ProviderSummary;
+  opentracy: ProviderSummary;
   external: ProviderSummary;
 }
 
@@ -105,7 +105,7 @@ export interface CostAnalysisData {
   costByTask: CostByTask[];
   expensiveRequests: ExpensiveRequest[];
   // Separated data
-  lunarCosts: CostByTask[];
+  opentracyCosts: CostByTask[];
   externalCosts: CostByTask[];
 }
 

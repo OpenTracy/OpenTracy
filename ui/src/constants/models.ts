@@ -14,7 +14,7 @@ import perplexityIcon from '../assets/perplexity.svg';
 import qwenIcon from '../assets/qwen.svg';
 import sambanovaIcon from '../assets/sambanova-color.svg';
 import togetherIcon from '../assets/together-color.svg';
-import lunarIcon from '../assets/lunar-logo.png';
+import opentracyIcon from '../assets/opentracy-logo.png';
 
 export const MODELS = [
   // deepseek
@@ -199,5 +199,5 @@ export const MODEL_ICONS = {
   qwenIcon,
   sambanovaIcon,
   togetherIcon,
-  lunarIcon,
+  opentracyIcon,
 };

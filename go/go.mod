@@ -1,4 +1,4 @@
-module github.com/lunar-org-ai/lunar-router/go
+module github.com/OpenTracy/opentracy/go
 
 go 1.25.4
 

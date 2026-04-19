@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lunar-org-ai/lunar-router/go/internal/clickhouse"
+	"github.com/OpenTracy/opentracy/go/internal/clickhouse"
+	"github.com/OpenTracy/opentracy/go/internal/envfallback"
 	"gopkg.in/yaml.v3"
 )
 
@@ -94,21 +95,23 @@ func LoadConfig(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// ApplyEnvOverrides overrides config values with environment variables.
+// ApplyEnvOverrides overrides config values with environment variables. Reads
+// OPENTRACY_* first and falls back to LUNAR_* (with a one-time warning) so
+// existing deployments keep working across the rebrand.
 func (c *Config) ApplyEnvOverrides() {
-	if v := os.Getenv("LUNAR_HOST"); v != "" {
+	if v := envfallback.Get("HOST"); v != "" {
 		c.Server.Host = v
 	}
-	if v := os.Getenv("LUNAR_PORT"); v != "" {
+	if v := envfallback.Get("PORT"); v != "" {
 		var port int
 		if _, err := fmt.Sscanf(v, "%d", &port); err == nil {
 			c.Server.Port = port
 		}
 	}
-	if v := os.Getenv("LUNAR_WEIGHTS_PATH"); v != "" {
+	if v := envfallback.Get("WEIGHTS_PATH"); v != "" {
 		c.Weights.Path = v
 	}
-	if v := os.Getenv("LUNAR_LOG_LEVEL"); v != "" {
+	if v := envfallback.Get("LOG_LEVEL"); v != "" {
 		c.Logging.Level = v
 	}
 	c.ClickHouse.ApplyEnvOverrides()

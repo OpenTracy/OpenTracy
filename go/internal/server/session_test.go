@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lunar-org-ai/lunar-router/go/internal/provider"
+	"github.com/OpenTracy/opentracy/go/internal/provider"
 )
 
 func TestToolCallSessionTryFinalizeConcurrent(t *testing.T) {

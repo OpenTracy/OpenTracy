@@ -91,7 +91,7 @@ export function DeploymentChartsSection({
 
       const raw = response.raw_sample || [];
       const filtered = raw.filter((s) => {
-        if (s.backend !== 'lunar') return false;
+        if (s.backend !== 'opentracy') return false;
         return deploymentId ? s.deployment_id === deploymentId : true;
       });
 

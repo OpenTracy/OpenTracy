@@ -303,7 +303,7 @@ export function CostContent({ data, selectedDays, onTimeRangeChange }: CostConte
                 <ItemContent>
                   <ItemTitle>Billing Note</ItemTitle>
                   <ItemDescription className="mt-1 leading-relaxed">
-                    External API costs shown. Lunar deployments are billed hourly and not included
+                    External API costs shown. OpenTracy deployments are billed hourly and not included
                     here.
                   </ItemDescription>
                 </ItemContent>

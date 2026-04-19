@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/lunar-org-ai/lunar-router/go/internal/clustering"
-	"github.com/lunar-org-ai/lunar-router/go/internal/weights"
+	"github.com/OpenTracy/opentracy/go/internal/clustering"
+	"github.com/OpenTracy/opentracy/go/internal/weights"
 )
 
 const eps = 1e-9

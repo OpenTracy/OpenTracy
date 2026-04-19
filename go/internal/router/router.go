@@ -10,9 +10,9 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/lunar-org-ai/lunar-router/go/internal/clustering"
-	"github.com/lunar-org-ai/lunar-router/go/internal/embeddings"
-	"github.com/lunar-org-ai/lunar-router/go/internal/weights"
+	"github.com/OpenTracy/opentracy/go/internal/clustering"
+	"github.com/OpenTracy/opentracy/go/internal/embeddings"
+	"github.com/OpenTracy/opentracy/go/internal/weights"
 )
 
 // RouteOption configures a single routing call.

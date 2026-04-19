@@ -37,7 +37,7 @@ export interface Alert {
 export interface TimeSeriesData {
   date: string;
   cost: number;
-  lunarCost?: number;
+  opentracyCost?: number;
   externalCost?: number;
 }
 
@@ -96,7 +96,7 @@ export interface OverviewData {
   providers: CostByProvider[];
   models: UsageByModel[];
   alerts: Alert[];
-  lunar: ProviderSummary;
+  opentracy: ProviderSummary;
   external: ProviderSummary;
 }
 
@@ -104,7 +104,7 @@ export interface CostAnalysisData {
   timeSeries: TimeSeriesData[];
   costByTask: CostByTask[];
   expensiveRequests: ExpensiveRequest[];
-  lunarCosts: CostByTask[];
+  opentracyCosts: CostByTask[];
   externalCosts: CostByTask[];
 }
 

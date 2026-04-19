@@ -1,7 +1,7 @@
 package clustering
 
 import (
-	"github.com/lunar-org-ai/lunar-router/go/internal/mathutil"
+	"github.com/OpenTracy/opentracy/go/internal/mathutil"
 )
 
 // LearnedMapAssigner uses a learned parameter matrix theta for soft

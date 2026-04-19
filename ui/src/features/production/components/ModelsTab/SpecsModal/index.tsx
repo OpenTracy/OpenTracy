@@ -17,7 +17,7 @@ import { GettingStartedSection } from './GettingStartedSection';
 import { OverviewSection } from './OverviewSection';
 import type { SpecModalProps } from '@/features/production/types/specsModal.types';
 
-const DOCS_URL = 'https://docs.puredocs.org/lunar/guides/supported-models';
+const DOCS_URL = 'https://docs.puredocs.org/opentracy/guides/supported-models';
 
 export function SpecsModal({ deployment, modelId, isOpen, onClose }: SpecModalProps) {
   const apiModelId = modelId ?? deployment.selectedModel;

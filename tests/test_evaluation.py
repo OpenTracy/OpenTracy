@@ -4,15 +4,15 @@ import numpy as np
 import pytest
 from pathlib import Path
 
-from lunar_router.core.clustering import KMeansClusterAssigner, ClusterResult
-from lunar_router.core.embeddings import PromptEmbedder, MockEmbeddingProvider
-from lunar_router.models.llm_profile import LLMProfile
-from lunar_router.models.llm_registry import LLMRegistry
-from lunar_router.data.dataset import PromptDataset, PromptSample
-from lunar_router.router.uniroute import UniRouteRouter
+from opentracy.core.clustering import KMeansClusterAssigner, ClusterResult
+from opentracy.core.embeddings import PromptEmbedder, MockEmbeddingProvider
+from opentracy.models.llm_profile import LLMProfile
+from opentracy.models.llm_registry import LLMRegistry
+from opentracy.data.dataset import PromptDataset, PromptSample
+from opentracy.router.uniroute import UniRouteRouter
 
-from lunar_router.evaluation.response_cache import ResponseCache, CachedResponse
-from lunar_router.evaluation.metrics import (
+from opentracy.evaluation.response_cache import ResponseCache, CachedResponse
+from opentracy.evaluation.metrics import (
     compute_auroc,
     compute_apgr,
     compute_cpt,
@@ -20,13 +20,13 @@ from lunar_router.evaluation.metrics import (
     compute_win_rate,
     RoutingMetrics,
 )
-from lunar_router.evaluation.baselines import (
+from opentracy.evaluation.baselines import (
     RandomBaseline,
     OracleBaseline,
     AlwaysStrongBaseline,
     AlwaysWeakBaseline,
 )
-from lunar_router.evaluation.evaluator import RouterEvaluator, ParetoPoint
+from opentracy.evaluation.evaluator import RouterEvaluator, ParetoPoint
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

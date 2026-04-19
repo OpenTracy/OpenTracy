@@ -1,23 +1,23 @@
-# Lunar Router
+# OpenTracy
 
 **The auto-distillation layer for your LLM calls.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![PyPI](https://img.shields.io/pypi/v/lunar-router.svg)](https://pypi.org/project/lunar-router/)
+[![PyPI](https://img.shields.io/pypi/v/opentracy.svg)](https://pypi.org/project/opentracy/)
 
 Drop-in OpenAI-compatible SDK. Every request becomes a trace; traces become datasets; datasets become distilled custom models; the routing layer swaps those models in under your app via aliases — so your cost curve goes down over time **without code changes**.
 
 ## Install
 
 ```bash
-pip install lunar-router
+pip install opentracy
 ```
 
 ## Quick start
 
 ```python
-import lunar_router as lr
+import opentracy as lr
 
 resp = lr.completion(
     model="openai/gpt-4o-mini",
@@ -44,42 +44,42 @@ resp = router.completion(model="smart", messages=[{"role": "user", "content": "H
 
 ## Drop-in replacement for the OpenAI SDK
 
-Point any existing OpenAI app at the Lunar engine — zero code changes beyond `base_url`:
+Point any existing OpenAI app at the OpenTracy engine — zero code changes beyond `base_url`:
 
 ```python
 from openai import OpenAI
 client = OpenAI(base_url="http://localhost:8080/v1", api_key="any")
-# All 13 providers routed through the Lunar engine; every request is a trace.
+# All 13 providers routed through the OpenTracy engine; every request is a trace.
 ```
 
-## Distillation — what makes Lunar different from a plain gateway
+## Distillation — what makes OpenTracy different from a plain gateway
 
 ```python
-from lunar_router import Distiller
+from opentracy import Distiller
 
 d = Distiller()
 # Submit a dataset built from your own traces, pick a teacher + student model,
-# and Lunar trains the distilled model and serves it behind a routing alias
+# and OpenTracy trains the distilled model and serves it behind a routing alias
 # you can point traffic at. Your app code never changes.
 ```
 
 Install the training extras for the distillation pipeline:
 
 ```bash
-pip install lunar-router[distill]
+pip install opentracy[distill]
 ```
 
 ## Self-host the full platform (traces + UI + REST API)
 
 ```bash
-git clone https://github.com/lunar-org-ai/lunar-router.git
-cd lunar-router
+git clone https://github.com/OpenTracy/opentracy.git
+cd opentracy
 make start-full   # Gateway + ClickHouse analytics + Python API + UI
 ```
 
 Engine at `http://localhost:8080`, Python API at `http://localhost:8000`, UI at `http://localhost:3000`.
 
-## What Lunar Router Does
+## What OpenTracy Does
 
 ```
 Requests ──► Gateway (13 providers) ──► Traces (ClickHouse)
@@ -180,7 +180,7 @@ pip install -e ".[train]"                   # training/distillation deps (CUDA)
 ### Completion
 
 ```python
-import lunar_router as lr
+import opentracy as lr
 
 response = lr.completion(
     model="openai/gpt-4o-mini",
@@ -238,7 +238,7 @@ client.chat.completions.create(model="mistral/mistral-small-latest", messages=[.
 
 ### API Keys
 
-Configure via the UI, environment variables, or `~/.lunar/secrets.json`:
+Configure via the UI, environment variables, or `~/.opentracy/secrets.json`:
 
 ```bash
 export OPENAI_API_KEY=sk-...
@@ -304,7 +304,7 @@ make start-full
 
 ```
 go/                              # Go engine (high-performance gateway)
-├── cmd/lunar-engine/            # Entry point
+├── cmd/opentracy-engine/            # Entry point
 ├── internal/
 │   ├── provider/                # 13 providers
 │   ├── server/                  # HTTP handlers + session management
@@ -312,7 +312,7 @@ go/                              # Go engine (high-performance gateway)
 │   ├── router/                  # UniRoute algorithm + LRU cache
 │   └── embeddings/              # ONNX MiniLM embedder
 
-lunar_router/                    # Python layer (analytics, clustering, evals)
+opentracy/                    # Python layer (analytics, clustering, evals)
 ├── api/server.py                # FastAPI — analytics, clustering, evaluations, metrics
 ├── sdk.py                       # completion(), acompletion(), Router class
 ├── clustering/
@@ -428,7 +428,7 @@ print(f"Expected error: {decision.expected_error:.4f}")
 ### Training Custom Routers
 
 ```python
-from lunar_router import full_training_pipeline, TrainingConfig, PromptDataset, create_client
+from opentracy import full_training_pipeline, TrainingConfig, PromptDataset, create_client
 
 train_data = PromptDataset.load("train.json")
 val_data = PromptDataset.load("val.json")
@@ -448,7 +448,7 @@ result = full_training_pipeline(
 ## MCP Integration (Claude Code)
 
 ```bash
-pip install lunar-router[mcp]
+pip install opentracy[mcp]
 ```
 
 Add to `~/.claude/settings.json`:
@@ -456,15 +456,15 @@ Add to `~/.claude/settings.json`:
 ```json
 {
   "mcpServers": {
-    "lunar-router": {
+    "opentracy": {
       "command": "python",
-      "args": ["-m", "lunar_router.mcp"]
+      "args": ["-m", "opentracy.mcp"]
     }
   }
 }
 ```
 
-Tools: `lunar_route`, `lunar_generate`, `lunar_smart_generate`, `lunar_list_models`, `lunar_compare`.
+Tools: `opentracy_route`, `opentracy_generate`, `opentracy_smart_generate`, `opentracy_list_models`, `opentracy_compare`.
 
 ## Development
 
@@ -485,5 +485,5 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Links
 
-- [GitHub Repository](https://github.com/lunar-org-ai/lunar-router)
-- [HuggingFace Weights](https://huggingface.co/diogovieira/lunar-router-weights)
+- [GitHub Repository](https://github.com/OpenTracy/opentracy)
+- [HuggingFace Weights](https://huggingface.co/diogovieira/opentracy-weights)

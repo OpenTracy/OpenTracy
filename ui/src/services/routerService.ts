@@ -38,7 +38,7 @@ export function useModelAPI() {
     const apiKeyEntry = getIntegrationKeyByName('LUNAR_API_KEY');
 
     if (!apiKeyEntry?.keyValue) {
-      throw new Error(`Missing Lunar API key for model ${model}. Please configure it in settings.`);
+      throw new Error(`Missing OpenTracy API key for model ${model}. Please configure it in settings.`);
     }
 
     const response = await fetch(`${ROUTER_BASE_URL}/v1/chat/completions`, {

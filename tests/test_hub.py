@@ -4,8 +4,8 @@ import json
 import pytest
 from pathlib import Path
 
-from lunar_router.hub import LUNAR_DATA_HOME, Hub, Package, PackageIndex
-from lunar_router.hub.manager import _get_hub
+from opentracy.hub import OPENTRACY_DATA_HOME, Hub, Package, PackageIndex
+from opentracy.hub.manager import _get_hub
 
 
 class TestPackage:
@@ -144,4 +144,4 @@ class TestModuleLevelAPI:
         assert hub1 is hub2
 
     def test_lunar_data_home_is_path(self):
-        assert isinstance(LUNAR_DATA_HOME, Path)
+        assert isinstance(OPENTRACY_DATA_HOME, Path)

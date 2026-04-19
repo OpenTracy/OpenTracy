@@ -722,9 +722,9 @@ export default function CommandCenter() {
   }, [isTutorialActive, tutorialStep, navigate, restartTutorial]);
 
   const externalCost = overviewData?.external?.totalCost ?? 0;
-  const lunarCost = overviewData?.lunar?.totalCost ?? 0;
-  const totalCost = externalCost + lunarCost;
-  const lunarShare = totalCost > 0 ? (lunarCost / totalCost) * 100 : 0;
+  const opentracyCost = overviewData?.opentracy?.totalCost ?? 0;
+  const totalCost = externalCost + opentracyCost;
+  const opentracyShare = totalCost > 0 ? (opentracyCost / totalCost) * 100 : 0;
   const savingsEstimate = externalCost * 0.7;
   const creditsValue = useMemo(() => {
     const sourceValue = credits?.credits ?? creditsBalance;
@@ -739,7 +739,7 @@ export default function CommandCenter() {
     !!analytics.trends ||
     topModels.length > 0 ||
     slowestModels.length > 0 ||
-    lunarCost > 0 ||
+    opentracyCost > 0 ||
     externalCost > 0 ||
     !!analytics.distributions;
 
@@ -938,7 +938,7 @@ export default function CommandCenter() {
                         {(topModels.length > 0 || slowestModels.length > 0) && (
                           <TabsTrigger value="models">Models</TabsTrigger>
                         )}
-                        {(lunarCost > 0 || externalCost > 0) && (
+                        {(opentracyCost > 0 || externalCost > 0) && (
                           <TabsTrigger value="costs">Costs</TabsTrigger>
                         )}
                         {analytics.distributions && (
@@ -1053,16 +1053,16 @@ export default function CommandCenter() {
                         </TabsContent>
                       )}
 
-                      {(lunarCost > 0 || externalCost > 0) && (
+                      {(opentracyCost > 0 || externalCost > 0) && (
                         <TabsContent value="costs" className="mt-0">
                           <div className="space-y-4">
                             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                               <div className="rounded-lg border bg-primary/5 p-3">
                                 <p className="text-[11px] text-muted-foreground">
-                                  Lunar (Optimized)
+                                  OpenTracy (Optimized)
                                 </p>
                                 <p className="mt-1 text-base font-semibold tabular-nums">
-                                  {fmtCurrency(lunarCost)}
+                                  {fmtCurrency(opentracyCost)}
                                 </p>
                               </div>
                               <div className="rounded-lg border bg-card p-3">
@@ -1085,17 +1085,17 @@ export default function CommandCenter() {
                               <div className="flex items-center justify-between gap-4 text-xs text-muted-foreground">
                                 <span className="flex items-center gap-1.5">
                                   <span className="inline-block size-2 rounded-full bg-primary" />
-                                  Lunar share: {lunarShare.toFixed(1)}%
+                                  OpenTracy share: {opentracyShare.toFixed(1)}%
                                 </span>
                                 <span className="flex items-center gap-1.5">
                                   <span className="inline-block size-2 rounded-full bg-muted-foreground/40" />
-                                  External share: {(100 - lunarShare).toFixed(1)}%
+                                  External share: {(100 - opentracyShare).toFixed(1)}%
                                 </span>
                               </div>
                               <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-secondary">
                                 <div
                                   className="h-full rounded-full bg-primary transition-all duration-500"
-                                  style={{ width: `${Math.max(0, Math.min(100, lunarShare))}%` }}
+                                  style={{ width: `${Math.max(0, Math.min(100, opentracyShare))}%` }}
                                 />
                               </div>
                             </div>

@@ -58,7 +58,7 @@ function deriveProvider(model: string): string {
   if (lower.includes('mixtral') || lower.includes('mistral')) return 'Mistral';
   if (lower.includes('deepseek')) return 'DeepSeek';
   if (lower.includes('qwen')) return 'Qwen';
-  if (lower.startsWith('lunar/')) return 'Lunar';
+  if (lower.startsWith('opentracy/')) return 'OpenTracy';
   return 'Other';
 }
 

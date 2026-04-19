@@ -4,22 +4,22 @@ import numpy as np
 import pytest
 import random
 
-from lunar_router.core.clustering import KMeansClusterAssigner
-from lunar_router.core.embeddings import PromptEmbedder, MockEmbeddingProvider
-from lunar_router.models.llm_profile import LLMProfile
-from lunar_router.models.llm_registry import LLMRegistry
-from lunar_router.models.llm_client import MockLLMClient
-from lunar_router.data.dataset import PromptDataset, PromptSample
-from lunar_router.evaluation.response_cache import ResponseCache
+from opentracy.core.clustering import KMeansClusterAssigner
+from opentracy.core.embeddings import PromptEmbedder, MockEmbeddingProvider
+from opentracy.models.llm_profile import LLMProfile
+from opentracy.models.llm_registry import LLMRegistry
+from opentracy.models.llm_client import MockLLMClient
+from opentracy.data.dataset import PromptDataset, PromptSample
+from opentracy.evaluation.response_cache import ResponseCache
 
-from lunar_router.augmentation.judge import (
+from opentracy.augmentation.judge import (
     LLMJudge, JudgeVerdict, PointwiseScore, _parse_pairwise, _parse_pointwise,
 )
-from lunar_router.augmentation.preference_data import PreferencePair, PreferenceDataset
-from lunar_router.augmentation.golden_augmenter import GoldenAugmenter, AugmentedSample
-from lunar_router.feedback.trace_to_training import TraceToTraining, TraceRecord
-from lunar_router.feedback.drift_detector import DriftDetector, DriftReport
-from lunar_router.training.auto_trainer import AutoTrainer, AutoTrainConfig, AutoTrainResult
+from opentracy.augmentation.preference_data import PreferencePair, PreferenceDataset
+from opentracy.augmentation.golden_augmenter import GoldenAugmenter, AugmentedSample
+from opentracy.feedback.trace_to_training import TraceToTraining, TraceRecord
+from opentracy.feedback.drift_detector import DriftDetector, DriftReport
+from opentracy.training.auto_trainer import AutoTrainer, AutoTrainConfig, AutoTrainResult
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

@@ -1,9 +1,9 @@
 # ============================================================================
-# Lunar Router — UI (multi-stage build)
+# OpenTracy — UI (multi-stage build)
 # ============================================================================
 # Usage:
-#   docker build -t lunar-ui ./ui
-#   docker run -p 3000:80 lunar-ui
+#   docker build -t opentracy-ui ./ui
+#   docker run -p 3000:80 opentracy-ui
 # ============================================================================
 
 # --- Stage 1: Build ---

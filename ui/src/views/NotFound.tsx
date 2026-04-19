@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import LunarLogo from '@/assets/lunar-logo.png';
+import OpentracyLogo from '@/assets/opentracy-logo.png';
 
 export default function NotFound() {
   const navigate = useNavigate();
@@ -9,7 +9,7 @@ export default function NotFound() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4">
       <div className="mb-12">
-        <img src={LunarLogo} alt="Lunar" className="h-10 opacity-70 invert dark:invert-0" />
+        <img src={OpentracyLogo} alt="OpenTracy" className="h-10 opacity-70 invert dark:invert-0" />
       </div>
 
       <Card className="w-full max-w-md border-border bg-surface shadow-lg">
