@@ -59,11 +59,11 @@ jobs:
             platform_tag: macosx_11_0_arm64
             binary_name: lunar-engine-darwin-arm64
           - os: macos-amd64
-            runner: macos-13               # Intel — native
+            runner: macos-15-intel         # Intel — native (macos-13 was deprecated)
             goos: darwin
             goarch: amd64
             cc: ''
-            platform_tag: macosx_10_15_x86_64
+            platform_tag: macosx_11_0_x86_64
             binary_name: lunar-engine-darwin-amd64
           - os: windows-amd64
             runner: windows-latest
