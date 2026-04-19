@@ -15,9 +15,9 @@ from typing import Any, Optional
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from opentracy._env import env
 from . import repository as repo
 from .schemas import (
-from opentracy._env import env
     AddSamplesRequest,
     AnalyzeTracesRequest,
     AutoCollectConfigIn,

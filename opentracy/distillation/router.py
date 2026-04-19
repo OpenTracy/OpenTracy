@@ -22,9 +22,9 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
+from opentracy._env import env
 from . import repository as repo
 from .schemas import (
-from opentracy._env import env
     STUDENT_MODEL_MAP,
     MODEL_PARAM_SIZES,
     TEACHER_MODEL_MAP,
