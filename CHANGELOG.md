@@ -44,8 +44,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **ClickHouse data**: existing deployments have live data in a `lunar_router`
   database. The included `clickhouse/init.sql` now creates *both* `opentracy`
-  and `lunar_router` on first start so old data is not lost. Rename tables
-  explicitly when ready: `RENAME TABLE lunar_router.<tbl> TO opentracy.<tbl>`.
+  and `lunar_router` on first start so old data is not lost. For a fresh
+  container against an existing volume, run this migration exactly once — it
+  renames the database and rewires the two materialized views (their DDL
+  hardcodes the source/target database name, which `RENAME DATABASE` does not
+  rewrite, so the MVs must be dropped and recreated):
+
+  ```sql
+  RENAME DATABASE lunar_router TO opentracy;
+
+  DROP VIEW IF EXISTS opentracy.mv_cluster_daily;
+  DROP VIEW IF EXISTS opentracy.mv_model_hourly;
+
+  CREATE MATERIALIZED VIEW opentracy.mv_cluster_daily
+  TO opentracy.cluster_daily_stats AS
+  SELECT toDate(timestamp) AS day, cluster_id,
+         countState(is_error) AS request_count,
+         sumState(is_error) AS error_count,
+         quantilesState(0.5, 0.95)(latency_ms) AS latency_quantiles,
+         sumState(total_tokens) AS total_tokens,
+         sumState(total_cost_usd) AS total_cost_usd,
+         uniqState(selected_model) AS unique_models
+  FROM opentracy.llm_traces GROUP BY day, cluster_id;
+
+  CREATE MATERIALIZED VIEW opentracy.mv_model_hourly
+  TO opentracy.model_hourly_stats AS
+  SELECT toStartOfHour(timestamp) AS hour, selected_model,
+         countState(is_error) AS request_count,
+         sumState(is_error) AS error_count,
+         quantilesState(0.5, 0.95, 0.99)(latency_ms) AS latency_quantiles,
+         quantilesState(0.5, 0.95)(ttft_ms) AS ttft_quantiles,
+         sumState(tokens_in) AS total_tokens_in,
+         sumState(tokens_out) AS total_tokens_out,
+         sumState(total_cost_usd) AS total_cost_usd,
+         uniqState(provider) AS unique_providers,
+         uniqState(cluster_id) AS unique_clusters
+  FROM opentracy.llm_traces GROUP BY hour, selected_model;
+  ```
+
+  After running, restart `opentracy-engine` and `opentracy-api` so they pick
+  up the renamed database.
 - **PyPI name**: first release under the new name must reserve `opentracy` on
   PyPI. Publishing a final `lunar-router` version that re-exports from
   `opentracy` is recommended to ease the transition for downstream pinning.
