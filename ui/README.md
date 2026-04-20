@@ -1,140 +1,56 @@
-# PureAI Console
+# OpenTracy UI
 
-Plataforma de gerenciamento de modelos de IA com deploy em GPU, playground multi-provider, fine tuning e analytics.
+The React dashboard for a self-hosted OpenTracy stack — traces, distillation jobs, deployments, routing intelligence.
 
-## Features
+## Run it
 
-- **Deployments**: Deploy de modelos LLM em instancias GPU (AWS SageMaker)
-- **Metricas em Tempo Real**: CPU, GPU, memoria, latencia, invocacoes
-- **Playground**: Teste de modelos de 15+ provedores (OpenAI, Anthropic, etc)
-- **Fine Tuning**: Ajuste fino de modelos
-- **Analytics**: Dashboard com custos, performance e uso
-- **Integracoes**: Configuracao de API keys de provedores
-
-## Stack
-
-- **Frontend**: React 19, TypeScript, Vite
-- **UI**: Tailwind CSS 4, Lucide Icons, Recharts
-- **Auth**: AWS Amplify 6, Amazon Cognito
-- **Backend**: AWS API Gateway, Lambda, SageMaker
-
-## Quick Start
+The UI ships with the Docker Compose stack in the repo root. From `../`:
 
 ```bash
-# Instalar dependencias
+docker compose up opentracy-ui
+```
+
+Nginx serves the built bundle on `http://localhost:3000` and proxies `/api`
+to `opentracy-api:8000` and `/engine` to `opentracy-engine:8080` over the
+compose network — no external services required.
+
+## Develop locally
+
+```bash
+cd ui
 npm install
-
-# Copiar variaveis de ambiente
-cp .env.example .env
-
-# Rodar em desenvolvimento
-npm run dev
-
-# Build para producao
-npm run build
+npm run dev          # Vite dev server on http://localhost:5173
 ```
 
-## Configuracao de Ambiente
+The dev server does not proxy — point the UI at a running API/engine via env vars:
 
-### Como funciona
-
-As APIs sao determinadas pela variavel `VITE_ENVIRONMENT`, que e injetada automaticamente pelo Amplify via Terraform:
-
-| Amplify App | `VITE_ENVIRONMENT` | API Gateway | Router |
-|---|---|---|---|
-| `pureai-autodestill-prod-console` | `prod` | Prod API Gateway | `api.lunar-sys.com` |
-| `pureai-autodestill-dev-console` | `dev` | Dev API Gateway | `dev-api.lunar-sys.com` |
-
-A branch `main` no **Amplify app de prod** e a unica que usa APIs de producao. Todas as outras combinacoes (dev app, feature branches, local dev) usam APIs de desenvolvimento.
-
-### Variaveis de Ambiente
-
-| Variavel | Descricao | Onde e definida |
-|---|---|---|
-| `VITE_ENVIRONMENT` | `dev` ou `prod` - determina URLs default | Terraform (app level) |
-| `VITE_API_BASE_URL` | URL do API Gateway (JWT auth) | Terraform (app level) |
-| `VITE_ROUTER_URL` | URL do Router (API Key auth) | Terraform (app level) |
-| `VITE_STATS_URL` | URL do Stats API (default: ROUTER_URL) | Terraform (app level) |
-| `VITE_COGNITO_USER_POOL_ID` | Cognito User Pool ID | Terraform (app level) |
-| `VITE_COGNITO_CLIENT_ID` | Cognito App Client ID | Terraform (app level) |
-| `VITE_COGNITO_REGION` | AWS Region | Terraform (app level) |
-| `VITE_ROUTER_KEY` | Router key para delecao de APIs | Manual (Amplify console) |
-| `VITE_PUBLIC_POSTHOG_KEY` | PostHog analytics key | Manual (Amplify console) |
-| `VITE_PUBLIC_POSTHOG_HOST` | PostHog host URL | Manual (Amplify console) |
-
-### Prioridade de resolucao
-
-```
-1. Variavel de ambiente do Amplify (VITE_API_BASE_URL, VITE_ROUTER_URL)
-2. Default baseado em VITE_ENVIRONMENT (dev → dev URLs, prod → prod URLs)
-3. Local dev (npm run dev) → sempre usa dev URLs
+```bash
+VITE_API_BASE_URL=http://localhost:8000 \
+VITE_ROUTER_URL=http://localhost:8080 \
+  npm run dev
 ```
 
-### Desenvolvimento Local
+## Scripts
 
-Copie `.env.example` para `.env`. Para dev local, nao precisa mudar nada — os defaults apontam para dev.
+| Command | What |
+| --- | --- |
+| `npm run dev` | Vite dev server with HMR |
+| `npm run build` | `tsc -b` + `vite build` production bundle |
+| `npm run preview` | Serve the built `dist/` locally |
+| `npm run lint` | ESLint |
+| `npm run type-check` | `tsc --noEmit` |
 
-```env
-# .env (local dev - nao committar)
-VITE_ENVIRONMENT=dev
-VITE_API_BASE_URL=https://dev-gateway.lunar-sys.com
-VITE_ROUTER_URL=https://dev-api.lunar-sys.com
-```
+## Notes on auth
 
-### Deploy (Amplify)
+The UI used to ship with AWS Amplify (Cognito) for cloud auth. The self-hosted
+build replaces that with a local shim at `src/lib/amplify-shim/` — the user is
+always "signed in" as `local@opentracy`, and the data hooks return empty
+payloads for anything that was backed by AppSync (orgs, invites, credits,
+API keys). Views that depend on cloud data render their empty state.
 
-O deploy e automatico via Amplify conectado ao GitHub:
-
-| Branch | Amplify App | Ambiente | URL |
-|---|---|---|---|
-| `main` | prod-console | Producao | `app.lunar-sys.com` |
-| `dev` | dev-console | Desenvolvimento | `dev.lunar-sys.com` |
-| `feature/*` | dev-console | Desenvolvimento | PR preview |
-
-As variaveis de ambiente sao gerenciadas pelo Terraform em:
-- **Dev**: `terraform/environments/dev/main.tf` → `module "amplify_console"`
-- **Prod**: `terraform/environments/prod/main.tf` → `module "amplify_console"`
-
-**Nunca hardcode URLs de producao no codigo.** Elas sao injetadas pelo Terraform no build.
-
-## Documentacao
-
-Ver `/docs` para documentacao completa:
-
-- [Visao Geral](./docs/01-visao-geral.md)
-- [Autenticacao](./docs/02-autenticacao.md)
-- [Deployments](./docs/03-deployments.md)
-- [Metricas](./docs/04-deployment-metrics.md)
-- [Services](./docs/09-services.md)
-- [Types](./docs/10-types.md)
-
-## Modelos Suportados
-
-| Modelo | ID |
-| ------ | -- |
-| Llama 4 Scout 17B | `Llama-4-Scout-17B-16E-Instruct` |
-| DeepSeek R1 8B | `DeepSeek-R1-Distill-Llama-8B` |
-| LLaMA 3.2 1B | `Llama-3.2-1B` |
-| Qwen3 30B | `Qwen3-30B-A3B-Instruct-2507` |
-| Qwen3 4B | `Qwen3-4B-Instruct-2507` |
-| Gemma 3 4B | `gemma-3-4b-it` |
-
-## Estrutura
-
-```plaintext
-src/
-├── components/      # Componentes React
-│   ├── Dashboard/   # Dashboard e analytics
-│   ├── Deployment/  # Deploy de modelos
-│   └── UI/          # Componentes base
-├── config/          # Configuracao de API e ambiente
-├── contexts/        # React Contexts
-├── hooks/           # Custom hooks
-├── services/        # Servicos de API
-├── types/           # TypeScript types
-└── views/           # Paginas principais
-```
+When wiring a real self-hosted auth backend, point those hooks at your API
+instead of the shim — the shim is intentionally small so it's easy to replace.
 
 ## License
 
-Proprietary - PureAI Tools
+MIT. See [LICENSE](../LICENSE) in the repo root.

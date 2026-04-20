@@ -1,25 +1,10 @@
 /**
- * AppSync Realtime Configuration
+ * Realtime subscription endpoints (empty in local self-hosted mode).
  *
- * Separate from the Amplify Data AppSync — this is the custom realtime API
- * for job status, training metrics, and curation events.
+ * Previously pointed at hosted AppSync URLs for curation/job-status events.
+ * In local mode there is no cloud subscription backend; useCurationSubscription
+ * bails out when these are empty strings.
  */
 
-const environment = import.meta.env.VITE_ENVIRONMENT || 'dev';
-const isProd = environment === 'prod' && !import.meta.env.DEV;
-
-const REALTIME_URLS = {
-  dev: {
-    http: 'https://jw7yje32d5g3rozu3me36acjba.appsync-api.us-east-1.amazonaws.com/graphql',
-    ws: 'wss://jw7yje32d5g3rozu3me36acjba.appsync-realtime-api.us-east-1.amazonaws.com/graphql',
-  },
-  prod: {
-    http: 'https://xpvrgacoq5grpj3jcqafnq4qzq.appsync-api.us-east-1.amazonaws.com/graphql',
-    ws: 'wss://xpvrgacoq5grpj3jcqafnq4qzq.appsync-realtime-api.us-east-1.amazonaws.com/graphql',
-  },
-} as const;
-
-const urls = isProd ? REALTIME_URLS.prod : REALTIME_URLS.dev;
-
-export const APPSYNC_REALTIME_HTTP_URL = urls.http;
-export const APPSYNC_REALTIME_WS_URL = urls.ws;
+export const APPSYNC_REALTIME_HTTP_URL = '';
+export const APPSYNC_REALTIME_WS_URL = '';

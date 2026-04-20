@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "author": "PureAI",
+  "author": "OpenTracy",
   "repository": {
     "type": "git",
-    "url": "https://github.com/PureAI-Tools/pureai-interface"
+    "url": "https://github.com/OpenTracy/opentracy"
   },
   "keywords": [
     "ai",
@@ -22,7 +22,6 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:amplify": "vite build",
     "preview": "vite preview",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix && prettier --write .",
@@ -32,7 +31,6 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@aws-amplify/ui-react": "^6.11.0",
     "@base-ui/react": "^1.2.0",
     "@fontsource/geist-mono": "^5.2.7",
     "@fontsource/geist-sans": "^5.2.5",
@@ -40,8 +38,6 @@
     "@monaco-editor/react": "^4.7.0",
     "@stripe/react-stripe-js": "^4.0.2",
     "@stripe/stripe-js": "^7.9.0",
-    "amazon-cognito-identity-js": "^6.3.15",
-    "aws-amplify": "^6.15.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.18.1",
@@ -63,7 +59,6 @@
     "vaul": "^1.1.2"
   },
   "devDependencies": {
-    "@aws-amplify/backend-cli": "^1.8.2",
     "@eslint/js": "^9.22.0",
     "@tailwindcss/postcss": "^4.1.10",
     "@tailwindcss/vite": "^4.1.4",

@@ -28,7 +28,7 @@ export function buildPythonCode(apiModelId: string): string {
 
 export function buildCurlCode(apiModelId: string): string {
   return [
-    'curl -X POST "https://api.lunar-sys.com/v1/chat/completions" \\',
+    'curl -X POST "http://localhost:8000/v1/chat/completions" \\',
     '  -H "x-api-key: pk_live_your_api_key" \\',
     '  -H "Content-Type: application/json" \\',
     "  -d '{",
@@ -47,7 +47,7 @@ export function buildJsCode(apiModelId: string): string {
     'import OpenAI from "openai";',
     '',
     'const client = new OpenAI({',
-    '  baseURL: "https://api.lunar-sys.com/v1",',
+    '  baseURL: "http://localhost:8000/v1",',
     '  apiKey: "pk_live_your_api_key",',
     '  defaultHeaders: { "x-api-key": "pk_live_your_api_key" },',
     '});',

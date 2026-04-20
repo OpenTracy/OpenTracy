@@ -13,8 +13,13 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "aws-amplify": ["./src/lib/amplify-shim/index.ts"],
+      "aws-amplify/auth": ["./src/lib/amplify-shim/auth.ts"],
+      "aws-amplify/data": ["./src/lib/amplify-shim/data.ts"],
+      "aws-amplify/utils": ["./src/lib/amplify-shim/utils.ts"]
     },
 
     "strict": true,
@@ -23,5 +28,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  "include": ["src", "amplify"]
 }

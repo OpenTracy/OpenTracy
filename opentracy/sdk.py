@@ -199,12 +199,81 @@ def reset_engine_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Local-student dispatch helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_local_alias(model: str):
+    """Return a :class:`Student` if ``model`` is a registered local alias.
+
+    Looks up the file-based alias registry under ``$OPENTRACY_DATA_HOME/
+    aliases.json``. Misses (including "the file doesn't exist yet") return
+    ``None`` silently so callers can fall through to the normal HTTP path.
+    """
+    try:
+        from . import aliases as _aliases
+        from .student import Student
+    except ImportError:
+        return None
+    entry = _aliases.get_alias(model)
+    if entry is None:
+        return None
+    return Student(
+        backend=entry["backend"],
+        model_path=entry["model_path"],
+        base_model=entry.get("base_model"),
+        metadata=entry.get("metadata") or {},
+    )
+
+
+def _dispatch_student(
+    student,
+    messages,
+    *,
+    temperature,
+    max_tokens,
+    top_p,
+    stop,
+    stream: bool,
+    alias: Optional[str],
+) -> ModelResponse:
+    """Run a single non-streaming inference through ``student`` and wrap the
+    result in a :class:`ModelResponse` with the usual OpenTracy extras.
+
+    ``alias`` is the string the user originally asked for (e.g. ``"smart"``);
+    recorded on ``_routing`` so downstream analytics can attribute the call.
+    """
+    if stream:
+        raise NotImplementedError(
+            "Streaming against a local Student is not implemented yet. "
+            "Call with stream=False for now."
+        )
+    raw = student.generate(
+        messages,
+        max_tokens=max_tokens if max_tokens is not None else 512,
+        temperature=temperature if temperature is not None else 0.0,
+        top_p=top_p,
+        stop=stop,
+    )
+    resp = ModelResponse(raw)
+    resp["_provider"] = raw.get("_provider", "opentracy")
+    resp["_cost"] = raw.get("_cost", 0.0)
+    resp["_latency_ms"] = raw.get("_latency_ms", 0.0)
+    resp["_routing"] = {
+        "alias": alias,
+        "selected_model": student.id,
+        "backend": student.backend,
+    }
+    return resp
+
+
+# ---------------------------------------------------------------------------
 # Core: completion()
 # ---------------------------------------------------------------------------
 
 
 def completion(
-    model: str,
+    model: Any,
     messages: list[dict[str, Any]],
     *,
     api_key: Optional[str] = None,
@@ -226,10 +295,12 @@ def completion(
     """Call any LLM with a unified interface.
 
     Args:
-        model: Model identifier. Supports "provider/model" format
-               (e.g., "openai/gpt-4o-mini") or bare model names
-               (e.g., "gpt-4o-mini") with auto-detection.
-               Use "auto" for semantic routing via the Go engine.
+        model: Model identifier. Accepts either:
+               * ``"provider/model"`` (e.g., ``"openai/gpt-4o-mini"``)
+               * Bare model name (``"gpt-4o-mini"``) — provider is auto-detected
+               * ``"auto"`` — semantic routing via the Go engine
+               * A :class:`opentracy.Student` instance — runs local inference
+                 on a trained adapter/GGUF with no provider call
         messages: OpenAI-format messages list.
         api_key: Override API key (default: from env).
         api_base: Override base URL.
@@ -250,6 +321,38 @@ def completion(
     Returns:
         ModelResponse (non-streaming) or Iterator[StreamChunk] (streaming).
     """
+    # Local-student dispatch — a Student object short-circuits all HTTP paths.
+    # Imported here to keep student.py off the base-install hot path.
+    from .student import Student
+    if isinstance(model, Student):
+        return _dispatch_student(
+            model,
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            stop=stop,
+            stream=stream,
+            alias=None,
+        )
+
+    # String path: first resolve the name against the local alias registry.
+    # This is how "alias swap" closes the loop — registered students answer
+    # under names like "smart" without any further wiring by the caller.
+    if isinstance(model, str):
+        resolved = _resolve_local_alias(model)
+        if resolved is not None:
+            return _dispatch_student(
+                resolved,
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=top_p,
+                stop=stop,
+                stream=stream,
+                alias=model,
+            )
+
     models_to_try = [model] + (fallbacks or [])
 
     last_error: Optional[Exception] = None

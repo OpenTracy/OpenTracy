@@ -1361,7 +1361,7 @@ export default function CommandCenter() {
                   icon={BookOpen}
                   title="Documentation"
                   description="Guides & API reference"
-                  href="https://docs.lunar-sys.com"
+                  href="https://docs.opentracy.ai"
                 />
                 <ResourceLink
                   icon={MessageCircle}
