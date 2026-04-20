@@ -29,6 +29,34 @@ print(f"cost: ${resp._cost:.6f}  latency: {resp._latency_ms:.0f}ms")
 
 Works with 13 providers out of the box: OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, Together, Fireworks, Cerebras, Sambanova, Perplexity, Cohere, Bedrock.
 
+### Connecting to the OpenTracy platform (traces, dashboards, distillation)
+
+By default `lr.completion()` goes **direct to the provider**, so calls do *not*
+appear in the OpenTracy dashboard. To route every call through a running
+engine — the only way traces, metrics, and the distillation loop get data —
+set `OPENTRACY_ENGINE_URL` **before** importing the SDK:
+
+```python
+import os
+os.environ["OPENTRACY_ENGINE_URL"] = "http://<your-opentracy-host>:8080"  # engine port
+import opentracy as lr
+
+resp = lr.completion(
+    model="openai/gpt-4o-mini",
+    messages=[{"role": "user", "content": "Hello"}],
+)
+# trace now visible in the dashboard on the UI host at :3000
+```
+
+Alternatives:
+- Per-call: pass `force_engine=True, api_base="http://<host>:8080/v1"` to
+  `lr.completion(...)`.
+- Drop-in OpenAI SDK (no code change beyond `base_url` — see below).
+
+API keys for your providers should be saved once via the UI
+(**Settings → API Keys**) or the API (`POST /v1/secrets/<provider>`); the
+engine picks them up immediately from `~/.opentracy/secrets.json`.
+
 ## Routing with fallbacks
 
 ```python
