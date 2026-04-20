@@ -16,16 +16,11 @@
   }
 })();
 
-import { Amplify } from 'aws-amplify';
-import { amplifyConfig } from '@/config/amplify';
-
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import './index.css';
 import App from '@/app/App';
-
-Amplify.configure(amplifyConfig);
 
 const rootElement = document.getElementById('root');
 if (!rootElement) throw new Error('Root element not found');

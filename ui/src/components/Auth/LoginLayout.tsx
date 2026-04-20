@@ -38,7 +38,7 @@ export const LoginLayout: FC<LoginLayoutProps> = ({ children }) => {
           <p className="text-xs text-foreground-muted">
             By continuing, you agree to our{' '}
             <a
-              href="https://www.lunar-sys.com/terms"
+              href="https://github.com/OpenTracy/opentracy/blob/main/LICENSE"
               target="_blank"
               rel="noopener noreferrer"
               className="text-foreground-secondary hover:text-foreground underline underline-offset-4 transition-colors"
@@ -47,7 +47,7 @@ export const LoginLayout: FC<LoginLayoutProps> = ({ children }) => {
             </a>{' '}
             and{' '}
             <a
-              href="https://www.lunar-sys.com/privacy"
+              href="https://github.com/OpenTracy/opentracy/blob/main/LICENSE"
               target="_blank"
               rel="noopener noreferrer"
               className="text-foreground-secondary hover:text-foreground underline underline-offset-4 transition-colors"

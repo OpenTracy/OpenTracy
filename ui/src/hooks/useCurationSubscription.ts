@@ -96,7 +96,13 @@ export function useCurationSubscription(
   }, []);
 
   useEffect(() => {
-    if (!enabled || !tenantId || !jobId) {
+    if (
+      !enabled ||
+      !tenantId ||
+      !jobId ||
+      !APPSYNC_REALTIME_HTTP_URL ||
+      !APPSYNC_REALTIME_WS_URL
+    ) {
       cleanup();
       return;
     }
