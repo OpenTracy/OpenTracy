@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lunar-org-ai/lunar-router/go/internal/provider"
+	"github.com/OpenTracy/opentracy/go/internal/provider"
 )
 
 type ToolCallSession struct {
@@ -297,5 +297,5 @@ func (st *SessionStore) gc() {
 func GenerateSessionID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
-	return fmt.Sprintf("lunar-session-%x", b)
+	return fmt.Sprintf("opentracy-session-%x", b)
 }

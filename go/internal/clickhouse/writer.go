@@ -13,7 +13,7 @@ import (
 	ch "github.com/ClickHouse/clickhouse-go/v2"
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"github.com/lunar-org-ai/lunar-router/go/internal/metrics"
+	"github.com/OpenTracy/opentracy/go/internal/metrics"
 )
 
 // clampInt clamps v to [min, max].

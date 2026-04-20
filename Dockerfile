@@ -1,10 +1,10 @@
 # ============================================================================
-# Lunar Router — Python API server
+# OpenTracy — Python API server
 # ============================================================================
 # Usage:
-#   docker build -t lunar-api .
-#   docker run -p 8000:8000 lunar-api
-#   docker run --gpus all -p 8000:8000 lunar-api   # with GPU for training
+#   docker build -t opentracy-api .
+#   docker run -p 8000:8000 opentracy-api
+#   docker run --gpus all -p 8000:8000 opentracy-api   # with GPU for training
 # ============================================================================
 
 FROM nvidia/cuda:12.6.3-devel-ubuntu22.04
@@ -39,7 +39,9 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
     pip install --no-cache-dir -e ".[server]" 2>/dev/null || \
     pip install --no-cache-dir fastapi uvicorn pydantic clickhouse-connect numpy tqdm httpx openai mcp
 
-# Copy source
+# Copy source (includes the `lunar_router` backwards-compat shim so containers
+# running user code that still imports the old name keep working).
+COPY opentracy/ opentracy/
 COPY lunar_router/ lunar_router/
 COPY clickhouse/ clickhouse/
 COPY pyproject.toml ./
@@ -47,4 +49,4 @@ RUN pip install --no-cache-dir --no-deps -e "."
 
 EXPOSE 8000
 
-CMD ["uvicorn", "lunar_router.api.server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "opentracy.api.server:app", "--host", "0.0.0.0", "--port", "8000"]

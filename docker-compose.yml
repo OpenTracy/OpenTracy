@@ -1,12 +1,12 @@
 # ============================================================================
-# Lunar Router — Full Stack
+# OpenTracy — Full Stack
 # ============================================================================
 #
 # Start everything:   docker compose up -d
 # Update & restart:   docker compose up -d --build
 # View logs:          docker compose logs -f
 # View traces:        docker compose exec clickhouse clickhouse-client \
-#                       --database lunar_router --password lunar \
+#                       --database opentracy --password opentracy \
 #                       -q "SELECT * FROM llm_traces ORDER BY timestamp DESC LIMIT 10"
 # Tear down:          docker compose down -v
 # ============================================================================
@@ -23,8 +23,8 @@ services:
       - "9000:9000"   # Native
     environment:
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: lunar
-      CLICKHOUSE_DB: lunar_router
+      CLICKHOUSE_PASSWORD: opentracy
+      CLICKHOUSE_DB: opentracy
     volumes:
       - clickhouse-data:/var/lib/clickhouse
       - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -33,7 +33,7 @@ services:
         soft: 262144
         hard: 262144
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--password", "lunar", "-q", "SELECT 1"]
+      test: ["CMD", "clickhouse-client", "--password", "opentracy", "-q", "SELECT 1"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -41,7 +41,7 @@ services:
   # --------------------------------------------------------------------------
   # Go Engine — routing + provider proxy
   # --------------------------------------------------------------------------
-  lunar-engine:
+  opentracy-engine:
     build:
       context: ./go
       dockerfile: Dockerfile
@@ -49,17 +49,17 @@ services:
     ports:
       - "8080:8080"
     environment:
-      LUNAR_CH_ENABLED: "true"
-      LUNAR_CH_HOST: clickhouse
-      LUNAR_CH_PORT: "9000"
-      LUNAR_CH_DATABASE: lunar_router
-      LUNAR_CH_USERNAME: default
-      LUNAR_CH_PASSWORD: lunar
+      OPENTRACY_CH_ENABLED: "true"
+      OPENTRACY_CH_HOST: clickhouse
+      OPENTRACY_CH_PORT: "9000"
+      OPENTRACY_CH_DATABASE: opentracy
+      OPENTRACY_CH_USERNAME: default
+      OPENTRACY_CH_PASSWORD: opentracy
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - weights-data:/weights
-      - lunar-secrets:/root/.lunar
+      - opentracy-secrets:/root/.opentracy
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -73,7 +73,7 @@ services:
   # --------------------------------------------------------------------------
   # Python API — FastAPI wrapper + analytics endpoints
   # --------------------------------------------------------------------------
-  lunar-api:
+  opentracy-api:
     build:
       context: .
       dockerfile: Dockerfile
@@ -83,20 +83,20 @@ services:
       - "8000:8000"
     environment:
       NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
-      LUNAR_CH_ENABLED: "true"
-      LUNAR_CH_HOST: clickhouse
-      LUNAR_CH_HTTP_PORT: "8123"
-      LUNAR_CH_DATABASE: lunar_router
-      LUNAR_CH_USERNAME: default
-      LUNAR_CH_PASSWORD: lunar
-      LUNAR_ENGINE_URL: http://lunar-engine:8080
+      OPENTRACY_CH_ENABLED: "true"
+      OPENTRACY_CH_HOST: clickhouse
+      OPENTRACY_CH_HTTP_PORT: "8123"
+      OPENTRACY_CH_DATABASE: opentracy
+      OPENTRACY_CH_USERNAME: default
+      OPENTRACY_CH_PASSWORD: opentracy
+      OPENTRACY_ENGINE_URL: http://opentracy-engine:8080
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AUTO_OPERATOR: ${AUTO_OPERATOR:-false}
       AUTO_TRAINER: ${AUTO_TRAINER:-false}
     volumes:
       - weights-data:/app/weights
-      - lunar-secrets:/root/.lunar
+      - opentracy-secrets:/root/.opentracy
       - distillation-data:/app/data
     depends_on:
       clickhouse:
@@ -111,7 +111,7 @@ services:
   # --------------------------------------------------------------------------
   # UI — React dashboard (nginx + static build)
   # --------------------------------------------------------------------------
-  lunar-ui:
+  opentracy-ui:
     build:
       context: ./ui
       dockerfile: Dockerfile
@@ -124,9 +124,9 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      lunar-api:
+      opentracy-api:
         condition: service_healthy
-      lunar-engine:
+      opentracy-engine:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:80"]
@@ -138,5 +138,5 @@ services:
 volumes:
   clickhouse-data:
   weights-data:
-  lunar-secrets:
+  opentracy-secrets:
   distillation-data:

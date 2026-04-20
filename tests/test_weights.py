@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from lunar_router.weights import (
+from opentracy.weights import (
     _resolve_package_id,
     download_weights,
     get_weights_path,
@@ -81,14 +81,14 @@ class TestGetWeightsPath:
 
 
 class TestDownloadWeights:
-    @patch("lunar_router.weights.hub_download")
+    @patch("opentracy.weights.hub_download")
     def test_calls_hub_download(self, mock_download):
         mock_download.return_value = Path("/fake/path")
         result = download_weights("default", verbose=True)
         mock_download.assert_called_once_with("weights-default", force=False, quiet=False)
         assert result == Path("/fake/path")
 
-    @patch("lunar_router.weights.hub_download")
+    @patch("opentracy.weights.hub_download")
     def test_force_redownload(self, mock_download):
         mock_download.return_value = Path("/fake/path")
         download_weights("mmlu-v1", force=True)

@@ -204,7 +204,7 @@ export function MetricRow({ metric, onDelete }: MetricRowProps) {
                       height="250px"
                       defaultLanguage="python"
                       value={metric.python_script}
-                      theme="lunar-dark"
+                      theme="opentracy-dark"
                       beforeMount={handleEditorWillMount}
                       options={{
                         readOnly: true,

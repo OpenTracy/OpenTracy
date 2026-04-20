@@ -2,13 +2,36 @@ package server
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/lunar-org-ai/lunar-router/go/internal/provider"
+	"github.com/OpenTracy/opentracy/go/internal/provider"
 )
+
+// TestGenerateSessionID_RebrandedPrefix guards the rebrand: session IDs are
+// handed to clients via `X-OpenTracy-Session-Id` and stored in ClickHouse,
+// so flipping the prefix back to "lunar-session-" would silently diverge
+// live traffic from what's persisted. A single string change is easy to
+// revert by accident — this asserts the invariant.
+func TestGenerateSessionID_RebrandedPrefix(t *testing.T) {
+	seen := make(map[string]bool)
+	for i := 0; i < 8; i++ {
+		id := GenerateSessionID()
+		if !strings.HasPrefix(id, "opentracy-session-") {
+			t.Fatalf("GenerateSessionID() = %q, want prefix %q", id, "opentracy-session-")
+		}
+		if strings.HasPrefix(id, "lunar-session-") {
+			t.Fatalf("GenerateSessionID() returned legacy prefix: %q", id)
+		}
+		if seen[id] {
+			t.Fatalf("GenerateSessionID() returned duplicate %q — randomness broken", id)
+		}
+		seen[id] = true
+	}
+}
 
 func TestToolCallSessionTryFinalizeConcurrent(t *testing.T) {
 	session := &ToolCallSession{}
@@ -118,7 +141,10 @@ func TestSessionStoreConcurrentSetGetDelete(t *testing.T) {
 				s := &ToolCallSession{CreatedAt: time.Now(), LastTouchAt: time.Now()}
 				store.Set(id, s)
 				if got := store.Get(id); got == nil {
-					t.Fatalf("store.Get(%q) = nil, want session", id)
+					// t.Fatalf is illegal from a non-test goroutine; use t.Errorf
+					// + return to fail the test without goroutine-unsafe FailNow.
+					t.Errorf("store.Get(%q) = nil, want session", id)
+					return
 				}
 				store.Delete(id)
 			}

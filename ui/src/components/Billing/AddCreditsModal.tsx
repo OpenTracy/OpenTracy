@@ -63,7 +63,7 @@ export function AddCreditsModal({
         <DialogHeader>
           <DialogTitle>Add Credits</DialogTitle>
           <DialogDescription>
-            Add credits to your account to continue using Lunar services
+            Add credits to your account to continue using OpenTracy services
           </DialogDescription>
         </DialogHeader>
 

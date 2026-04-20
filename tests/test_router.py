@@ -3,11 +3,11 @@
 import numpy as np
 import pytest
 
-from lunar_router.router.uniroute import UniRouteRouter, RoutingDecision, RoutingStats
-from lunar_router.core.clustering import KMeansClusterAssigner
-from lunar_router.core.embeddings import PromptEmbedder
-from lunar_router.models.llm_profile import LLMProfile
-from lunar_router.models.llm_registry import LLMRegistry
+from opentracy.router.uniroute import UniRouteRouter, RoutingDecision, RoutingStats
+from opentracy.core.clustering import KMeansClusterAssigner
+from opentracy.core.embeddings import PromptEmbedder
+from opentracy.models.llm_profile import LLMProfile
+from opentracy.models.llm_registry import LLMRegistry
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

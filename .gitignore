@@ -105,11 +105,11 @@ Thumbs.db
 .env.*.local
 
 # Secrets (API keys stored at runtime)
-.lunar/
+.opentracy/
 secrets.json
 
 # Harness memory (runtime-generated)
-lunar_router/harness/memory/*.md
+opentracy/harness/memory/*.md
 
 # Go build artifacts
 go/bin/
@@ -134,8 +134,8 @@ unsloth_compiled_cache/
 
 # Per-platform Go binary + onnxruntime lib + ONNX MiniLM model — CI downloads
 # these fresh during each release job and sets up package_data; local-only.
-lunar_router/_bin/
-lunar_router/_onnx/
+opentracy/_bin/
+opentracy/_onnx/
 dist_multi/
 
 # Claude Code local state (memory, tasks, session notes)

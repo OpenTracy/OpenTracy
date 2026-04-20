@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/lunar-org-ai/lunar-router/go/internal/clustering"
+	"github.com/OpenTracy/opentracy/go/internal/clustering"
 )
 
 // LoadedWeights contains all components loaded from a weights directory.

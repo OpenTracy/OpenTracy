@@ -1,6 +1,6 @@
 {
-  "name": "lunar-router-ui",
-  "description": "Lunar Router - Trace Explorer & Observability Dashboard",
+  "name": "opentracy-ui",
+  "description": "OpenTracy - Trace Explorer & Observability Dashboard",
   "version": "0.1.0",
   "private": true,
   "type": "module",

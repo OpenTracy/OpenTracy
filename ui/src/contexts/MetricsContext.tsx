@@ -56,13 +56,13 @@ interface MetricsContextType {
   findTraceById: (traceId: string) => TraceItem | null;
 }
 
-function isLunarProvider(provider: string): boolean {
-  return provider?.toLowerCase() === 'lunar';
+function isOpentracyProvider(provider: string): boolean {
+  return provider?.toLowerCase() === 'opentracy';
 }
 
 function formatModelName(modelId: string, backend: string): string {
-  if (isLunarProvider(backend)) {
-    return `lunar/${modelId}`;
+  if (isOpentracyProvider(backend)) {
+    return `opentracy/${modelId}`;
   }
   if (modelId.includes('/')) {
     return modelId.split('/')[1];
@@ -131,7 +131,7 @@ interface ModelStats {
   totalCost: number;
   totalLatency: number;
   latencies: number[];
-  isLunar: boolean;
+  isOpentracy: boolean;
 }
 
 function aggregateByModel(traces: TraceItem[]): Map<string, ModelStats> {
@@ -154,7 +154,7 @@ function aggregateByModel(traces: TraceItem[]): Map<string, ModelStats> {
         totalCost: trace.cost_usd,
         totalLatency: trace.latency_s,
         latencies: [trace.latency_s],
-        isLunar: isLunarProvider(trace.backend),
+        isOpentracy: isOpentracyProvider(trace.backend),
       });
     }
   }
@@ -168,7 +168,7 @@ interface ProviderStats {
   totalCost: number;
   totalLatency: number;
   latencies: number[];
-  isLunar: boolean;
+  isOpentracy: boolean;
 }
 
 function aggregateByProvider(traces: TraceItem[]): Map<string, ProviderStats> {
@@ -190,7 +190,7 @@ function aggregateByProvider(traces: TraceItem[]): Map<string, ProviderStats> {
         totalCost: trace.cost_usd,
         totalLatency: trace.latency_s,
         latencies: [trace.latency_s],
-        isLunar: isLunarProvider(provider),
+        isOpentracy: isOpentracyProvider(provider),
       });
     }
   }
@@ -202,14 +202,14 @@ function transformToModelUsage(modelStats: Map<string, ModelStats>): UsageByMode
   return Array.from(modelStats.values())
     .map((stats) => {
       const displayName = formatModelName(stats.modelId, stats.backend);
-      const icon = stats.isLunar ? MODEL_ICONS.lunarIcon : getProviderIconByBackend(stats.backend);
+      const icon = stats.isOpentracy ? MODEL_ICONS.opentracyIcon : getProviderIconByBackend(stats.backend);
 
       return {
         model: displayName,
         name: displayName,
         requests: stats.requests,
         icon,
-        isLunar: stats.isLunar,
+        isOpentracy: stats.isOpentracy,
         cost: stats.totalCost,
         latency: calculateP95(stats.latencies) * 1000,
       };
@@ -219,7 +219,7 @@ function transformToModelUsage(modelStats: Map<string, ModelStats>): UsageByMode
 
 function transformToProviderCost(providerStats: Map<string, ProviderStats>): CostByProvider[] {
   return Array.from(providerStats.values())
-    .filter((stats) => !stats.isLunar)
+    .filter((stats) => !stats.isOpentracy)
     .map((stats) => {
       const displayName = formatProviderName(stats.provider);
       const icon = getProviderIconByBackend(stats.provider);
@@ -228,7 +228,7 @@ function transformToProviderCost(providerStats: Map<string, ProviderStats>): Cos
         provider: displayName,
         cost: stats.totalCost,
         icon,
-        isLunar: stats.isLunar,
+        isOpentracy: stats.isOpentracy,
       };
     })
     .sort((a, b) => b.cost - a.cost);
@@ -242,14 +242,14 @@ function transformToCostByTask(traces: TraceItem[]): CostByTask[] {
     .filter((stats) => stats.requests > 0 && stats.totalCost > 0)
     .map((stats) => {
       const displayName = formatModelName(stats.modelId, stats.backend);
-      const icon = stats.isLunar ? MODEL_ICONS.lunarIcon : getProviderIconByBackend(stats.backend);
+      const icon = stats.isOpentracy ? MODEL_ICONS.opentracyIcon : getProviderIconByBackend(stats.backend);
 
       return {
         task: displayName,
         name: displayName,
         cost: stats.totalCost,
         icon,
-        isLunar: stats.isLunar,
+        isOpentracy: stats.isOpentracy,
       };
     })
     .sort((a, b) => b.cost - a.cost);
@@ -259,7 +259,7 @@ function transformToLatencyData(modelStats: Map<string, ModelStats>): LatencyDat
   return Array.from(modelStats.values())
     .map((stats) => {
       const displayName = formatModelName(stats.modelId, stats.backend);
-      const icon = stats.isLunar ? MODEL_ICONS.lunarIcon : getProviderIconByBackend(stats.backend);
+      const icon = stats.isOpentracy ? MODEL_ICONS.opentracyIcon : getProviderIconByBackend(stats.backend);
       const p95Latency = calculateP95(stats.latencies);
 
       return {
@@ -267,7 +267,7 @@ function transformToLatencyData(modelStats: Map<string, ModelStats>): LatencyDat
         name: displayName,
         value: p95Latency * 1000,
         icon,
-        isLunar: stats.isLunar,
+        isOpentracy: stats.isOpentracy,
       };
     })
     .sort((a, b) => b.value - a.value)
@@ -276,7 +276,7 @@ function transformToLatencyData(modelStats: Map<string, ModelStats>): LatencyDat
 
 function transformToExpensiveRequests(traces: TraceItem[]): ExpensiveRequest[] {
   return traces
-    .filter((t) => t.cost_usd > 0 && !isLunarProvider(t.backend))
+    .filter((t) => t.cost_usd > 0 && !isOpentracyProvider(t.backend))
     .sort((a, b) => b.cost_usd - a.cost_usd)
     .slice(0, 10)
     .map((trace, index) => {
@@ -295,7 +295,7 @@ function transformToExpensiveRequests(traces: TraceItem[]): ExpensiveRequest[] {
           hour: '2-digit',
           minute: '2-digit',
         }),
-        isLunar: false,
+        isOpentracy: false,
       };
     });
 }
@@ -559,13 +559,13 @@ export function MetricsProvider({ children }: { children: ReactNode }) {
     const modelStats = aggregateByModel(filteredTraces);
     const providerStats = aggregateByProvider(filteredTraces);
     const kpis = calculateKPIs(filteredTraces);
-    const externalTraces = filteredTraces.filter((t) => !isLunarProvider(t.backend));
+    const externalTraces = filteredTraces.filter((t) => !isOpentracyProvider(t.backend));
     const externalCost = externalTraces.reduce((sum, t) => sum + t.cost_usd, 0);
 
     const models = transformToModelUsage(modelStats);
     const providers = transformToProviderCost(providerStats);
-    const lunarModels = models.filter((m) => m.isLunar);
-    const externalModels = models.filter((m) => !m.isLunar);
+    const opentracyModels = models.filter((m) => m.isOpentracy);
+    const externalModels = models.filter((m) => !m.isOpentracy);
 
     return {
       kpis: [
@@ -601,11 +601,11 @@ export function MetricsProvider({ children }: { children: ReactNode }) {
       providers,
       models,
       alerts: [],
-      lunar: {
-        totalCost: lunarModels.reduce((sum, m) => sum + (m.cost || 0), 0),
-        totalRequests: lunarModels.reduce((sum, m) => sum + m.requests, 0),
+      opentracy: {
+        totalCost: opentracyModels.reduce((sum, m) => sum + (m.cost || 0), 0),
+        totalRequests: opentracyModels.reduce((sum, m) => sum + m.requests, 0),
         providers: [],
-        models: lunarModels,
+        models: opentracyModels,
       },
       external: {
         totalCost: externalModels.reduce((sum, m) => sum + (m.cost || 0), 0),
@@ -621,14 +621,14 @@ export function MetricsProvider({ children }: { children: ReactNode }) {
 
     const costByTask = transformToCostByTask(filteredTraces);
     const expensiveRequests = transformToExpensiveRequests(filteredTraces);
-    const lunarCosts = costByTask.filter((c) => c.isLunar);
-    const externalCosts = costByTask.filter((c) => !c.isLunar);
+    const opentracyCosts = costByTask.filter((c) => c.isOpentracy);
+    const externalCosts = costByTask.filter((c) => !c.isOpentracy);
 
     return {
       timeSeries: buildTimeSeries(filteredTraces, state.selectedDays),
       costByTask,
       expensiveRequests,
-      lunarCosts,
+      opentracyCosts,
       externalCosts,
     };
   }, [state.isInitialized, filteredTraces, state.selectedDays]);

@@ -35,7 +35,7 @@ export function OverviewSection({ apiModelId }: SectionProps) {
           <ItemContent>
             <ItemTitle>Model identifier</ItemTitle>
             <ItemDescription>
-              <span className="font-mono text-xs">{`lunar/${apiModelId}`}</span>
+              <span className="font-mono text-xs">{`opentracy/${apiModelId}`}</span>
             </ItemDescription>
           </ItemContent>
         </Item>

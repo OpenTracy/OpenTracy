@@ -138,7 +138,7 @@ export const BACKEND_PROVIDER_ICONS: Record<string, string> = {
   sambanova: MODEL_ICONS.sambanovaIcon,
   cerebras: MODEL_ICONS.cerebrasIcon,
   huggingface: MODEL_ICONS.huggingFaceIcon,
-  lunar: MODEL_ICONS.lunarIcon,
+  opentracy: MODEL_ICONS.opentracyIcon,
   bedrock: MODEL_ICONS.bedrockIcon,
   amazon: MODEL_ICONS.bedrockIcon,
   aws: MODEL_ICONS.bedrockIcon,
@@ -159,7 +159,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   sambanova: 'SambaNova',
   cerebras: 'Cerebras',
   huggingface: 'HuggingFace',
-  lunar: 'Lunar',
+  opentracy: 'OpenTracy',
   bedrock: 'bedrock',
   amazon: 'bedrock',
   aws: 'bedrock',
@@ -171,23 +171,40 @@ export function formatProviderName(backend: string): string {
   return PROVIDER_DISPLAY_NAMES[backendLower] || backend;
 }
 
-// Gets provider icon based on backend field from API
-// Falls back to model-based detection if backend not found
+// Gets provider icon for a trace. Prefer deriving from the model id because
+// historical traces are known to have `backend='openai'` hard-coded even when
+// the model is Claude / Mistral / etc. — trusting `backend` first painted
+// every trace with the OpenAI icon. The model name is almost always correct
+// (set by the caller based on what they actually requested), so match that
+// first and only fall back to backend when the model name didn't tell us
+// anything (findEarliestMatch returned the openai default).
 export function getProviderIconByBackend(
   backend: string | undefined | null,
   modelId?: string
 ): string {
-  const backendLower = backend?.toLowerCase() || '';
+  if (modelId) {
+    const modelLower = modelId.toLowerCase();
 
+    // Bedrock is identified by the model id shape, not the provider field.
+    if (isBedrockModel(modelId)) {
+      return MODEL_ICONS.bedrockIcon;
+    }
+
+    const iconKey = findEarliestMatch<keyof typeof MODEL_ICONS>(modelLower, 'iconKey');
+    if (iconKey) {
+      return MODEL_ICONS[iconKey];
+    }
+  }
+
+  // Model id didn't reveal the provider — trust the backend field if known.
+  const backendLower = backend?.toLowerCase() || '';
   if (backendLower && BACKEND_PROVIDER_ICONS[backendLower]) {
     return BACKEND_PROVIDER_ICONS[backendLower];
   }
 
-  if (modelId) {
-    return getModelIcon(modelId);
-  }
-
-  return MODEL_ICONS.openaiIcon;
+  // Last resort: the OpenTracy logo. Picking OpenAI as the generic default is
+  // misleading — it's what caused every trace to look like OpenAI traffic.
+  return MODEL_ICONS.opentracyIcon;
 }
 
 function findEarliestMatch<T>(modelLower: string, keyToReturn: keyof ProviderMap): T | undefined {
@@ -220,8 +237,11 @@ export function getModelIcon(model: string): string {
     return MODEL_ICONS.bedrockIcon;
   }
 
+  // Fall back to the OpenTracy logo when the model id doesn't match any
+  // known provider. Using openaiIcon here made every unrecognized model show
+  // up as OpenAI in trace lists — actively misleading.
   const iconKey = findEarliestMatch<keyof typeof MODEL_ICONS>(modelLower, 'iconKey');
-  return iconKey ? MODEL_ICONS[iconKey] : MODEL_ICONS.openaiIcon;
+  return iconKey ? MODEL_ICONS[iconKey] : MODEL_ICONS.opentracyIcon;
 }
 
 export function isBedrockModel(model: string): boolean {
@@ -350,9 +370,9 @@ export function getModelDisplayInfo(modelId: string): {
   // Check if it's a deployment (UUID)
   if (isDeploymentModel(modelId)) {
     return {
-      displayName: 'Lunar',
-      icon: MODEL_ICONS.lunarIcon,
-      provider: 'Lunar',
+      displayName: 'OpenTracy',
+      icon: MODEL_ICONS.opentracyIcon,
+      provider: 'OpenTracy',
       isDeployment: true,
       isBedrock: false,
     };
@@ -388,11 +408,11 @@ export function getProviderDisplayInfo(providerId: string): {
 } {
   const providerLower = providerId.toLowerCase();
 
-  // Check if it's a deployment/Lunar
-  if (providerLower === 'deployment' || providerLower === 'lunar') {
+  // Check if it's a deployment/OpenTracy
+  if (providerLower === 'deployment' || providerLower === 'opentracy') {
     return {
-      displayName: 'Lunar',
-      icon: MODEL_ICONS.lunarIcon,
+      displayName: 'OpenTracy',
+      icon: MODEL_ICONS.opentracyIcon,
     };
   }
 

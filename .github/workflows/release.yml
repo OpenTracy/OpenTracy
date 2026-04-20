@@ -3,10 +3,10 @@ name: release
 # Publishes platform-specific wheels when a `vX.Y.Z` tag is pushed.
 # Each matrix job:
 #   1. Installs Go + downloads ONNX Runtime + the MiniLM ONNX model
-#   2. Builds the lunar-engine binary for the job's platform
+#   2. Builds the opentracy-engine binary for the job's platform
 #   3. Packages everything into a wheel and retags it with the platform tag
 #   4. Uploads the wheel to PyPI
-# Users do `pip install lunar-router` and pip picks the right wheel.
+# Users do `pip install opentracy` and pip picks the right wheel.
 
 on:
   push:
@@ -43,21 +43,21 @@ jobs:
             goarch: amd64
             cc: ''                         # native x86_64 gcc
             platform_tag: manylinux_2_34_x86_64
-            binary_name: lunar-engine-linux-amd64
+            binary_name: opentracy-engine-linux-amd64
           - os: linux-arm64
             runner: ubuntu-latest          # cross-build with aarch64 toolchain
             goos: linux
             goarch: arm64
             cc: aarch64-linux-gnu-gcc
             platform_tag: manylinux_2_34_aarch64
-            binary_name: lunar-engine-linux-arm64
+            binary_name: opentracy-engine-linux-arm64
           - os: macos-arm64
             runner: macos-14               # Apple Silicon — native
             goos: darwin
             goarch: arm64
             cc: ''
             platform_tag: macosx_11_0_arm64
-            binary_name: lunar-engine-darwin-arm64
+            binary_name: opentracy-engine-darwin-arm64
           # Intel macOS dropped in v0.2.1: upstream onnxruntime releases stopped
           # shipping `onnxruntime-osx-x86_64` after 1.20. Apple Silicon covers
           # ~90%+ of Macs in 2026; Intel users fall back to the sdist (file an
@@ -68,7 +68,7 @@ jobs:
             goarch: amd64
             cc: ''
             platform_tag: win_amd64
-            binary_name: lunar-engine-windows-amd64.exe
+            binary_name: opentracy-engine-windows-amd64.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -94,7 +94,7 @@ jobs:
       # --------------------------------------------------------------
       # Build Go binary
       # --------------------------------------------------------------
-      - name: Build lunar-engine binary
+      - name: Build opentracy-engine binary
         shell: bash
         env:
           GOOS: ${{ matrix.goos }}
@@ -103,7 +103,7 @@ jobs:
           CC: ${{ matrix.cc }}
         run: |
           cd go
-          go build -ldflags "-s -w" -o "../lunar_router/_bin/${{ matrix.binary_name }}" ./cmd/lunar-engine
+          go build -ldflags "-s -w" -o "../opentracy/_bin/${{ matrix.binary_name }}" ./cmd/opentracy-engine
 
       # --------------------------------------------------------------
       # Download + unpack onnxruntime for this platform
@@ -112,7 +112,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p lunar_router/_bin
+          mkdir -p opentracy/_bin
           ORT=${{ env.ORT_VERSION }}
           WORK="${RUNNER_TEMP:-/tmp}/ort_download"
           rm -rf "$WORK"; mkdir -p "$WORK"
@@ -179,8 +179,8 @@ jobs:
             find "$extracted" -name "libonnxruntime*" -o -name "onnxruntime.dll" 2>/dev/null | head
             exit 1
           fi
-          cp "$src_path" "lunar_router/_bin/$lib_dst"
-          ls -l lunar_router/_bin/
+          cp "$src_path" "opentracy/_bin/$lib_dst"
+          ls -l opentracy/_bin/
           echo "::endgroup::"
 
       # --------------------------------------------------------------
@@ -189,10 +189,10 @@ jobs:
       - name: Download MiniLM ONNX
         shell: bash
         run: |
-          mkdir -p lunar_router/_onnx
+          mkdir -p opentracy/_onnx
           base="https://huggingface.co/${{ env.MINILM_REPO }}/resolve/main"
-          curl -sfL -o lunar_router/_onnx/model.onnx "$base/onnx/model.onnx"
-          curl -sfL -o lunar_router/_onnx/vocab.txt  "$base/vocab.txt"
+          curl -sfL -o opentracy/_onnx/model.onnx "$base/onnx/model.onnx"
+          curl -sfL -o opentracy/_onnx/vocab.txt  "$base/vocab.txt"
 
       # --------------------------------------------------------------
       # Build + retag wheel
@@ -234,9 +234,9 @@ jobs:
 
   # -------------------------------------------------------------------
   # Publish everything to PyPI via trusted publishing (OIDC).
-  # Configure at https://pypi.org/manage/project/lunar-router/settings/publishing/
-  # - Owner: lunar-org-ai
-  # - Repo:  lunar-router
+  # Configure at https://pypi.org/manage/project/opentracy/settings/publishing/
+  # - Owner: OpenTracy
+  # - Repo:  opentracy
   # - Workflow: release.yml
   # - Environment: pypi
   # -------------------------------------------------------------------

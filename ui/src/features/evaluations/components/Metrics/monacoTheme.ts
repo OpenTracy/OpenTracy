@@ -1,9 +1,9 @@
-// Monaco editor custom theme for Lunar interface
+// Monaco editor custom theme for OpenTracy interface
 // Monaco editor requires hex color values -- CSS variables are not supported.
 // These hex values correspond to semantic tokens defined in src/index.css.
 import type { Monaco } from '@monaco-editor/react';
 
-export const LUNAR_MONACO_THEME = {
+export const OPENTRACY_MONACO_THEME = {
   base: 'vs-dark' as const,
   inherit: true,
   rules: [],
@@ -35,5 +35,5 @@ export const LUNAR_MONACO_THEME = {
 };
 
 export const handleEditorWillMount = (monaco: Monaco) => {
-  monaco.editor.defineTheme('lunar-dark', LUNAR_MONACO_THEME);
+  monaco.editor.defineTheme('opentracy-dark', OPENTRACY_MONACO_THEME);
 };

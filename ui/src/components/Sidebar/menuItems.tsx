@@ -101,7 +101,7 @@ export const MENU_SECTIONS: MenuSection[] = [
       {
         label: 'Docs',
         value: 'documentation',
-        path: 'https://github.com/lunar-org-ai/lunar-router',
+        path: 'https://github.com/OpenTracy/opentracy',
         icon: <BookOpen size={20} />,
         description: 'Documentation',
         external: true,

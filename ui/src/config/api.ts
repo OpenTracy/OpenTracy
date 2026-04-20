@@ -1,7 +1,7 @@
 /**
- * Lunar Router — API Configuration
+ * OpenTracy — API Configuration
  *
- * Points to the local lunar-router API by default.
+ * Points to the local opentracy API by default.
  * Override with VITE_API_BASE_URL / VITE_ROUTER_URL / VITE_STATS_URL for remote.
  */
 

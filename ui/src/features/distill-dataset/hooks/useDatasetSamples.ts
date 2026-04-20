@@ -48,7 +48,7 @@ export function useDatasetSamples({ datasetId }: UseDatasetSamplesOptions) {
     if (!datasetId) return;
     setLoading(true);
     try {
-      const result = await getDataset(datasetId);
+      const result = await getDataset(datasetId, { include_samples: true });
       setSamples(result?.samples ?? []);
     } catch {
       setSamples([]);

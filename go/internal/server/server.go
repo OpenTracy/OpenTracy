@@ -12,15 +12,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lunar-org-ai/lunar-router/go/internal/clickhouse"
-	"github.com/lunar-org-ai/lunar-router/go/internal/config"
-	"github.com/lunar-org-ai/lunar-router/go/internal/metrics"
-	"github.com/lunar-org-ai/lunar-router/go/internal/provider"
-	"github.com/lunar-org-ai/lunar-router/go/internal/router"
-	"github.com/lunar-org-ai/lunar-router/go/internal/weights"
+	"github.com/OpenTracy/opentracy/go/internal/clickhouse"
+	"github.com/OpenTracy/opentracy/go/internal/config"
+	"github.com/OpenTracy/opentracy/go/internal/envfallback"
+	"github.com/OpenTracy/opentracy/go/internal/metrics"
+	"github.com/OpenTracy/opentracy/go/internal/provider"
+	"github.com/OpenTracy/opentracy/go/internal/router"
+	"github.com/OpenTracy/opentracy/go/internal/weights"
 )
 
-// Server is the Lunar Router HTTP server.
+// Server is the OpenTracy HTTP server.
 type Server struct {
 	Router       *router.Router
 	Registry     *weights.Registry
@@ -80,7 +81,7 @@ func (s *Server) Run() error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("Lunar Engine listening on %s", s.Addr)
+		log.Printf("OpenTracy Engine listening on %s", s.Addr)
 		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
@@ -101,16 +102,16 @@ func (s *Server) Run() error {
 	}
 }
 
-// ReloadSecretsFile re-reads ~/.lunar/secrets.json and updates provider keys.
+// ReloadSecretsFile re-reads ~/.opentracy/secrets.json and updates provider keys.
 // Returns the number of keys loaded.
 func (s *Server) ReloadSecretsFile() int {
-	secretsPath := os.Getenv("LUNAR_SECRETS_FILE")
+	secretsPath := envfallback.Get("SECRETS_FILE")
 	if secretsPath == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return 0
 		}
-		secretsPath = filepath.Join(home, ".lunar", "secrets.json")
+		secretsPath = filepath.Join(home, ".opentracy", "secrets.json")
 	}
 
 	data, err := os.ReadFile(secretsPath)

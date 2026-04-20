@@ -97,7 +97,7 @@ function Slide1() {
   return (
     <div className="space-y-6">
       <div className="space-y-1.5">
-        <h2 className="text-2xl font-bold tracking-tight">Welcome to Lunar</h2>
+        <h2 className="text-2xl font-bold tracking-tight">Welcome to OpenTracy</h2>
         <p className="text-sm text-muted-foreground">
           Turn any powerful AI into your own tiny, fast, private model — running on your own
           hardware.
@@ -105,7 +105,7 @@ function Slide1() {
       </div>
 
       <p className="text-sm text-muted-foreground leading-relaxed">
-        Lunar uses knowledge distillation to compress the intelligence of large models like GPT-4o
+        OpenTracy uses knowledge distillation to compress the intelligence of large models like GPT-4o
         into small models you can run locally — for pennies per request instead of dollars.
       </p>
 
@@ -272,8 +272,8 @@ export function WelcomeWizard() {
         aria-describedby={undefined}
       >
         <VisuallyHidden.Root>
-          <DialogTitle>Welcome to Lunar</DialogTitle>
-          <DialogDescription>Onboarding wizard — get started with Lunar.</DialogDescription>
+          <DialogTitle>Welcome to OpenTracy</DialogTitle>
+          <DialogDescription>Onboarding wizard — get started with OpenTracy.</DialogDescription>
         </VisuallyHidden.Root>
 
         <div className="flex items-center justify-between px-6 pt-5 pb-4">

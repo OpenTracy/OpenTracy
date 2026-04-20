@@ -13,9 +13,9 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-import lunar_router as lr
-from lunar_router import sdk
-from lunar_router.models.llm_client import (
+import opentracy as lr
+from opentracy import sdk
+from opentracy.models.llm_client import (
     UnifiedClient,
     OpenAIClient,
     AnthropicClient,
@@ -57,7 +57,7 @@ class TestCreateClientUnification:
             c = lr.create_client("gemini", "gemini-1.5-flash")
         except ImportError:
             pytest.skip("google-generativeai not installed")
-        from lunar_router.models.llm_client import GoogleClient
+        from opentracy.models.llm_client import GoogleClient
         assert isinstance(c, GoogleClient)
 
     def test_bedrock_raises_clear_error(self):

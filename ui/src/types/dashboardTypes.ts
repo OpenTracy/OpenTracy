@@ -13,7 +13,7 @@ export interface CostByProvider {
   icon?: string;
   name?: string;
   value?: number;
-  isLunar?: boolean;
+  isOpentracy?: boolean;
 }
 
 export interface UsageByModel {
@@ -21,7 +21,7 @@ export interface UsageByModel {
   name?: string;
   requests: number;
   icon?: string;
-  isLunar?: boolean;
+  isOpentracy?: boolean;
   cost?: number;
   latency?: number;
 }
@@ -35,7 +35,7 @@ export interface Alert {
 export interface TimeSeriesData {
   date: string;
   cost: number;
-  lunarCost?: number;
+  opentracyCost?: number;
   externalCost?: number;
 }
 
@@ -44,7 +44,7 @@ export interface CostByTask {
   name?: string;
   cost: number;
   icon?: string;
-  isLunar?: boolean;
+  isOpentracy?: boolean;
 }
 
 export interface ExpensiveRequest {
@@ -54,7 +54,7 @@ export interface ExpensiveRequest {
   icon?: string;
   promptSize: number;
   date: string;
-  isLunar?: boolean;
+  isOpentracy?: boolean;
 }
 
 export interface LatencyData {
@@ -62,7 +62,7 @@ export interface LatencyData {
   name?: string;
   value: number;
   icon?: string;
-  isLunar?: boolean;
+  isOpentracy?: boolean;
 }
 
 export interface LatencyHistogram {
@@ -82,7 +82,7 @@ export interface ErrorTableItem {
   requestId: string;
 }
 
-// Separate overview data for Lunar vs External providers
+// Separate overview data for OpenTracy vs External providers
 export interface ProviderSummary {
   totalCost: number;
   totalRequests: number;
@@ -96,7 +96,7 @@ export interface OverviewData {
   models: UsageByModel[];
   alerts: Alert[];
   // Separated data
-  lunar: ProviderSummary;
+  opentracy: ProviderSummary;
   external: ProviderSummary;
 }
 
@@ -105,7 +105,7 @@ export interface CostAnalysisData {
   costByTask: CostByTask[];
   expensiveRequests: ExpensiveRequest[];
   // Separated data
-  lunarCosts: CostByTask[];
+  opentracyCosts: CostByTask[];
   externalCosts: CostByTask[];
 }
 

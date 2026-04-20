@@ -27,7 +27,7 @@ interface SidebarUserInfoProps {
 }
 
 const EXTERNAL_LINKS = {
-  docs: 'https://docs.puredocs.org/lunar/overview',
+  docs: 'https://docs.puredocs.org/opentracy/overview',
   community: 'https://discord.gg/thyZx5GkFV',
 };
 

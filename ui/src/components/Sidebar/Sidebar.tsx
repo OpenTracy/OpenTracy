@@ -32,7 +32,7 @@ function Sidebar() {
           aria-label="Go to Traces"
           onKeyDown={(e) => e.key === 'Enter' && handleLogoClick()}
         >
-          Lunar Router
+          OpenTracy
         </span>
         <SidebarTrigger
           className="absolute right-2 group-data-[collapsible=icon]:static group-data-[collapsible=icon]:ml-0"
