@@ -566,6 +566,13 @@ def _ensure_onnx_assets(weights_path: str) -> None:
 
 def _find_weights() -> str:
     """Find the weights directory."""
+    # 1. Bundled weights shipped inside the wheel — zero network, zero config.
+    # This is the path that makes `pip install opentracy` → `engine.start()`
+    # work out of the box for every user.
+    bundled = Path(__file__).parent / "_bundled_weights" / "weights-mmlu-v1"
+    if bundled.exists() and (bundled / "clusters").exists():
+        return str(bundled)
+
     # Check common locations
     candidates = []
 
@@ -592,6 +599,24 @@ def _find_weights() -> str:
 
     if candidates:
         return str(candidates[0])
+
+    # First-run UX: fetch the default weights automatically so `engine.start()`
+    # works out of the box. Opt out with OPENTRACY_NO_AUTO_DOWNLOAD=1 (used by
+    # CI/offline environments that pre-stage weights).
+    if not env("NO_AUTO_DOWNLOAD"):
+        try:
+            from opentracy.hub import download as _hub_download
+
+            print("[opentracy] weights not found — downloading weights-mmlu-v1 (one-time)...")
+            installed = _hub_download("weights-mmlu-v1")
+            if Path(installed).exists() and (Path(installed) / "clusters").exists():
+                return str(installed)
+        except Exception as exc:
+            raise FileNotFoundError(
+                f"Auto-download of weights-mmlu-v1 failed: {exc}\n"
+                "Run manually with:\n"
+                "  opentracy download weights-mmlu-v1"
+            ) from exc
 
     raise FileNotFoundError(
         "Weights not found. Download with:\n"

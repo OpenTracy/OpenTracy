@@ -23,8 +23,9 @@ from opentracy._env import env
 
 logger = logging.getLogger(__name__)
 
-# HuggingFace Hub configuration
-HF_REPO_ID = "pureai-ecosystem/lunar-router-weights"
+# HuggingFace Hub configuration (optional — default weights ship bundled in
+# the wheel; the hub is only hit when a user requests a non-default pack).
+HF_REPO_ID = "OpenTracy/opentracy-weights"
 HF_REPO_URL = f"https://huggingface.co/{HF_REPO_ID}"
 
 
@@ -51,7 +52,7 @@ def _get_data_home() -> Path:
 OPENTRACY_DATA_HOME = _get_data_home()
 
 # Package index URL (like NLTK's index)
-DEFAULT_INDEX_URL = "https://raw.githubusercontent.com/pureai-ecosystem/opentracy/main/packages/index.json"
+DEFAULT_INDEX_URL = "https://raw.githubusercontent.com/OpenTracy/opentracy/main/packages/index.json"
 
 # Fallback to bundled index
 BUNDLED_INDEX_PATH = Path(__file__).parent / "index.json"
@@ -423,32 +424,42 @@ class Hub:
         dest: Path,
         quiet: bool = False,
     ) -> None:
-        """Download a file from HuggingFace Hub."""
-        try:
-            from huggingface_hub import hf_hub_download
-        except ImportError:
-            raise ImportError(
-                "huggingface_hub package required for HuggingFace downloads. "
-                "Install with: pip install huggingface_hub"
-            )
+        """Download a file from HuggingFace Hub.
 
+        Uses `huggingface_hub` when installed (supports auth / private repos);
+        otherwise falls back to a direct HTTP fetch via stdlib `urllib`, which
+        works for any public repo and keeps `huggingface_hub` out of the core
+        install footprint.
+        """
         if not quiet:
             print(f"  From: huggingface.co/{repo_id}/{filename}")
 
         try:
-            # Download to HF cache first
-            cached_path = hf_hub_download(
-                repo_id=repo_id,
-                filename=filename,
-                repo_type="model",
-            )
+            from huggingface_hub import hf_hub_download  # type: ignore
+        except ImportError:
+            hf_hub_download = None
 
-            # Copy to destination
-            shutil.copy2(cached_path, dest)
+        try:
+            if hf_hub_download is not None:
+                cached_path = hf_hub_download(
+                    repo_id=repo_id,
+                    filename=filename,
+                    repo_type="model",
+                )
+                shutil.copy2(cached_path, dest)
+            else:
+                url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+                req = Request(url, headers={"User-Agent": "opentracy-hub"})
+                with urlopen(req, timeout=60) as resp, open(dest, "wb") as out:
+                    shutil.copyfileobj(resp, out)
 
             if not quiet:
                 print("  ✓ Downloaded from HuggingFace Hub")
 
+        except (URLError, HTTPError) as e:
+            raise RuntimeError(
+                f"HuggingFace download failed ({url if hf_hub_download is None else repo_id + '/' + filename}): {e}"
+            )
         except Exception as e:
             raise RuntimeError(f"HuggingFace download failed: {e}")
 

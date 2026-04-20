@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "opentracy"
-version = "0.3.0"
+version = "0.3.1"
 description = "Auto-distillation layer for your LLM calls — drop-in OpenAI-compatible SDK that turns every request into training data for cheaper custom models."
 readme = "README.md"
 license = {text = "MIT"}
@@ -32,11 +32,12 @@ classifiers = [
 # `Distiller` to work out of the box. Provider-specific SDKs and
 # research/training deps live in extras so the base install stays lean.
 dependencies = [
-    "openai>=1.0.0",      # chat.completions plumbing used by sdk.completion + acompletion
-    "httpx>=0.24.0",      # Distiller / TrainingClient talk to /v1/distillation
-    "numpy>=1.24.0",      # used by models.llm_profile and trace math
+    "openai>=1.0.0",           # chat.completions plumbing used by sdk.completion + acompletion
+    "httpx>=0.24.0",           # Distiller / TrainingClient talk to /v1/distillation
+    "numpy>=1.24.0",           # used by models.llm_profile and trace math
     "tqdm>=4.65.0",
     "pyyaml>=6.0",
+    "huggingface_hub>=0.16.0", # default weights pack lives on HF; keeps load_router() one-shot
 ]
 
 [project.optional-dependencies]
@@ -63,7 +64,6 @@ distill = [
 research = [
     "sentence-transformers>=2.2.0",
     "scikit-learn>=1.3.0",
-    "huggingface_hub>=0.16.0",
     "boto3>=1.28.0",
 ]
 
@@ -102,9 +102,7 @@ opentracy = "opentracy.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-# Ship the `opentracy` package plus the `lunar_router` backwards-compat shim,
-# which redirects legacy imports via a MetaPathFinder.
-include = ["opentracy*", "lunar_router"]
+include = ["opentracy*"]
 
 # Ship the per-platform Go binary inside the wheel so `pip install opentracy`
 # works out of the box. _find_binary() loads opentracy/_bin/opentracy-engine-<tag>
@@ -123,6 +121,11 @@ opentracy = [
     "_onnx/model.onnx",
     "_onnx/vocab.txt",
     "hub/index.json",
+    # Default routing weights (MMLU, 100 clusters, ~288KB) bundled in the wheel
+    # so `pip install opentracy` → `engine.start()` needs zero network access.
+    "_bundled_weights/weights-mmlu-v1/manifest.json",
+    "_bundled_weights/weights-mmlu-v1/clusters/*",
+    "_bundled_weights/weights-mmlu-v1/profiles/*",
 ]
 
 [tool.black]
