@@ -147,6 +147,14 @@ class DistillationConfig(BaseModel):
     output_name: Optional[str] = None
     dataset_id: Optional[str] = None
 
+    # In-process / standalone path — the pipeline reads prompts from here
+    # when `opentracy.distill()` runs without a dataset stored in ClickHouse.
+    prompts: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Inline prompts list: [{'id': str, 'text': str, 'system': str?}]. "
+                    "Used by opentracy.distill() to skip the dataset lookup.",
+    )
+
     @model_validator(mode="before")
     @classmethod
     def _replace_nulls(cls, data):
