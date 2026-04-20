@@ -1,12 +1,19 @@
-# OpenTracy
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/opentracy-logo-dark.png">
+    <img src="assets/opentracy-logo-light.png" alt="OpenTracy" height="110">
+  </picture>
+</p>
 
-**The auto-distillation layer for your LLM calls.**
+<p align="center"><strong>The auto-distillation layer for your LLM calls.</strong></p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![PyPI](https://img.shields.io/pypi/v/opentracy.svg)](https://pypi.org/project/opentracy/)
+<p align="center">
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+"></a>
+  <a href="https://pypi.org/project/opentracy/"><img src="https://img.shields.io/pypi/v/opentracy.svg" alt="PyPI"></a>
+</p>
 
-<p align="left">
+<p align="center">
   <a href="https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/01_quickstart.ipynb">
     <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab" height="28">
   </a>
