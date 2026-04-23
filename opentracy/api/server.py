@@ -58,6 +58,18 @@ state_manager: Optional[StateManager] = None
 settings: Optional[Settings] = None
 
 
+# Harness MCP server — built at module load when enabled so both the
+# lifespan (which drives its session manager) and the mount (which
+# exposes the ASGI app at /mcp) reference the same instance.
+_mcp_server = None
+if os.getenv("OPENTRACY_MCP_HTTP_ENABLED", "false").lower() == "true":
+    try:
+        from ..harness.mcp_server import build_server as _build_mcp_server
+        _mcp_server = _build_mcp_server()
+    except Exception as e:
+        logger.warning(f"MCP server build failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -179,6 +191,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug(f"Deployment cleanup skipped: {e}")
 
+    # Activate the MCP streamable-HTTP session manager if the server
+    # was built at module load. FastAPI does not call sub-app lifespans
+    # for mounted Starlette apps, so we enter the context manually and
+    # stash it on the app state for cleanup on shutdown.
+    mcp_session_cm = None
+    if _mcp_server is not None:
+        try:
+            mcp_session_cm = _mcp_server.session_manager.run()
+            await mcp_session_cm.__aenter__()
+            logger.info("MCP session manager started")
+        except Exception as e:
+            logger.warning(f"MCP session manager failed to start: {e}")
+            mcp_session_cm = None
+
     yield
 
     # Shutdown
@@ -198,6 +224,11 @@ async def lifespan(app: FastAPI):
             await trigger_loop.stop()
         except Exception as e:
             logger.debug(f"TriggerEngineLoop stop error: {e}")
+    if mcp_session_cm is not None:
+        try:
+            await mcp_session_cm.__aexit__(None, None, None)
+        except Exception as e:
+            logger.debug(f"MCP session manager stop error: {e}")
     logger.info("UniRoute API shutting down...")
 
 
@@ -346,18 +377,17 @@ app.add_middleware(
 # Mount the harness MCP server under /mcp when explicitly enabled.
 # Same `build_server()` used by the stdio entry point drives this, so
 # production ops + contributor local dev share one tool surface.
-if os.getenv("OPENTRACY_MCP_HTTP_ENABLED", "false").lower() == "true":
-    try:
-        from ..harness.mcp_server import build_server as _build_mcp_server
-
-        _mcp_server = _build_mcp_server()
-        app.mount("/mcp", _mcp_server.streamable_http_app())
-        logger.info(
-            "MCP HTTP transport mounted at /mcp "
-            "(OPENTRACY_MCP_HTTP_ENABLED=true)"
-        )
-    except Exception as e:
-        logger.warning(f"MCP HTTP mount failed: {e}")
+#
+# The FastMCP streamable-HTTP app ships its own lifespan that starts
+# the StreamableHTTPSessionManager — but Starlette sub-app lifespans
+# don't auto-fire when mounted on FastAPI, so the session manager's
+# `run()` context is plumbed into our own lifespan below.
+if _mcp_server is not None:
+    app.mount("/mcp", _mcp_server.streamable_http_app())
+    logger.info(
+        "MCP HTTP transport mounted at /mcp "
+        "(OPENTRACY_MCP_HTTP_ENABLED=true)"
+    )
 
 
 @app.exception_handler(Exception)
