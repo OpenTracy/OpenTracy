@@ -86,7 +86,11 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    runtime: nvidia
+    # GPU is optional. Default `runc` runtime works on CPU-only hosts
+    # (e.g. cloud dev VMs without nvidia-container-toolkit). To enable
+    # GPU acceleration for local training/inference, run with:
+    #   DOCKER_RUNTIME=nvidia docker compose up -d
+    runtime: ${DOCKER_RUNTIME:-runc}
     ports:
       - "8000:8000"
     environment:
