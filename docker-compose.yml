@@ -65,7 +65,7 @@ services:
       # ONNX Runtime library is dlopen'd at startup to run the MiniLM
       # embedder for semantic routing. Point at the copy seeded in the
       # bootstrap weights pack.
-      ONNXRUNTIME_LIB_PATH: /weights/bootstrap/libonnxruntime.so.1.24.4
+      ONNXRUNTIME_LIB_PATH: /weights/bootstrap/libonnxruntime.so.1.24.1
       OPENTRACY_CH_ENABLED: "true"
       OPENTRACY_CH_HOST: clickhouse
       OPENTRACY_CH_PORT: "9000"
