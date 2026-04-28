@@ -18,7 +18,7 @@
     <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab" height="28">
   </a>
   &nbsp;
-  <a href="https://discord.gg/a8G5pQEN">
+  <a href="https://discord.gg/7hYWVrr7">
     <img src="https://img.shields.io/badge/Join%20our%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join Discord" height="28">
   </a>
   &nbsp;
@@ -32,7 +32,7 @@ Drop-in OpenAI-compatible SDK. Every request becomes a trace; traces become data
 ## Sponsors
 
 <p align="center">
-  <a href="https://sharpi.com">
+  <a href="https://sharpi.com.br">
     <img src="assets/sponsors/sharpi.png" alt="Sharpi" height="80">
   </a>
 </p>
@@ -151,6 +151,22 @@ make start-full   # Gateway + ClickHouse analytics + Python API + UI
 ```
 
 Engine at `http://localhost:8080`, Python API at `http://localhost:8000`, UI at `http://localhost:3000`.
+
+### GPU is optional
+
+The Python API container runs on CPU by default — no `nvidia-container-toolkit`
+required, so it works on plain cloud VMs and laptops without a GPU. Local
+training and inference paths fall back to CPU automatically.
+
+To enable GPU acceleration (faster distillation training, local inference):
+
+```bash
+DOCKER_RUNTIME=nvidia docker compose up -d
+```
+
+This requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+on the host. Persist the variable in `.env` next to `docker-compose.yml` if you
+always run with GPU.
 
 ## What OpenTracy Does
 
