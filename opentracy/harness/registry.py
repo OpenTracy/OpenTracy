@@ -36,6 +36,7 @@ class AgentConfig:
     max_tokens: int = 500
     output_schema: OutputSchema = field(default_factory=OutputSchema)
     system_prompt: str = ""
+    role: str = "agent"  # derived from agents/<role>/*.md subfolder
     file_path: str = ""
     _mtime: float = 0.0  # file modification time for cache invalidation
 
@@ -48,6 +49,7 @@ class AgentConfig:
             "max_tokens": self.max_tokens,
             "output_schema": {"type": self.output_schema.type, "fields": self.output_schema.fields},
             "system_prompt": self.system_prompt,
+            "role": self.role,
         }
 
 
@@ -78,6 +80,9 @@ def _parse_agent_file(path: Path) -> AgentConfig:
         fields=schema_raw.get("fields", {}),
     )
 
+    parent = path.parent.name
+    role = parent if parent in {"inspectors", "proposers", "critics", "narrators"} else "agent"
+
     return AgentConfig(
         name=meta.get("name", path.stem),
         description=meta.get("description", ""),
@@ -86,6 +91,7 @@ def _parse_agent_file(path: Path) -> AgentConfig:
         max_tokens=meta.get("max_tokens", 500),
         output_schema=schema,
         system_prompt=body,
+        role=role,
         file_path=str(path),
         _mtime=path.stat().st_mtime,
     )

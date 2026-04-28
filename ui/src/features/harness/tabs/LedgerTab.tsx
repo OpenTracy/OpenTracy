@@ -5,9 +5,16 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Filter } from 'lucide-react';
+import { Filter, History, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -71,53 +78,50 @@ export function LedgerTab() {
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardContent className="p-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Filter className="size-4 text-muted-foreground" />
+      <div className="flex items-center gap-2 flex-wrap rounded-lg border bg-card p-2">
+        <Filter className="size-4 text-muted-foreground ml-1" />
 
-            <Select
-              value={filters.type ?? ''}
-              onValueChange={(v) =>
-                updateFilter('type', (v === '__all__' ? '' : v) as LedgerEntryType | '')
-              }
-            >
-              <SelectTrigger className="h-8 w-36">
-                <SelectValue placeholder="Type" />
-              </SelectTrigger>
-              <SelectContent>
-                {TYPE_OPTIONS.map((o) => (
-                  <SelectItem key={o.value || '__all__'} value={o.value || '__all__'}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        <Select
+          value={filters.type ?? ''}
+          onValueChange={(v) =>
+            updateFilter('type', (v === '__all__' ? '' : v) as LedgerEntryType | '')
+          }
+        >
+          <SelectTrigger className="h-8 w-36">
+            <SelectValue placeholder="Type" />
+          </SelectTrigger>
+          <SelectContent>
+            {TYPE_OPTIONS.map((o) => (
+              <SelectItem key={o.value || '__all__'} value={o.value || '__all__'}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
-            <Input
-              className="h-8 w-56"
-              placeholder="objective_id…"
-              value={filters.objective_id ?? ''}
-              onChange={(e) => updateFilter('objective_id', e.target.value)}
-            />
+        <Input
+          className="h-8 w-56"
+          placeholder="objective_id…"
+          value={filters.objective_id ?? ''}
+          onChange={(e) => updateFilter('objective_id', e.target.value)}
+        />
 
-            <Input
-              className="h-8 w-40"
-              placeholder="agent…"
-              value={filters.agent ?? ''}
-              onChange={(e) => updateFilter('agent', e.target.value)}
-            />
+        <Input
+          className="h-8 w-40"
+          placeholder="agent…"
+          value={filters.agent ?? ''}
+          onChange={(e) => updateFilter('agent', e.target.value)}
+        />
 
-            <Button size="sm" variant="outline" onClick={load} className="h-8">
-              Refresh
-            </Button>
+        <Button size="sm" variant="ghost" onClick={load} className="h-8">
+          <RefreshCw className="size-3.5" />
+          Refresh
+        </Button>
 
-            <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-              {entries.length} entries
-            </span>
-          </div>
-        </CardContent>
-      </Card>
+        <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+          {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
+        </span>
+      </div>
 
       <Card>
         <CardContent className="p-0">
@@ -142,9 +146,19 @@ export function LedgerTab() {
                 ))
               ) : entries.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                    No ledger entries match these filters. The trigger engine writes here
-                    once it starts running.
+                  <TableCell colSpan={5} className="py-2">
+                    <Empty className="border-0">
+                      <EmptyHeader>
+                        <EmptyMedia variant="icon">
+                          <History />
+                        </EmptyMedia>
+                        <EmptyTitle>Ledger is quiet</EmptyTitle>
+                        <EmptyDescription>
+                          No entries match these filters. The trigger engine
+                          writes here once it starts running.
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
                   </TableCell>
                 </TableRow>
               ) : (
