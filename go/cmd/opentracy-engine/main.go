@@ -84,30 +84,35 @@ func main() {
 		log.Printf("Loading weights from: %s", cfg.Weights.Path)
 		loaded, err := weights.LoadWeights(cfg.Weights.Path)
 		if err != nil {
-			log.Fatalf("failed to load weights: %v", err)
-		}
-		log.Printf("Loaded %d models, %d clusters",
-			loaded.Registry.Len(),
-			loaded.ClusterAssigner.NumClusters())
+			log.Printf("WARNING: failed to load weights: %v", err)
+			log.Printf("Falling back to gateway mode (proxy-only, no semantic routing).")
+			log.Printf("To enable routing, mount a valid weights directory and pass --weights <path>.")
+			r = router.NewEmpty()
+			reg = weights.NewRegistry()
+		} else {
+			log.Printf("Loaded %d models, %d clusters",
+				loaded.Registry.Len(),
+				loaded.ClusterAssigner.NumClusters())
 
-		r = router.New(
-			loaded.ClusterAssigner,
-			loaded.Registry,
-			cfg.Routing.CostWeight,
-			cfg.Routing.SoftAssignment,
-			cfg.Routing.AllowedModels,
-		)
-		reg = loaded.Registry
+			r = router.New(
+				loaded.ClusterAssigner,
+				loaded.Registry,
+				cfg.Routing.CostWeight,
+				cfg.Routing.SoftAssignment,
+				cfg.Routing.AllowedModels,
+			)
+			reg = loaded.Registry
 
-		// Initialize embedder
-		if !noEmbedder {
-			embedder, err := initEmbedder(cfg)
-			if err != nil {
-				log.Printf("WARNING: embedder init failed: %v", err)
-				log.Printf("Prompt-based routing disabled. Use --no-embedder to suppress this warning.")
-			} else {
-				r.Embedder = embedder
-				log.Printf("Embedder initialized: %s (dim=%d)", cfg.Embeddings.Backend, embedder.Dimension())
+			// Initialize embedder
+			if !noEmbedder {
+				embedder, err := initEmbedder(cfg)
+				if err != nil {
+					log.Printf("WARNING: embedder init failed: %v", err)
+					log.Printf("Prompt-based routing disabled. Use --no-embedder to suppress this warning.")
+				} else {
+					r.Embedder = embedder
+					log.Printf("Embedder initialized: %s (dim=%d)", cfg.Embeddings.Backend, embedder.Dimension())
+				}
 			}
 		}
 	}

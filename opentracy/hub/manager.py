@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # HuggingFace Hub configuration (optional — default weights ship bundled in
 # the wheel; the hub is only hit when a user requests a non-default pack).
-HF_REPO_ID = "OpenTracy/opentracy-weights"
+HF_REPO_ID = "diogovieira/lunar-router-weights"
 HF_REPO_URL = f"https://huggingface.co/{HF_REPO_ID}"
 
 

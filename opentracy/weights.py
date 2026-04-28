@@ -81,7 +81,7 @@ WEIGHTS_REGISTRY: Dict[str, WeightsConfig] = {
             "ministral-8b-latest", "ministral-3b-latest", "pixtral-12b-2409",
         ],
         source_type="huggingface",
-        hf_repo_id="diogovieira/opentracy-weights",
+        hf_repo_id="diogovieira/lunar-router-weights",
         hf_filename="weights-mmlu-v1.zip",
     ),
     "weights-default": WeightsConfig(
@@ -95,7 +95,7 @@ WEIGHTS_REGISTRY: Dict[str, WeightsConfig] = {
             "mistral-large-latest", "mistral-small-latest",
         ],
         source_type="huggingface",
-        hf_repo_id="diogovieira/opentracy-weights",
+        hf_repo_id="diogovieira/lunar-router-weights",
         hf_filename="weights-mmlu-v1.zip",
     ),
 }
@@ -145,7 +145,7 @@ def download_from_huggingface(
     Download weights directly from a HuggingFace repository.
 
     Args:
-        repo_id: HuggingFace repository ID (e.g., "diogovieira/opentracy-weights").
+        repo_id: HuggingFace repository ID (e.g., "diogovieira/lunar-router-weights").
         filename: Filename in the repository.
         dest: Destination path. If None, uses default data directory.
         quiet: Suppress output.
