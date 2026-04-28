@@ -41,14 +41,14 @@ Drop-in OpenAI-compatible SDK. Every request becomes a trace; traces become data
 
 Each notebook runs end-to-end on a free Colab runtime — bring your own OpenAI key, optionally Anthropic / Groq.
 
-| # | Notebook | One-line pitch | Colab |
-|---|---|---|---|
-| 01 | [Quickstart](notebooks/01_quickstart.ipynb) | First `completion()` call, see `_cost` + `_latency_ms`, swap providers | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/01_quickstart.ipynb) |
-| 02 | [Drop in over the OpenAI SDK](notebooks/02_drop_in_openai.ipynb) | Keep `from openai import OpenAI`, change only `base_url` | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/02_drop_in_openai.ipynb) |
-| 03 | [Semantic auto-routing](notebooks/03_semantic_routing.ipynb) | One prompt, the right model of 13 — learned, not rule-based | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/03_semantic_routing.ipynb) |
-| 04 | [Ticket classifier (real app)](notebooks/04_ticket_classifier.ipynb) | End-to-end support-ticket classifier with cost breakdown | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/04_ticket_classifier.ipynb) |
-| 05 | [Distillation — train your student](notebooks/05_distillation.ipynb) | Turn trace history into a distilled tiny model | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/05_distillation.ipynb) |
-| 06 | [Serve your distilled model](notebooks/06_distilled_inference.ipynb) | Four serving paths from load-the-adapter to alias swap | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/06_distilled_inference.ipynb) |
+| #   | Notebook                                                             | One-line pitch                                                         | Colab                                                                                                                                                                                       |
+| --- | -------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 01  | [Quickstart](notebooks/01_quickstart.ipynb)                          | First `completion()` call, see `_cost` + `_latency_ms`, swap providers | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/01_quickstart.ipynb)          |
+| 02  | [Drop in over the OpenAI SDK](notebooks/02_drop_in_openai.ipynb)     | Keep `from openai import OpenAI`, change only `base_url`               | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/02_drop_in_openai.ipynb)      |
+| 03  | [Semantic auto-routing](notebooks/03_semantic_routing.ipynb)         | One prompt, the right model of 13 — learned, not rule-based            | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/03_semantic_routing.ipynb)    |
+| 04  | [Ticket classifier (real app)](notebooks/04_ticket_classifier.ipynb) | End-to-end support-ticket classifier with cost breakdown               | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/04_ticket_classifier.ipynb)   |
+| 05  | [Distillation — train your student](notebooks/05_distillation.ipynb) | Turn trace history into a distilled tiny model                         | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/05_distillation.ipynb)        |
+| 06  | [Serve your distilled model](notebooks/06_distilled_inference.ipynb) | Four serving paths from load-the-adapter to alias swap                 | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OpenTracy/OpenTracy/blob/main/notebooks/06_distilled_inference.ipynb) |
 
 > **Colab heads-up** — traces only show up in the dashboard if you set `OPENTRACY_ENGINE_URL` before `import opentracy`. Every notebook has a commented-out cell at the top with the two lines you need.
 
@@ -75,7 +75,7 @@ Works with 13 providers out of the box: OpenAI, Anthropic, Gemini, Groq, Mistral
 
 ### Connecting to the OpenTracy platform (traces, dashboards, distillation)
 
-By default `lr.completion()` goes **direct to the provider**, so calls do *not*
+By default `lr.completion()` goes **direct to the provider**, so calls do _not_
 appear in the OpenTracy dashboard. To route every call through a running
 engine — the only way traces, metrics, and the distillation loop get data —
 set `OPENTRACY_ENGINE_URL` **before** importing the SDK:
@@ -93,6 +93,7 @@ resp = lr.completion(
 ```
 
 Alternatives:
+
 - Per-call: pass `force_engine=True, api_base="http://<host>:8080/v1"` to
   `lr.completion(...)`.
 - Drop-in OpenAI SDK (no code change beyond `base_url` — see below).
@@ -380,13 +381,13 @@ make start-full
 | `GET`            | `/v1/harness/memory`                      | Query agent memory                                    |
 | **Secrets**      |                                           |                                                       |
 | `GET`            | `/v1/secrets`                             | List configured providers                             |
-| `POST`           | `/v1/secrets/{provider}`                  | Save API key                                         
-| `GET` | `/v1/harness/agents` | List AI agents |
-| `POST` | `/v1/harness/run/{name}` | Run an agent with input |
-| `GET` | `/v1/harness/memory` | Query agent memory |
-| **Secrets** | | |
-| `GET` | `/v1/secrets` | List configured providers |
-| `POST` | `/v1/secrets/{provider}` | Save API key |
+| `POST`           | `/v1/secrets/{provider}`                  | Save API key                                          |
+| `GET`            | `/v1/harness/agents`                      | List AI agents                                        |
+| `POST`           | `/v1/harness/run/{name}`                  | Run an agent with input                               |
+| `GET`            | `/v1/harness/memory`                      | Query agent memory                                    |
+| **Secrets**      |                                           |                                                       |
+| `GET`            | `/v1/secrets`                             | List configured providers                             |
+| `POST`           | `/v1/secrets/{provider}`                  | Save API key                                          |
 
 ## Architecture
 
@@ -574,4 +575,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## Links
 
 - [GitHub Repository](https://github.com/OpenTracy/opentracy)
-- [HuggingFace Weights](https://huggingface.co/diogovieira/opentracy-weights)
+- [HuggingFace Weights](https://huggingface.co/diogovieira/lunar-router-weights)

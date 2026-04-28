@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "updated": "2025-01-29",
-  "default_hf_repo": "diogovieira/opentracy-weights",
+  "default_hf_repo": "diogovieira/lunar-router-weights",
   "packages": [
     {
       "id": "weights-mmlu-v1",
@@ -10,7 +10,7 @@
       "description": "Pre-trained routing weights on MMLU benchmark with 100 clusters",
       "category": "weights",
       "source_type": "huggingface",
-      "hf_repo_id": "diogovieira/opentracy-weights",
+      "hf_repo_id": "diogovieira/lunar-router-weights",
       "hf_filename": "weights-mmlu-v1.zip",
       "size_bytes": 221936,
       "sha256": "bbc5d3d131421427ca9b174cf9646f1669ac29a3de10ecfae5e8a540c4295721",
@@ -41,7 +41,7 @@
       "description": "Default routing weights (alias for weights-mmlu-v1)",
       "category": "weights",
       "source_type": "huggingface",
-      "hf_repo_id": "diogovieira/opentracy-weights",
+      "hf_repo_id": "diogovieira/lunar-router-weights",
       "hf_filename": "weights-mmlu-v1.zip",
       "size_bytes": 221936,
       "sha256": "bbc5d3d131421427ca9b174cf9646f1669ac29a3de10ecfae5e8a540c4295721",
