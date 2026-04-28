@@ -32,7 +32,7 @@ Drop-in OpenAI-compatible SDK. Every request becomes a trace; traces become data
 ## Sponsors
 
 <p align="center">
-  <a href="https://sharpi.com">
+  <a href="https://sharpi.com.br">
     <img src="assets/sponsors/sharpi.png" alt="Sharpi" height="80">
   </a>
 </p>
