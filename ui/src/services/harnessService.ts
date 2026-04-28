@@ -11,6 +11,8 @@ const BASE = API_BASE_URL;
 // Agents
 // ---------------------------------------------------------------------------
 
+export type AgentRole = 'inspector' | 'proposer' | 'critic' | 'narrator' | 'agent';
+
 export interface AgentConfig {
   name: string;
   description: string;
@@ -22,6 +24,12 @@ export interface AgentConfig {
     fields: Record<string, { type: string; description?: string }>;
   };
   system_prompt: string;
+  /**
+   * Server-derived role from `agents/<role>/*.md` subfolder. Plural on the
+   * wire (`inspectors` etc.) to match the directory; the UI normalizes to
+   * the singular form for display.
+   */
+  role?: string;
 }
 
 export interface AgentRunResult {

@@ -10,6 +10,13 @@ import { useEffect, useState } from 'react';
 import { Shield, Target, TrendingDown, TrendingUp, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   useHarnessService,
@@ -153,13 +160,21 @@ export function ObjectivesTab() {
 
   if (objectives.length === 0) {
     return (
-      <div className="flex items-center justify-center h-48 text-sm text-muted-foreground">
-        No objectives defined. Add YAML files under{' '}
-        <code className="mx-1 font-mono bg-muted px-1.5 py-0.5 rounded">
-          opentracy/harness/objectives/definitions/
-        </code>
-        .
-      </div>
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Target />
+          </EmptyMedia>
+          <EmptyTitle>No objectives defined</EmptyTitle>
+          <EmptyDescription>
+            Add YAML files under{' '}
+            <code className="font-mono bg-muted px-1.5 py-0.5 rounded">
+              opentracy/harness/objectives/definitions/
+            </code>{' '}
+            to declare what the harness should optimise for.
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     );
   }
 

@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Filter, XCircle } from 'lucide-react';
+import { CheckCircle2, Filter, Inbox, RefreshCw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -23,6 +23,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -65,9 +73,13 @@ type ConfirmAction = 'approve' | 'reject' | null;
 
 interface ProposalsTabProps {
   onSetupChange?: () => void;
+  onProposalsChange?: () => void;
 }
 
-export function ProposalsTab({ onSetupChange }: ProposalsTabProps = {}) {
+export function ProposalsTab({
+  onSetupChange,
+  onProposalsChange,
+}: ProposalsTabProps = {}) {
   const service = useHarnessService();
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,8 +116,9 @@ export function ProposalsTab({ onSetupChange }: ProposalsTabProps = {}) {
       .then((list) => {
         setProposals(list);
         setLoading(false);
+        onProposalsChange?.();
       });
-  }, [service, statusFilter, objectiveFilter]);
+  }, [service, statusFilter, objectiveFilter, onProposalsChange]);
 
   useEffect(() => {
     load();
@@ -162,51 +175,48 @@ export function ProposalsTab({ onSetupChange }: ProposalsTabProps = {}) {
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardContent className="p-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Filter className="size-4 text-muted-foreground" />
+      <div className="flex items-center gap-2 flex-wrap rounded-lg border bg-card p-2">
+        <Filter className="size-4 text-muted-foreground ml-1" />
 
-            <Select
-              value={statusFilter || '__all__'}
-              onValueChange={(v) =>
-                setStatusFilter((v === '__all__' ? '' : v) as ProposalStatus | '')
-              }
-            >
-              <SelectTrigger className="h-8 w-44">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                {STATUS_OPTIONS.map((o) => (
-                  <SelectItem key={o.value || '__all__'} value={o.value || '__all__'}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        <Select
+          value={statusFilter || '__all__'}
+          onValueChange={(v) =>
+            setStatusFilter((v === '__all__' ? '' : v) as ProposalStatus | '')
+          }
+        >
+          <SelectTrigger className="h-8 w-44">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            {STATUS_OPTIONS.map((o) => (
+              <SelectItem key={o.value || '__all__'} value={o.value || '__all__'}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
-            <Input
-              className="h-8 w-56"
-              placeholder="objective_id…"
-              value={objectiveFilter}
-              onChange={(e) => setObjectiveFilter(e.target.value)}
-            />
+        <Input
+          className="h-8 w-56"
+          placeholder="objective_id…"
+          value={objectiveFilter}
+          onChange={(e) => setObjectiveFilter(e.target.value)}
+        />
 
-            <Button size="sm" variant="outline" onClick={load} className="h-8">
-              Refresh
-            </Button>
+        <Button size="sm" variant="ghost" onClick={load} className="h-8">
+          <RefreshCw className="size-3.5" />
+          Refresh
+        </Button>
 
-            <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-              {proposals.length} {proposals.length === 1 ? 'proposal' : 'proposals'}
-              {summary.pending > 0 && statusFilter !== 'pending' && (
-                <span className="ml-2 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-amber-700 dark:text-amber-400">
-                  {summary.pending} pending
-                </span>
-              )}
+        <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+          {proposals.length} {proposals.length === 1 ? 'proposal' : 'proposals'}
+          {summary.pending > 0 && statusFilter !== 'pending' && (
+            <span className="ml-2 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-amber-700 dark:text-amber-400">
+              {summary.pending} pending
             </span>
-          </div>
-        </CardContent>
-      </Card>
+          )}
+        </span>
+      </div>
 
       <Card>
         <CardContent className="p-0">
@@ -233,16 +243,32 @@ export function ProposalsTab({ onSetupChange }: ProposalsTabProps = {}) {
                 ))
               ) : proposals.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-6">
+                  <TableCell colSpan={7} className="py-2">
                     {setup && !setup.critic.ready ? (
                       <SetupGuide onConfigured={handleSetupConfigured} />
                     ) : (
-                      <div className="text-center text-muted-foreground">
-                        No proposals match these filters. Once the autonomous loop
-                        or Claude Code (via MCP) posts to{' '}
-                        <code className="font-mono">/v1/harness/proposals</code>,
-                        they'll appear here for approval.
-                      </div>
+                      <Empty className="border-0">
+                        <EmptyHeader>
+                          <EmptyMedia variant="icon">
+                            <Inbox />
+                          </EmptyMedia>
+                          <EmptyTitle>No proposals match</EmptyTitle>
+                          <EmptyDescription>
+                            Once the autonomous loop or Claude Code (via MCP)
+                            posts to{' '}
+                            <code className="font-mono">
+                              /v1/harness/proposals
+                            </code>
+                            , they'll appear here for approval.
+                          </EmptyDescription>
+                        </EmptyHeader>
+                        <EmptyContent>
+                          <Button size="sm" variant="outline" onClick={load}>
+                            <RefreshCw className="size-3.5" />
+                            Refresh
+                          </Button>
+                        </EmptyContent>
+                      </Empty>
                     )}
                   </TableCell>
                 </TableRow>

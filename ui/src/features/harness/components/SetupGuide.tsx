@@ -18,20 +18,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Copy, Loader2, RefreshCw } from 'lucide-react';
+import { Bot, Check, Copy, Loader2, RefreshCw, Terminal, Workflow } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   useHarnessService,
   type HarnessSetupStatus,
@@ -46,9 +38,7 @@ interface SetupGuideProps {
   compact?: boolean;
 }
 
-const PROVIDER_OPTIONS = [
-  { value: 'anthropic', label: 'Anthropic (Claude)' },
-];
+const PROVIDER_LABEL = 'Anthropic (Claude)';
 
 function deriveMcpUrl(path: string): string {
   // Use the host the user's browser is on. Works through VS Code port
@@ -64,9 +54,9 @@ export function SetupGuide({ onConfigured, compact = false }: SetupGuideProps) {
   const [status, setStatus] = useState<HarnessSetupStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState(false);
-  const [provider, setProvider] = useState<string>('anthropic');
   const [apiKey, setApiKey] = useState('');
   const [copied, setCopied] = useState(false);
+  const provider = 'anthropic';
 
   const refresh = useCallback(() => {
     setLoading(true);
@@ -79,12 +69,6 @@ export function SetupGuide({ onConfigured, compact = false }: SetupGuideProps) {
   useEffect(() => {
     refresh();
   }, [refresh]);
-
-  // Prefer the critic's provider as the default selection so the user
-  // doesn't have to think about which key matters.
-  useEffect(() => {
-    if (status?.critic.provider) setProvider(status.critic.provider);
-  }, [status?.critic.provider]);
 
   // Notify parent when the loop is fully ready.
   useEffect(() => {
@@ -146,9 +130,8 @@ export function SetupGuide({ onConfigured, compact = false }: SetupGuideProps) {
   }
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-base">Set up the harness</CardTitle>
+    <div className="space-y-6">
+      <div className="flex justify-end">
         <Button
           variant="ghost"
           size="sm"
@@ -157,10 +140,9 @@ export function SetupGuide({ onConfigured, compact = false }: SetupGuideProps) {
           className="h-7"
         >
           <RefreshCw className={`size-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
+          Refresh status
         </Button>
-      </CardHeader>
-      <CardContent className="space-y-6">
+      </div>
         {/* Step 1: Provider key — foundation for both driver modes */}
         <Step
           n={1}
@@ -174,33 +156,21 @@ export function SetupGuide({ onConfigured, compact = false }: SetupGuideProps) {
         >
           {!criticReady && (
             <div className="space-y-2">
-              <div className="flex items-end gap-2">
-                <div className="w-44">
-                  <Label className="text-xs text-muted-foreground">Provider</Label>
-                  <Select value={provider} onValueChange={setProvider}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PROVIDER_OPTIONS.map((p) => (
-                        <SelectItem key={p.value} value={p.value}>
-                          {p.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex-1">
-                  <Label className="text-xs text-muted-foreground">API key</Label>
-                  <Input
-                    type="password"
-                    placeholder="paste key…"
-                    autoComplete="off"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    className="h-9 font-mono"
-                  />
-                </div>
+              <Label className="text-xs text-muted-foreground">
+                {PROVIDER_LABEL} API key
+              </Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="password"
+                  placeholder="sk-ant-…"
+                  autoComplete="off"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && apiKey && !savingKey) handleSaveKey();
+                  }}
+                  className="h-9 font-mono flex-1"
+                />
                 <Button
                   onClick={handleSaveKey}
                   disabled={savingKey || apiKey.length === 0}
@@ -211,15 +181,20 @@ export function SetupGuide({ onConfigured, compact = false }: SetupGuideProps) {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                Stored in <code className="font-mono">~/.opentracy/secrets.json</code> on the
-                server. Never sent anywhere except the provider you select.
+                Stored in{' '}
+                <code className="font-mono">~/.opentracy/secrets.json</code>{' '}
+                on the server. Only sent to {PROVIDER_LABEL}.
               </p>
             </div>
           )}
           {criticReady && (
-            <p className="text-xs text-emerald-600 dark:text-emerald-400">
-              ✓ {status?.critic.provider} key configured.
-            </p>
+            <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400">
+              <Check className="size-3.5" />
+              <span>
+                {status?.critic.provider} key configured · model{' '}
+                <code className="font-mono">{status?.critic.model}</code>
+              </span>
+            </div>
           )}
           {missing.length > 0 && missing.some((p) => p !== criticProvider) && (
             <p className="mt-2 text-xs text-muted-foreground">
@@ -239,7 +214,10 @@ export function SetupGuide({ onConfigured, compact = false }: SetupGuideProps) {
             {/* A. Autonomous loop */}
             <div className="rounded-md border bg-muted/20 p-3 space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-sm font-medium">Autonomous loop</div>
+                <div className="flex items-center gap-2">
+                  <Workflow className="size-4 text-primary" />
+                  <div className="text-sm font-medium">Autonomous loop</div>
+                </div>
                 <Badge
                   variant="outline"
                   className={
@@ -251,18 +229,20 @@ export function SetupGuide({ onConfigured, compact = false }: SetupGuideProps) {
                   {criticReady ? 'live' : 'needs key'}
                 </Badge>
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground leading-relaxed">
                 Trigger engine fires on its tick, sensors emit signals,
-                policies dispatch recipes — all using the saved{' '}
-                {status?.critic.provider ?? 'provider'} key. No extra setup
-                once step 1 is ✓.
+                policies dispatch recipes — all using the saved key. No extra
+                setup once step 1 is done.
               </p>
             </div>
 
             {/* B. Claude Code via MCP */}
             <div className="rounded-md border bg-muted/20 p-3 space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-sm font-medium">Claude Code (MCP)</div>
+                <div className="flex items-center gap-2">
+                  <Bot className="size-4 text-primary" />
+                  <div className="text-sm font-medium">Claude Code (MCP)</div>
+                </div>
                 <Badge
                   variant="outline"
                   className="bg-muted text-muted-foreground font-mono text-[10px]"
@@ -270,12 +250,12 @@ export function SetupGuide({ onConfigured, compact = false }: SetupGuideProps) {
                   optional
                 </Badge>
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground leading-relaxed">
                 Operator-in-the-loop. Run once on the machine where Claude
-                Code lives — uses HTTP transport, user scope.
+                Code lives — HTTP transport, user scope.
               </p>
               <div className="flex items-center gap-2">
-                <code className="flex-1 truncate rounded-md bg-muted px-2 py-1.5 font-mono text-[11px]">
+                <code className="flex-1 truncate rounded-md bg-background border px-2 py-1.5 font-mono text-[11px]">
                   {mcpCommand}
                 </code>
                 <Button
@@ -283,13 +263,14 @@ export function SetupGuide({ onConfigured, compact = false }: SetupGuideProps) {
                   size="sm"
                   onClick={handleCopy}
                   className="h-8 shrink-0"
+                  aria-label="Copy MCP command"
                 >
                   {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
                 </Button>
               </div>
               <p className="text-[11px] text-muted-foreground">
-                Verify with <code className="font-mono">claude mcp list</code> —
-                you should see{' '}
+                Verify with <code className="font-mono">claude mcp list</code>{' '}
+                — you should see{' '}
                 <code className="font-mono">
                   {status?.mcp.name ?? 'opentracy-harness'}
                 </code>{' '}
@@ -312,8 +293,7 @@ export function SetupGuide({ onConfigured, compact = false }: SetupGuideProps) {
             <SamplePrompt text="propose a run_eval action against cost_per_successful_completion" />
           </div>
         </Step>
-      </CardContent>
-    </Card>
+    </div>
   );
 }
 
@@ -388,10 +368,12 @@ function SamplePrompt({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="block w-full rounded-md border bg-muted/30 px-3 py-1.5 text-left font-mono text-xs hover:bg-muted/60 transition-colors"
+      className="group flex w-full items-center gap-2 rounded-md border bg-muted/30 px-3 py-1.5 text-left font-mono text-xs hover:bg-muted/60 hover:border-primary/40 transition-colors"
       title="Click to copy"
     >
-      {text}
+      <Terminal className="size-3 text-muted-foreground shrink-0" />
+      <span className="flex-1 truncate">{text}</span>
+      <Copy className="size-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
     </button>
   );
 }

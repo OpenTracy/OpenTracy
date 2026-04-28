@@ -1,34 +1,128 @@
 /**
  * Agents tab — browse, inspect, and manually run harness agents.
- * Extracted verbatim from the original HarnessPage so existing
- * workflow (list agents → select → run) stays intact when the page
- * moved to a tabbed layout.
+ *
+ * Left column lists agents grouped by their role folder
+ * (inspectors / proposers / critics / narrators) with a search box and
+ * compact rows so the page stays usable as the agent count grows.
+ * Right column shows the selected agent's prompt + output schema and a
+ * runner.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Bot,
-  Play,
-  Loader2,
-  Copy,
+  BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
+  Copy,
+  Eye,
   FileText,
+  Lightbulb,
+  Loader2,
+  MousePointer2,
+  Play,
+  Scale,
+  Search,
   Wrench,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import {
   useHarnessService,
   type AgentConfig,
   type AgentRunResult,
 } from '@/services/harnessService';
 
-function AgentCard({
+// ---------------------------------------------------------------------------
+// role normalization + visuals
+// ---------------------------------------------------------------------------
+
+type RoleKey = 'inspector' | 'proposer' | 'critic' | 'narrator' | 'agent';
+
+const ROLE_ORDER: RoleKey[] = ['inspector', 'proposer', 'critic', 'narrator', 'agent'];
+
+const ROLE_META: Record<
+  RoleKey,
+  {
+    label: string;
+    description: string;
+    Icon: typeof Eye;
+    badgeClass: string;
+  }
+> = {
+  inspector: {
+    label: 'Inspectors',
+    description: 'Read-only — surface findings, no writes',
+    Icon: Eye,
+    badgeClass:
+      'bg-violet-500/10 text-violet-700 dark:text-violet-400 border-violet-500/30',
+  },
+  proposer: {
+    label: 'Proposers',
+    description: 'Suggest writes — gated through the critic',
+    Icon: Lightbulb,
+    badgeClass:
+      'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30',
+  },
+  critic: {
+    label: 'Critics',
+    description: 'Judge proposals before they execute',
+    Icon: Scale,
+    badgeClass:
+      'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30',
+  },
+  narrator: {
+    label: 'Narrators',
+    description: 'Summarize ledger activity for humans',
+    Icon: BookOpen,
+    badgeClass:
+      'bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-500/30',
+  },
+  agent: {
+    label: 'Other',
+    description: 'Uncategorized agents',
+    Icon: Bot,
+    badgeClass: 'bg-muted text-muted-foreground border-border',
+  },
+};
+
+function normalizeRole(role: string | undefined): RoleKey {
+  if (!role) return 'agent';
+  // Server returns plural directory names; normalize to singular keys.
+  const stripped = role.toLowerCase().replace(/s$/, '');
+  if (
+    stripped === 'inspector' ||
+    stripped === 'proposer' ||
+    stripped === 'critic' ||
+    stripped === 'narrator'
+  ) {
+    return stripped;
+  }
+  return 'agent';
+}
+
+// ---------------------------------------------------------------------------
+// agent row
+// ---------------------------------------------------------------------------
+
+function AgentRow({
   agent,
   isSelected,
   onSelect,
@@ -37,43 +131,38 @@ function AgentCard({
   isSelected: boolean;
   onSelect: () => void;
 }) {
+  const role = normalizeRole(agent.role);
+  const { Icon } = ROLE_META[role];
   return (
-    <Card
-      className={`cursor-pointer transition-colors hover:border-primary/40 ${
-        isSelected ? 'border-primary bg-accent/30' : ''
-      }`}
+    <button
+      type="button"
       onClick={onSelect}
+      className={`group flex w-full items-center gap-2.5 rounded-md border px-2.5 py-2 text-left transition-colors ${
+        isSelected
+          ? 'border-primary/60 bg-primary/5'
+          : 'border-transparent hover:bg-accent/40 hover:border-border'
+      }`}
     >
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Bot className="size-4 text-primary" />
-            <CardTitle className="text-sm font-medium">{agent.name}</CardTitle>
+      <Icon
+        className={`size-3.5 shrink-0 ${
+          isSelected ? 'text-primary' : 'text-muted-foreground'
+        }`}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-xs font-medium font-mono">{agent.name}</div>
+        {agent.description && (
+          <div className="truncate text-[11px] text-muted-foreground">
+            {agent.description}
           </div>
-          <Badge variant="secondary" className="text-xs">
-            {agent.model}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="pt-0">
-        <p className="text-xs text-muted-foreground">{agent.description}</p>
-        <div className="flex gap-2 mt-2">
-          <Badge variant="outline" className="text-xs">
-            temp: {agent.temperature}
-          </Badge>
-          <Badge variant="outline" className="text-xs">
-            {agent.output_schema.type}
-          </Badge>
-          {Object.keys(agent.output_schema.fields).length > 0 && (
-            <Badge variant="outline" className="text-xs">
-              {Object.keys(agent.output_schema.fields).length} fields
-            </Badge>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+        )}
+      </div>
+    </button>
   );
 }
+
+// ---------------------------------------------------------------------------
+// detail viewers
+// ---------------------------------------------------------------------------
 
 function PromptViewer({ prompt }: { prompt: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -154,6 +243,10 @@ function ResultViewer({ result }: { result: AgentRunResult | null }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// page
+// ---------------------------------------------------------------------------
+
 export function AgentsTab() {
   const service = useHarnessService();
 
@@ -164,6 +257,7 @@ export function AgentsTab() {
   const [running, setRunning] = useState(false);
   const [useTools, setUseTools] = useState(false);
   const [result, setResult] = useState<AgentRunResult | null>(null);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     service.listAgents().then((list) => {
@@ -189,48 +283,154 @@ export function AgentsTab() {
     }
   }, [selected, input, useTools, service]);
 
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return agents;
+    return agents.filter(
+      (a) =>
+        a.name.toLowerCase().includes(q) ||
+        (a.description ?? '').toLowerCase().includes(q),
+    );
+  }, [agents, search]);
+
+  const grouped = useMemo(() => {
+    const buckets = new Map<RoleKey, AgentConfig[]>();
+    for (const role of ROLE_ORDER) buckets.set(role, []);
+    for (const agent of filtered) {
+      const key = normalizeRole(agent.role);
+      buckets.get(key)!.push(agent);
+    }
+    for (const list of buckets.values()) {
+      list.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return ROLE_ORDER.map((role) => ({ role, agents: buckets.get(role)! })).filter(
+      (g) => g.agents.length > 0,
+    );
+  }, [filtered]);
+
+  const selectedRole = selected ? normalizeRole(selected.role) : 'agent';
+  const SelectedIcon = ROLE_META[selectedRole].Icon;
+
   return (
     <div className="grid grid-cols-12 gap-6">
-      <div className="col-span-4 space-y-3">
-        <h3 className="text-sm font-medium text-muted-foreground">Agents</h3>
+      <div className="col-span-12 md:col-span-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-muted-foreground">
+            Agents
+            {!loading && agents.length > 0 && (
+              <span className="ml-2 font-mono text-xs text-muted-foreground/70 tabular-nums">
+                {filtered.length}/{agents.length}
+              </span>
+            )}
+          </h3>
+        </div>
+
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+          <Input
+            placeholder="Search agents…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-9 pl-8 pr-8"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
+
         {loading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <Card key={i}>
-                <CardHeader>
-                  <Skeleton className="h-4 w-24" />
-                </CardHeader>
-                <CardContent>
-                  <Skeleton className="h-3 w-full" />
-                </CardContent>
-              </Card>
+          <div className="space-y-2">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <Skeleton key={i} className="h-12 w-full" />
             ))}
           </div>
+        ) : filtered.length === 0 ? (
+          <Empty className="border-0 py-8">
+            <EmptyHeader>
+              <EmptyTitle className="text-sm">No matches</EmptyTitle>
+              <EmptyDescription className="text-xs">
+                Nothing for "{search}". Try a shorter query.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : (
-          agents.map((agent) => (
-            <AgentCard
-              key={agent.name}
-              agent={agent}
-              isSelected={selected?.name === agent.name}
-              onSelect={() => {
-                setSelected(agent);
-                setResult(null);
-              }}
-            />
-          ))
+          <ScrollArea className="h-[calc(100vh-22rem)] min-h-64 pr-2">
+            <div className="space-y-4">
+              {grouped.map(({ role, agents: list }) => {
+                const meta = ROLE_META[role];
+                const RoleIcon = meta.Icon;
+                return (
+                  <div key={role} className="space-y-1.5">
+                    <div className="flex items-center gap-2 px-1">
+                      <RoleIcon className="size-3.5 text-muted-foreground" />
+                      <span className="text-[11px] uppercase tracking-wider font-medium text-muted-foreground">
+                        {meta.label}
+                      </span>
+                      <span className="font-mono text-[10px] text-muted-foreground/70 tabular-nums">
+                        {list.length}
+                      </span>
+                    </div>
+                    <div className="space-y-0.5">
+                      {list.map((agent) => (
+                        <AgentRow
+                          key={agent.name}
+                          agent={agent}
+                          isSelected={selected?.name === agent.name}
+                          onSelect={() => {
+                            setSelected(agent);
+                            setResult(null);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </ScrollArea>
         )}
       </div>
 
-      <div className="col-span-8 space-y-4">
+      <div className="col-span-12 md:col-span-8 space-y-4">
         {selected ? (
           <>
             <Card>
               <CardHeader className="pb-3">
-                <div className="flex items-center gap-2">
-                  <Bot className="size-5 text-primary" />
-                  <CardTitle>{selected.name}</CardTitle>
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <SelectedIcon className="size-5 text-primary shrink-0" />
+                    <CardTitle className="font-mono truncate">{selected.name}</CardTitle>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <Badge
+                      variant="outline"
+                      className={`font-mono text-[10px] ${ROLE_META[selectedRole].badgeClass}`}
+                    >
+                      {ROLE_META[selectedRole].label.replace(/s$/, '').toLowerCase()}
+                    </Badge>
+                    <Badge variant="secondary" className="font-mono text-[10px]">
+                      {selected.model}
+                    </Badge>
+                    <Badge variant="outline" className="font-mono text-[10px]">
+                      temp {selected.temperature}
+                    </Badge>
+                    <Badge variant="outline" className="font-mono text-[10px]">
+                      {selected.output_schema.type}
+                    </Badge>
+                  </div>
                 </div>
-                <p className="text-sm text-muted-foreground">{selected.description}</p>
+                {selected.description && (
+                  <p className="text-sm text-muted-foreground pt-2">
+                    {selected.description}
+                  </p>
+                )}
               </CardHeader>
               <CardContent className="space-y-3">
                 <PromptViewer prompt={selected.system_prompt} />
@@ -243,29 +443,31 @@ export function AgentsTab() {
                 <CardTitle className="text-sm">Run Agent</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <textarea
-                  className="w-full min-h-32 p-3 text-sm bg-muted rounded-md border-0 resize-y font-mono focus:outline-none focus:ring-1 focus:ring-primary"
-                  placeholder={`Enter input for ${selected.name}...`}
+                <Textarea
+                  className="min-h-32 font-mono text-sm resize-y"
+                  placeholder={`Enter input for ${selected.name}…`}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                 />
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <input
-                      type="checkbox"
+                <div className="flex items-center justify-between gap-3">
+                  <Label
+                    htmlFor="use-tools"
+                    className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer"
+                  >
+                    <Switch
+                      id="use-tools"
                       checked={useTools}
-                      onChange={(e) => setUseTools(e.target.checked)}
-                      className="rounded"
+                      onCheckedChange={setUseTools}
                     />
                     Enable tools (multi-turn)
-                  </label>
+                  </Label>
                   <Button size="sm" onClick={handleRun} disabled={running || !input.trim()}>
                     {running ? (
                       <Loader2 className="size-4 animate-spin" />
                     ) : (
                       <Play className="size-4" />
                     )}
-                    {running ? 'Running...' : 'Run'}
+                    {running ? 'Running…' : 'Run'}
                   </Button>
                 </div>
 
@@ -274,9 +476,18 @@ export function AgentsTab() {
             </Card>
           </>
         ) : (
-          <div className="flex items-center justify-center h-64 text-muted-foreground">
-            Select an agent to get started
-          </div>
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <MousePointer2 />
+              </EmptyMedia>
+              <EmptyTitle>Select an agent</EmptyTitle>
+              <EmptyDescription>
+                Pick an agent on the left to view its prompt, output schema,
+                and run it manually with custom input.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )}
       </div>
     </div>

@@ -6,7 +6,14 @@
  * no fetching, no actions.
  */
 
+import { useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import type { Proposal, ProposalStatus } from '@/services/harnessService';
 
 const STATUS_STYLES: Record<ProposalStatus, string> = {
@@ -47,6 +54,7 @@ export function formatUsd(value: number | null | undefined): string {
 }
 
 export function ProposalCard({ proposal }: { proposal: Proposal }) {
+  const [payloadOpen, setPayloadOpen] = useState(false);
   const data = (proposal.data ?? {}) as Record<string, unknown>;
   const verdict = (data.verdict ?? {}) as {
     decision?: string;
@@ -57,6 +65,7 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
   const kind = (data.kind as string | undefined) ?? '—';
   const summary = (data.summary as string | undefined) ?? '';
   const payload = (data.payload as Record<string, unknown> | undefined) ?? {};
+  const hasPayload = Object.keys(payload).length > 0;
 
   return (
     <div className="space-y-3 text-sm">
@@ -74,33 +83,61 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
 
       {summary && <p className="text-sm text-foreground">{summary}</p>}
 
-      <div className="rounded-md border bg-muted/30 p-3 space-y-1">
-        <div className="text-xs font-medium uppercase text-muted-foreground tracking-wide">
-          Critic verdict
-        </div>
-        <div className="text-xs">
-          <span className="font-mono">{verdict.decision ?? '—'}</span>
-          <span className="text-muted-foreground"> · est. </span>
-          <span className="font-mono">{formatUsd(verdict.estimated_cost_usd)}</span>
+      <div className="rounded-md border bg-muted/30 p-3 space-y-1.5">
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-medium uppercase text-muted-foreground tracking-wide">
+            Critic verdict
+          </div>
+          <Badge
+            variant="outline"
+            className="font-mono text-[10px] uppercase tracking-wide"
+          >
+            {verdict.decision ?? '—'}
+          </Badge>
         </div>
         {verdict.rationale && (
-          <p className="text-xs text-muted-foreground">{verdict.rationale}</p>
-        )}
-        {verdict.estimated_benefit && (
-          <p className="text-xs text-muted-foreground">
-            <span className="font-medium">Benefit:</span> {verdict.estimated_benefit}
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {verdict.rationale}
           </p>
         )}
+        <div className="flex items-center gap-3 text-xs text-muted-foreground pt-1">
+          <span>
+            Est. cost{' '}
+            <span className="font-mono text-foreground tabular-nums">
+              {formatUsd(verdict.estimated_cost_usd)}
+            </span>
+          </span>
+          {verdict.estimated_benefit && (
+            <>
+              <span>·</span>
+              <span>
+                Benefit{' '}
+                <span className="text-foreground">
+                  {verdict.estimated_benefit}
+                </span>
+              </span>
+            </>
+          )}
+        </div>
       </div>
 
-      <details className="text-xs">
-        <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-          Payload
-        </summary>
-        <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted/40 p-2 text-[11px] leading-tight">
-          {JSON.stringify(payload, null, 2)}
-        </pre>
-      </details>
+      {hasPayload && (
+        <Collapsible open={payloadOpen} onOpenChange={setPayloadOpen}>
+          <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+            {payloadOpen ? (
+              <ChevronDown className="size-3" />
+            ) : (
+              <ChevronRight className="size-3" />
+            )}
+            Payload
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted/40 p-2 text-[11px] leading-tight font-mono">
+              {JSON.stringify(payload, null, 2)}
+            </pre>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
     </div>
   );
 }
