@@ -11,11 +11,17 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
+    "@slack/socket-mode": "^2.0.7",
     "hono": "^4.6.0",
+    "qrcode": "^1.5.4",
     "zod": "^3.23.0"
+  },
+  "optionalDependencies": {
+    "baileys": "^7.0.0-rc11"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
+    "@types/qrcode": "^1.5.6",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }
