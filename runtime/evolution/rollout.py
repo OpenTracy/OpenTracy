@@ -29,6 +29,7 @@ def run_rollout(
     k: int = 2,
     write_trace: Any = None,
     agent_id: Optional[str] = None,
+    semantic_verifier: Optional[Any] = None,
 ) -> RolloutResult:
     """Replay each task ``k`` times. Returns the flat list of outcomes.
 
@@ -89,13 +90,42 @@ def run_rollout(
                     except Exception as exc:  # pragma: no cover — defensive
                         logger.warning("rollout write_trace failed: %s", exc)
 
+                mech_response = getattr(record, "response", "") or ""
+                mech_success = bool(getattr(record, "success", True))
+                mech_error: Optional[str] = getattr(record, "error", None)
+
+                # Semantic verifier (Wave E). Only override when the
+                # pipeline succeeded mechanically — if it already
+                # failed, the mechanical reason is more useful than a
+                # second-order judge call. The verifier is fail-open:
+                # any judge problem leaves the mechanical verdict
+                # untouched.
+                if mech_success and not mech_error and semantic_verifier is not None:
+                    try:
+                        sem_pass, sem_reason = semantic_verifier(
+                            task=task,
+                            response=mech_response,
+                        )
+                        if not sem_pass:
+                            logger.warning(
+                                "rollout: semantic verifier failed task=%r reason=%s",
+                                task, sem_reason,
+                            )
+                            mech_success = False
+                            mech_error = f"semantic_verifier: {sem_reason}"
+                    except Exception as exc:  # pragma: no cover — defensive
+                        logger.warning(
+                            "rollout: semantic verifier crashed for task=%r: %s",
+                            task, exc,
+                        )
+
                 outcomes.append(TaskOutcome(
                     task=task,
-                    response=getattr(record, "response", "") or "",
-                    success=bool(getattr(record, "success", True)),
+                    response=mech_response,
+                    success=mech_success,
                     duration_ms=float(getattr(record, "duration_ms", 0.0)),
                     trace_id=trace_id,
-                    error=getattr(record, "error", None),
+                    error=mech_error,
                     run_index=run_index,
                 ))
     finally:
