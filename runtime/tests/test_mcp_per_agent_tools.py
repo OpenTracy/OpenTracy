@@ -132,7 +132,8 @@ def test_list_nexau_components_baseline(workspace):
     assert comp["middleware"] == []
     assert comp["skills"] == []
     assert comp["subagents"] == []
-    assert sorted(comp["memory"]) == ["plan.md", "state.json"]
+    assert sorted(comp["memory"]) == ["long_term.md", "plan.md", "state.json"]
+    assert comp["long_term_memory"] == ["long_term.md"]
 
 
 def test_read_pending_manifest_returns_null_when_unset(workspace):
