@@ -898,6 +898,7 @@ class TraceSummary(BaseModel):
     # side-table at response time. False when no flag row exists (or
     # the latest row is an unflag).
     flagged: bool = False
+    channel: Optional[str] = None
 
 
 class TracesPage(BaseModel):
@@ -2117,9 +2118,7 @@ async def run(payload: RunRequest) -> RunResponse:
     # it so the UI can group multi-turn calls into a single conversation.
     session_id = payload.session_id or f"sess_{uuid.uuid4().hex[:12]}"
     _, rec = executor.run(payload.request, history=history, session_id=session_id)
-    trace_id = write_trace(rec)
-    # Increment AFTER write_trace so a failure to persist doesn't burn a
-    # billable trace. Failures here are logged but don't fail the request.
+    trace_id = write_trace(rec, channel="webhook")
     try:
         quota.consume_trace()
     except Exception as e:  # noqa: BLE001
@@ -3093,16 +3092,24 @@ def onboarding_complete(payload: OnboardingCompleteRequest) -> OnboardingState:
     the legacy onboarding.json so the gate logic in the UI keeps
     working without further changes."""
     from runtime.agents.registry import activate as activate_agent
-    from runtime.agents.registry import create_agent
+    from runtime.agents.registry import create_agent, get_agent
+    from runtime.store import onboarding_session as _v2_session
     from runtime.store.onboarding import record_complete
 
     body = payload.model_dump()
 
-    # Create the agent entry + activate it. The activate hook recompiles
-    # the pipeline so /run starts using the new prompt/model immediately.
     try:
-        meta = create_agent(body)
-        activate_agent(meta.id, on_activate=lambda m: _reload_live_pipeline(m.id))
+        existing_id: Optional[str] = None
+        try:
+            sess = _v2_session.get_or_create_session()
+            existing_id = sess.agent_id
+        except Exception:  # noqa: BLE001
+            existing_id = None
+        if existing_id and get_agent(existing_id) is not None:
+            activate_agent(existing_id, on_activate=lambda m: _reload_live_pipeline(m.id))
+        else:
+            meta = create_agent(body)
+            activate_agent(meta.id, on_activate=lambda m: _reload_live_pipeline(m.id))
     except Exception as e:
         logger.warning(
             "agent registry create+activate failed (%s) — falling back to legacy "
@@ -3113,6 +3120,17 @@ def onboarding_complete(payload: OnboardingCompleteRequest) -> OnboardingState:
     # completed=True; this also writes the agent_created Lesson via the
     # existing hook so Evolution still surfaces the birth.
     cfg = record_complete(body)
+
+    # Wipe the V2 conversational session so the next visit to onboarding
+    # starts fresh (new agent_id, no pre-populated channel connections).
+    # Without this, the per-tenant session file persists across runs and
+    # the next "new agent" reuses the previous agent_id + its channels.
+    from runtime.store import onboarding_session
+    try:
+        onboarding_session.reset()
+    except Exception as e:
+        logger.warning("onboarding_session.reset() after complete failed: %s", e)
+
     return OnboardingState(**cfg.to_dict())
 
 
@@ -3120,7 +3138,12 @@ def onboarding_complete(payload: OnboardingCompleteRequest) -> OnboardingState:
 def onboarding_skip() -> OnboardingState:
     """Operator skipped — mark complete without launching anything."""
     from runtime.store.onboarding import record_skip
+    from runtime.store import onboarding_session
     cfg = record_skip()
+    try:
+        onboarding_session.reset()
+    except Exception as e:
+        logger.warning("onboarding_session.reset() after skip failed: %s", e)
     return OnboardingState(**cfg.to_dict())
 
 
@@ -3929,7 +3952,7 @@ def widget_message_endpoint(
     history = [Message(role=m.role, content=m.content) for m in (payload.history or [])]
     executor = _state["executor"]
     _, exec_record = executor.run(payload.message, history=history)
-    trace_id = write_trace(exec_record)
+    trace_id = write_trace(exec_record, channel="web")
     session = payload.session or f"web_{uuid.uuid4().hex[:12]}"
     resp = WidgetMessageResponse(
         response=exec_record.response,
@@ -4180,6 +4203,7 @@ def _resolve_api_token_tenant(agent_id: str, token: str) -> None:
 class ApiChatRequest(BaseModel):
     request: str
     history: Optional[list[HistoryMessage]] = None
+    channel: Optional[str] = None
 
 
 class ApiChatResponse(BaseModel):
@@ -4242,7 +4266,7 @@ def api_chat_endpoint(
     history = [Message(role=m.role, content=m.content) for m in (payload.history or [])]
     executor = _state["executor"]
     _, exec_record = executor.run(payload.request, history=history)
-    trace_id = write_trace(exec_record)
+    trace_id = write_trace(exec_record, channel="api")
 
     return ApiChatResponse(
         response=exec_record.response,
@@ -4286,7 +4310,7 @@ def internal_run_endpoint(
     history = [Message(role=m.role, content=m.content) for m in (payload.history or [])]
     executor = _state["executor"]
     _, exec_record = executor.run(payload.request, history=history)
-    trace_id = write_trace(exec_record)
+    trace_id = write_trace(exec_record, channel=payload.channel or "internal")
     return ApiChatResponse(
         response=exec_record.response,
         trace_id=trace_id,

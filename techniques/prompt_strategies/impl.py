@@ -394,13 +394,112 @@ def _render_user_message(documents: list[Document], request: str) -> str:
     return f"Context:\n{context_str}\n\nQuestion: {request}"
 
 
+class _ClaudeCode:
+    """``claude_code`` variant — each turn runs in an E2B sandbox via the
+    Claude Code CLI, with the agent's workspace mounted so the per-turn
+    agent can read its own NexAU components (skills, memory, tools).
+
+    Distinct from ``_Direct`` (single ``messages.create`` round trip):
+    here the model gets a real shell + filesystem and can edit its own
+    memory/plan between turns. BYOK is mandatory — no offline marker;
+    if the per-agent Anthropic key isn't set we raise so the operator
+    sees the failure instead of getting a phantom response.
+
+    See [[project_p16_4_ahe_shipped]] for the original strategy design
+    (P16.4 autonomous arm). Knobs:
+
+      - ``timeout``: sandbox lifetime, default 300s. The per-turn agent
+        usually finishes well under this; longer iterations belong in
+        the evolution loop, not a single chat turn.
+      - ``model``: routed via context.routing if absent.
+    """
+
+    def __init__(self, knobs: dict[str, Any]) -> None:
+        self.timeout_s: int = int(knobs.get("timeout", 300))
+
+    def execute(self, context: Context) -> Context:
+        from runtime.agent_context import get_active
+        from runtime.agents.secrets import get_secret
+        from runtime.sandbox import SandboxRun
+        from runtime.workspaces import get_workspace
+
+        agent_id = get_active()
+        api_key = get_secret("anthropic", agent_id=agent_id)
+        if not api_key:
+            # AHE invariant per [[byok_strict]]: never fall back to a
+            # platform-level key. Generate must fail closed.
+            raise RuntimeError(
+                f"claude_code: no Anthropic BYOK for agent {agent_id!r} — "
+                "set the per-agent key before chatting"
+            )
+
+        workspace = get_workspace(agent_id)
+        workspace.ensure()
+        system_prompt = workspace.read_system_prompt()
+        tar_in = workspace.to_tar_bytes()
+
+        model = (
+            context.routing.model
+            if context.routing and context.routing.model
+            else _DEFAULT_MODEL
+        )
+
+        response_chunks: list[str] = []
+        try:
+            with SandboxRun(
+                anthropic_key=api_key,
+                timeout_s=self.timeout_s,
+            ) as sb:
+                sb.upload_workspace_tar(tar_in)
+                for evt in sb.run_claude(
+                    context.request,
+                    system=system_prompt,
+                    model=model,
+                ):
+                    kind = evt.get("type")
+                    if kind == "stdout":
+                        response_chunks.append(evt.get("data") or "")
+                    elif kind == "stderr":
+                        logger.info(
+                            "claude_code stderr: %s", evt.get("data"),
+                        )
+                    elif kind == "error":
+                        logger.warning(
+                            "claude_code sandbox error: %s",
+                            evt.get("detail"),
+                        )
+                        break
+                    elif kind == "done":
+                        break
+
+                # Snapshot back: the per-turn agent may have updated
+                # memory/plan or skills based on the turn. Failures
+                # here are logged but not fatal — the response itself
+                # is the contract; workspace evolution is best-effort.
+                try:
+                    tar_out = sb.snapshot_workspace_tar()
+                    workspace.from_tar_bytes(tar_out)
+                except Exception as exc:
+                    logger.warning(
+                        "claude_code: snapshot back failed: %s", exc,
+                    )
+        except Exception as exc:
+            logger.warning("claude_code: sandbox lifetime failed: %s", exc, exc_info=True)
+            raise
+
+        context.response = "".join(response_chunks).strip()
+        return context
+
+
 class PromptStrategiesTechnique(BaseTechnique):
     name = "prompt_strategies"
-    variants = ("direct",)
+    variants = ("direct", "claude_code")
 
     def compile(self, variant: str, knobs: dict[str, Any]) -> Stage:
         if variant not in self.variants:
             raise ValueError(
                 f"prompt_strategies: unknown variant {variant!r}; expected one of {self.variants}"
             )
+        if variant == "claude_code":
+            return _ClaudeCode(knobs)
         return _Direct(knobs)

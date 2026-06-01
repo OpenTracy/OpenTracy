@@ -192,6 +192,10 @@ def create_agent(
     else:
         agent_dir.mkdir(parents=True, exist_ok=True)
 
+    integrations_dir = agent_dir / "integrations"
+    if integrations_dir.is_dir():
+        shutil.rmtree(integrations_dir, ignore_errors=True)
+
     _apply_payload_to_dir(agent_dir, payload)
 
     timestamp = _now_iso(now_iso)

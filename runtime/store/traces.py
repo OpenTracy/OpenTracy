@@ -108,6 +108,7 @@ _SCALAR_COLS: dict[str, str] = {
     "tokens_in": "BIGINT",
     "tokens_out": "BIGINT",
     "cost_usd": "DOUBLE",
+    "channel": "VARCHAR",
 }
 
 
@@ -283,6 +284,7 @@ def _row_to_summary(row: dict) -> dict:
         "tokens_in": int(tokens_in) if tokens_in is not None else None,
         "tokens_out": int(tokens_out) if tokens_out is not None else None,
         "cost_usd": float(cost_usd) if cost_usd is not None else None,
+        "channel": _s(row.get("channel")),
     }
 
 
