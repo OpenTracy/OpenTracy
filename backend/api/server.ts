@@ -11,7 +11,6 @@ import { agentsRouter } from '../channels/agents/handler'
 import { mcpRouter } from '../channels/mcp/handler'
 import { apiChannelRouter } from '../channels/api/handler'
 import { slackRouter } from '../channels/slack/handler'
-import { whatsappRouter } from '../channels/whatsapp/handler'
 import { widgetPublicRouter } from '../channels/widget/handler'
 import { datasetRouter } from '../channels/dataset/handler'
 import { billingRouter } from '../channels/billing/handler'
@@ -25,6 +24,19 @@ import { routerRouter } from '../channels/router/handler'
 import { sessionsRouter, tracesRouter } from '../channels/traces/handler'
 import { versionsRouter } from '../channels/versions/handler'
 import { webhookRouter } from '../channels/webhook/handler'
+import { autoResumeSockets } from '../channels/slack/socket'
+import { autoResumeWhatsAppSockets } from '../channels/whatsapp/socket'
+
+// Baileys' internal HTTP/websocket layer occasionally surfaces errors
+// (ECONNRESET from undici, etc.) that aren't caught by its own handlers
+// and would otherwise crash the whole process. Swallow with a warning —
+// the per-channel reconnect logic handles the recovery.
+process.on('uncaughtException', (err) => {
+  console.warn('[uncaughtException]', err?.message ?? err)
+})
+process.on('unhandledRejection', (reason) => {
+  console.warn('[unhandledRejection]', reason instanceof Error ? reason.message : reason)
+})
 
 const app = new Hono()
 
@@ -45,9 +57,6 @@ app.get('/health', (c) => c.json({ status: 'ok' }))
 // signed events webhook for messages). Each endpoint authenticates
 // itself: OAuth via state cookie, events via signature.
 app.route('/slack', slackRouter)
-// Twilio WhatsApp webhook. Same pattern — Twilio drives it, signs each
-// request with HMAC-SHA1 over URL+params; verified inside the handler.
-app.route('/whatsapp', whatsappRouter)
 // Web widget — embed JS + public inbound messages. Origin-gated, no auth.
 app.route('/widget', widgetPublicRouter)
 // MCP HTTP/SSE — customer Claude Code CLI connects here with its
@@ -123,4 +132,13 @@ const port = Number(process.env.PORT ?? 8002)
 
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`backend listening on http://127.0.0.1:${info.port}`)
+  // Reopen any Slack Socket Mode sessions from persisted installs so
+  // restarts don't need user action.
+  void autoResumeSockets().catch((e) =>
+    console.warn('[slack socket] auto-resume threw:', (e as Error).message),
+  )
+  // Same for WhatsApp Baileys sessions.
+  void autoResumeWhatsAppSockets().catch((e) =>
+    console.warn('[wa] auto-resume threw:', (e as Error).message),
+  )
 })
