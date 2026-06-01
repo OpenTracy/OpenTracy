@@ -33,11 +33,10 @@ and ``memory/`` are seeded with defaults — tools/middleware/skills/
 subagents start empty so every addition must justify itself through
 measured evidence rather than seed bias.
 
-The agents_root resolution mirrors :func:`runtime.agents.registry._resolve_root`
-so in multi-tenant mode the path is gcsfuse-mounted to
-``gs://opentracy-workspaces/<tenant>/<agent>/workspace/`` — persistence
-is automatic. In OSS mode the workspace lives on local disk next to
-the agent config.
+The agents_root resolution mirrors :func:`runtime.agents.registry._resolve_root`,
+so the workspace lives on local disk next to the agent config. Deployments
+that mount a network or object-store-backed filesystem at that path get
+durable persistence transparently, with no code change here.
 
 Sandbox transfer
 ----------------
@@ -86,9 +85,20 @@ SKILLS_DIR = f"{OPENTRACY_DIR}/skills"
 SUBAGENTS_DIR = f"{OPENTRACY_DIR}/subagents"
 
 # 7. long_term_memory
+#
+# Three files:
+#   - plan.md         narrative plan the per-turn agent rewrites (short-lived)
+#   - state.json      structured next-step / facts (short-lived, machine-managed)
+#   - long_term.md    accumulated learnings across iterations. The Evolve
+#                     Agent is allowed (encouraged) to APPEND to this; it
+#                     should rarely rewrite or delete entries because they
+#                     encode patterns proven across multiple rollouts.
+#                     This separates always-on rules (system_prompt.md)
+#                     from advisory learnings the agent can scan at startup.
 MEMORY_DIR = f"{OPENTRACY_DIR}/memory"
 PLAN_FILE = f"{MEMORY_DIR}/plan.md"
 STATE_FILE = f"{MEMORY_DIR}/state.json"
+LONG_TERM_MEMORY_FILE = f"{MEMORY_DIR}/long_term.md"
 
 # AHE Decision Observability (§3.3) — Change Manifest layer
 MANIFEST_DIR = f"{OPENTRACY_DIR}/manifest"
@@ -99,6 +109,21 @@ MANIFEST_HISTORY_DIR = f"{MANIFEST_DIR}/history"
 # is ``regressed`` to restore the affected files to their pre-edit
 # state (file-level rollback per AHE §3.3).
 ROLLBACK_SNAPSHOT = f"{MANIFEST_DIR}/rollback_snapshot.json"
+
+# Per-iteration baseline rollout (task → "pass" / "fail" / "flaky").
+# Written when ``write_pending_manifest`` is called so the *next*
+# iteration's verification step can compute per-change flips by
+# comparing the post-edits rollout against this pre-edits baseline.
+# Without this we can only see "did the iteration improve overall?",
+# not "did this specific change land its predicted fix?".
+PENDING_BASELINE = f"{MANIFEST_DIR}/pending_baseline.json"
+
+# Per-change attribution + KEEP/IMPROVE/ROLLBACK_AND_PIVOT decision,
+# one file per iteration. The next Evolve Agent reads recent entries
+# to learn which constraint_levels are working for which failure
+# patterns (AHE §3.4 anti-pattern: same failure 2+ iterations at the
+# same level → pivot).
+CHANGE_EVAL_DIR = f"{MANIFEST_DIR}/change_evaluation"
 
 
 _WORKSPACE_DIR = "workspace"
@@ -179,6 +204,36 @@ _DEFAULT_STATE: dict[str, Any] = {
     "blockers": [],
     "last_turn_at": None,
 }
+
+# Seed for long_term.md. Kept as an empty-but-structured outline so the
+# Evolve Agent has obvious anchor sections to append into rather than
+# inventing the file shape from scratch each iteration.
+_DEFAULT_LONG_TERM_MEMORY = """\
+# Long-Term Memory
+
+Lessons proven across multiple rollouts. The per-turn agent reads
+this at startup; the Evolve Agent appends new entries here when a
+pattern is confirmed by repeated evidence.
+
+Do not delete entries without a clear reason — they encode hard-won
+context. Prefer appending refinements over rewrites.
+
+## Domain conventions
+
+(empty)
+
+## Recurring pitfalls
+
+(empty)
+
+## Proven strategies
+
+(empty)
+
+## Environment quirks
+
+(empty)
+"""
 
 # Limits: keep workspaces lean. Large blobs belong in object storage,
 # not the workspace. Raise deliberately if a real use case shows up.
@@ -262,6 +317,12 @@ class WorkspaceStore:
                 encoding="utf-8",
             )
 
+        long_term_path = self.path / LONG_TERM_MEMORY_FILE
+        if not long_term_path.exists():
+            long_term_path.write_text(
+                _DEFAULT_LONG_TERM_MEMORY, encoding="utf-8",
+            )
+
     # -- system_prompt -------------------------------------------------
 
     def read_system_prompt(self) -> str:
@@ -287,6 +348,18 @@ class WorkspaceStore:
         except json.JSONDecodeError:
             logger.warning("workspace state corrupt for %s — resetting", self.agent_id)
             return dict(_DEFAULT_STATE)
+
+    def read_long_term_memory(self) -> str:
+        """Cumulative lessons (separate from system_prompt advisory rules).
+
+        The Evolve Agent is encouraged to append-only on this file —
+        entries here are patterns proven across multiple rollouts, so
+        delete-then-rewrite forfeits learning.
+        """
+        path = self.path / LONG_TERM_MEMORY_FILE
+        if not path.exists():
+            return _DEFAULT_LONG_TERM_MEMORY
+        return path.read_text(encoding="utf-8")
 
     # -- change manifest (AHE §3.3) ------------------------------------
 
@@ -316,6 +389,109 @@ class WorkspaceStore:
         except json.JSONDecodeError:
             logger.warning("pending manifest corrupt for %s — discarding", self.agent_id)
             return None
+
+    def write_pending_baseline(
+        self,
+        *,
+        iteration_id: str,
+        task_outcomes: dict[str, str],
+    ) -> None:
+        """Persist the pre-edits rollout outcomes that the *current*
+        pending manifest is being predicted against.
+
+        ``task_outcomes`` maps each task identifier to ``"pass"`` /
+        ``"fail"`` / ``"flaky"`` (majority view per the rollout). The
+        next iteration's verifier reads this back to compute per-change
+        flip_to_pass / flip_to_fail attribution. Without it we can only
+        see "did the iteration improve overall?", not "did THIS change
+        land its predicted fix?".
+        """
+        self.ensure()
+        path = self.path / PENDING_BASELINE
+        path.write_text(
+            json.dumps({
+                "iteration_id": iteration_id,
+                "task_outcomes": dict(task_outcomes),
+            }, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+    def read_pending_baseline(self) -> Optional[dict[str, Any]]:
+        path = self.path / PENDING_BASELINE
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            logger.warning("pending baseline corrupt for %s — discarding", self.agent_id)
+            return None
+
+    def clear_pending_baseline(self) -> None:
+        try:
+            (self.path / PENDING_BASELINE).unlink()
+        except FileNotFoundError:
+            pass
+
+    def write_change_evaluation(
+        self,
+        *,
+        iteration_id: str,
+        verdict: str,
+        evaluations: list[dict[str, Any]],
+        unexpected_flips_to_pass: Optional[list[str]] = None,
+        unexpected_flips_to_fail: Optional[list[str]] = None,
+    ) -> Path:
+        """Persist per-change attribution + decisions for one iteration.
+
+        One file per iteration under ``manifest/change_evaluation/``.
+        The next Evolve Agent reads recent entries to spot the
+        "same failure persists at same constraint_level" anti-pattern
+        (AHE §3.4) — i.e., if the same ``failure_pattern`` keeps
+        producing ``ROLLBACK_AND_PIVOT`` decisions at the same level,
+        it must pivot to a different component class.
+        """
+        self.ensure()
+        cdir = self.path / CHANGE_EVAL_DIR
+        cdir.mkdir(parents=True, exist_ok=True)
+        out = cdir / f"{iteration_id}.json"
+        body = {
+            "iteration_id": iteration_id,
+            "verdict": verdict,
+            "written_at": _now_iso(),
+            "evaluations": list(evaluations),
+            "unexpected_flips_to_pass": list(unexpected_flips_to_pass or []),
+            "unexpected_flips_to_fail": list(unexpected_flips_to_fail or []),
+        }
+        out.write_text(
+            json.dumps(body, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return out
+
+    def list_change_evaluations(
+        self, *, limit: int = 5
+    ) -> list[dict[str, Any]]:
+        """Return the most recent change evaluations, newest first.
+
+        Filenames are iteration ids (``evo-YYYYMMDDTHHMMSS-XXXXXX``),
+        which sort lexicographically by time — so reverse-sorted file
+        listing == newest-first ordering without parsing timestamps.
+        """
+        cdir = self.path / CHANGE_EVAL_DIR
+        if not cdir.exists():
+            return []
+        items: list[dict[str, Any]] = []
+        for entry in sorted(cdir.glob("*.json"), reverse=True):
+            try:
+                items.append(json.loads(entry.read_text(encoding="utf-8")))
+            except json.JSONDecodeError:
+                logger.warning(
+                    "change_evaluation %s unreadable — skipping", entry.name
+                )
+                continue
+            if len(items) >= limit:
+                break
+        return items
 
     def roll_pending_to_history(
         self,
@@ -348,33 +524,47 @@ class WorkspaceStore:
             (self.path / MANIFEST_PENDING).unlink()
         except FileNotFoundError:
             pass
+        # The baseline was the rollout that the just-archived pending
+        # was predicted against — once we have the verdict, it has
+        # served its purpose. Leaving it around would let a future
+        # iteration mis-attribute flips against a stale baseline.
+        self.clear_pending_baseline()
         return archive
 
     def write_rollback_snapshot(
         self,
         *,
         iteration_id: str,
-        files: dict[str, Optional[str]],
+        files: Optional[dict[str, Optional[str]]] = None,
+        by_change: Optional[dict[str, dict[str, Optional[str]]]] = None,
     ) -> None:
         """Persist pre-edit file contents so the next round can roll back.
 
-        ``files`` maps relative path → content (str) for files that
-        existed before the Evolve Agent ran, or ``None`` for paths the
-        Evolve Agent NEWLY created (rollback = unlink for those).
+        Two shapes are supported:
+          - ``files={rel: content_or_None}`` — iteration-wide snapshot
+            (backward-compat with the v1 single-bucket rollback)
+          - ``by_change={chg_id: {rel: content_or_None}}`` — per-change
+            buckets so the verifier can apply a *scoped* rollback to
+            only the changes that landed a ROLLBACK_AND_PIVOT decision,
+            leaving KEEP / IMPROVE changes intact.
 
+        Exactly one of ``files`` / ``by_change`` must be supplied.
         Stored as JSON next to pending.json so the next iteration's
         verification step can find + apply it. Cleared automatically
-        after rollback OR when the next iteration confirms the
-        manifest (the file represents "edits awaiting verdict", same
-        lifetime contract as pending.json itself).
+        after rollback (full or scoped) OR when the next iteration
+        confirms the manifest.
         """
+        if (files is None) == (by_change is None):
+            raise ValueError("write_rollback_snapshot: pass exactly one of files / by_change")
         self.ensure()
         path = self.path / ROLLBACK_SNAPSHOT
+        payload: dict[str, Any] = {"iteration_id": iteration_id}
+        if by_change is not None:
+            payload["by_change"] = by_change
+        else:
+            payload["files"] = files
         path.write_text(
-            json.dumps({
-                "iteration_id": iteration_id,
-                "files": files,
-            }, indent=2, ensure_ascii=False) + "\n",
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
 
@@ -394,21 +584,87 @@ class WorkspaceStore:
         except FileNotFoundError:
             pass
 
-    def apply_rollback(self) -> list[str]:
-        """Restore each file from the rollback snapshot. Returns the
-        list of paths that were rolled back.
+    def apply_rollback(
+        self,
+        *,
+        only_changes: Optional[Iterable[str]] = None,
+    ) -> list[str]:
+        """Restore files from the rollback snapshot. Returns the list of
+        paths rolled back.
 
-        For paths whose snapshot value is ``None`` (the Evolve Agent
-        had created them fresh), rollback = unlink. For paths with
-        content, rollback = overwrite with the saved content.
+        Two modes:
+          - ``only_changes=None`` (default) — roll back every file in
+            the snapshot. Clears the whole snapshot at the end (legacy
+            iteration-wide rollback path).
+          - ``only_changes={chg_id, ...}`` — scoped rollback: restore
+            only files whose change_id is in the set. Other buckets in
+            the snapshot stay intact for future scoped applies, and the
+            snapshot is cleared only when all buckets are drained or
+            ``only_changes`` is empty (no-op).
 
-        Always clears the snapshot at the end — single-shot.
+        ``only_changes`` is only honored when the snapshot was written
+        with ``by_change=...``. For legacy ``files=...`` snapshots the
+        argument is ignored and the full snapshot is applied (we can't
+        attribute paths to change ids retroactively).
         """
         snapshot = self.read_rollback_snapshot()
         if snapshot is None:
             return []
+
+        by_change_snap = snapshot.get("by_change")
+        if by_change_snap and only_changes is not None:
+            target_ids = set(only_changes)
+            if not target_ids:
+                return []
+            rolled = self._apply_scoped(by_change_snap, target_ids)
+            remaining = {
+                cid: bucket for cid, bucket in by_change_snap.items()
+                if cid not in target_ids
+            }
+            if remaining:
+                snapshot["by_change"] = remaining
+                path = self.path / ROLLBACK_SNAPSHOT
+                path.write_text(
+                    json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+            else:
+                self.clear_rollback_snapshot()
+            return rolled
+
+        # Full rollback. Works on either snapshot shape.
+        files_map: dict[str, Optional[str]] = {}
+        if by_change_snap:
+            for bucket in by_change_snap.values():
+                for rel, content in (bucket or {}).get("files", {}).items():
+                    files_map.setdefault(rel, content)
+        else:
+            files_map.update(snapshot.get("files") or {})
+
+        rolled = self._restore_files(files_map)
+        self.clear_rollback_snapshot()
+        return rolled
+
+    def _apply_scoped(
+        self,
+        by_change_snap: dict[str, dict[str, Any]],
+        target_ids: set[str],
+    ) -> list[str]:
+        files_map: dict[str, Optional[str]] = {}
+        for cid in target_ids:
+            bucket = by_change_snap.get(cid) or {}
+            for rel, content in (bucket.get("files") or {}).items():
+                # If two pivoted changes touched the same file, keep
+                # the OLDEST recorded pre-edit content so the rollback
+                # genuinely returns to "before any of them ran". Bucket
+                # iteration order is the agent's declared change order;
+                # ``setdefault`` honors first-wins, which matches that.
+                files_map.setdefault(rel, content)
+        return self._restore_files(files_map)
+
+    def _restore_files(self, files_map: dict[str, Optional[str]]) -> list[str]:
         rolled: list[str] = []
-        for rel, content in (snapshot.get("files") or {}).items():
+        for rel, content in files_map.items():
             target = self.path.joinpath(rel)
             try:
                 # Guard against path traversal in stored snapshot data.
@@ -426,7 +682,6 @@ class WorkspaceStore:
                 rolled.append(rel)
             except OSError as exc:
                 logger.warning("rollback: failed on %s: %s", rel, exc)
-        self.clear_rollback_snapshot()
         return rolled
 
     # -- versioning ----------------------------------------------------
@@ -461,8 +716,8 @@ class WorkspaceStore:
         if target.exists():
             return target
         target.parent.mkdir(parents=True, exist_ok=True)
-        # shutil.copytree is the simplest reliable copy; sets `dirs_exist_ok`
-        # to handle gcsfuse races where the parent dir already exists.
+        # shutil.copytree is the simplest reliable copy; `dirs_exist_ok`
+        # tolerates a parent dir that already exists.
         import shutil
         shutil.copytree(self.path, target, dirs_exist_ok=True)
         return target
@@ -583,6 +838,7 @@ class WorkspaceStore:
             "skills": [],
             "subagents": [],
             "memory": [],
+            "long_term_memory": [],
         }
         if (self.path / SYSTEM_PROMPT_FILE).exists():
             out["system_prompt"].append("system_prompt.md")
@@ -591,6 +847,11 @@ class WorkspaceStore:
         out["skills"] = _list_dir_files(self.path / SKILLS_DIR)
         out["subagents"] = _list_dir_files(self.path / SUBAGENTS_DIR)
         out["memory"] = _list_dir_files(self.path / MEMORY_DIR)
+        # Single-file pillar surfaced separately so the Evolve Agent
+        # sees "long_term_memory: [long_term.md]" instead of having to
+        # infer it from the broader memory/ bucket.
+        if (self.path / LONG_TERM_MEMORY_FILE).exists():
+            out["long_term_memory"].append("long_term.md")
         return out
 
     # -- sandbox transfer ---------------------------------------------
