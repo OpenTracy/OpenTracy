@@ -17,6 +17,7 @@ export interface SlackInstallation {
   team_name: string
   bot_user_id: string
   bot_token: string
+  app_token: string
   installer_user_id: string
   installed_at: string
 }

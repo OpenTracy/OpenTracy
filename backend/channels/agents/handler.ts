@@ -10,14 +10,13 @@
 
 import { Hono } from 'hono'
 import { proxyHeaders } from '../../auth/proxy_headers'
-import { SlackConfigError } from '../slack/config'
 import {
-  deleteAgentSlackCredentials,
   disconnectAgentSlack,
-  getAgentSlackCredentials,
   getAgentSlackStatus,
-  putAgentSlackCredentials,
+  installAgentSlack,
+  SlackInstallError,
 } from '../slack/handler'
+import { buildManifestInstallUrl } from '../slack/manifest'
 import {
   connectAgentWhatsApp,
   disconnectAgentWhatsApp,
@@ -191,7 +190,6 @@ agentsRouter.delete('/:id/channels/slack', async (c) => {
     await disconnectAgentSlack(id)
     return c.body(null, 204)
   } catch (e) {
-    if (e instanceof SlackConfigError) return c.json({ error: e.message }, 503)
     return c.json(
       { error: 'slack disconnect failed', detail: e instanceof Error ? e.message : String(e) },
       500,
@@ -199,87 +197,61 @@ agentsRouter.delete('/:id/channels/slack', async (c) => {
   }
 })
 
-// ─── Per-agent Slack app credentials (P3.5 BYOK) ───────────────────────────
-agentsRouter.get('/:id/channels/slack/credentials', async (c) => {
+// Slack install (Socket Mode)
+agentsRouter.post('/:id/channels/slack/install', async (c) => {
   const id = c.req.param('id') ?? ''
-  try {
-    return c.json(await getAgentSlackCredentials(id))
-  } catch (e) {
-    return c.json(
-      { error: 'slack credentials read failed', detail: e instanceof Error ? e.message : String(e) },
-      500,
-    )
-  }
-})
-
-agentsRouter.put('/:id/channels/slack/credentials', async (c) => {
-  const id = c.req.param('id') ?? ''
-  let body: { client_id?: string; client_secret?: string; signing_secret?: string }
+  let body: { bot_token?: string; app_token?: string; installer_user_id?: string | null }
   try {
     body = await c.req.json()
   } catch {
     return c.json({ error: 'invalid json' }, 400)
   }
-  if (!body.client_id || !body.client_secret || !body.signing_secret) {
-    return c.json(
-      { error: 'missing fields: client_id, client_secret, signing_secret all required' },
-      400,
-    )
+  if (!body.bot_token || !body.app_token) {
+    return c.json({ error: 'bot_token and app_token are required' }, 400)
   }
   try {
     return c.json(
-      await putAgentSlackCredentials(id, body as {
-        client_id: string
-        client_secret: string
-        signing_secret: string
+      await installAgentSlack(id, {
+        bot_token: body.bot_token,
+        app_token: body.app_token,
+        installer_user_id: body.installer_user_id ?? null,
       }),
     )
   } catch (e) {
+    if (e instanceof SlackInstallError) return c.json({ error: e.message }, 400)
     return c.json(
-      { error: 'slack credentials write failed', detail: e instanceof Error ? e.message : String(e) },
+      { error: 'slack install failed', detail: e instanceof Error ? e.message : String(e) },
       500,
     )
   }
 })
 
-agentsRouter.delete('/:id/channels/slack/credentials', async (c) => {
+agentsRouter.get('/:id/channels/slack/manifest', (c) => {
   const id = c.req.param('id') ?? ''
-  try {
-    await deleteAgentSlackCredentials(id)
-    return c.body(null, 204)
-  } catch (e) {
-    return c.json(
-      { error: 'slack credentials delete failed', detail: e instanceof Error ? e.message : String(e) },
-      500,
-    )
-  }
+  // Slack caps display_information.name at 35 chars. Reserve room for the
+  // " (Opentracy)" suffix so it isn't lopped off when the agent id is long.
+  const SUFFIX = ' (Opentracy)'
+  const head = id.length > 35 - SUFFIX.length
+    ? id.slice(0, 35 - SUFFIX.length).replace(/[-_\s]+$/, '')
+    : id
+  return c.json({
+    install_url: buildManifestInstallUrl({
+      appName: `${head}${SUFFIX}`,
+      botDisplayName: id,
+    }),
+  })
 })
 
-// ─── WhatsApp / Twilio ─────────────────────────────────────────────────────
+// ─── WhatsApp via Baileys (linked device, QR pairing) ──────────────────────
 agentsRouter.get('/:id/channels/whatsapp', async (c) => {
   const id = c.req.param('id') ?? ''
   return c.json(await getAgentWhatsAppStatus(id))
 })
 
-agentsRouter.put('/:id/channels/whatsapp', async (c) => {
+agentsRouter.post('/:id/channels/whatsapp/connect', async (c) => {
   const id = c.req.param('id') ?? ''
-  let body: { account_sid?: string; auth_token?: string; from_number?: string; installer_email?: string | null }
   try {
-    body = await c.req.json()
-  } catch {
-    return c.json({ error: 'invalid json' }, 400)
-  }
-  if (!body.account_sid || !body.auth_token || !body.from_number) {
-    return c.json(
-      { error: 'missing fields: account_sid, auth_token, from_number all required' },
-      400,
-    )
-  }
-  try {
-    await connectAgentWhatsApp(id, body as {
-      account_sid: string; auth_token: string; from_number: string; installer_email?: string | null;
-    })
-    return c.json(await getAgentWhatsAppStatus(id))
+    return c.json(await connectAgentWhatsApp(id))
   } catch (e) {
     return c.json(
       { error: 'whatsapp connect failed', detail: e instanceof Error ? e.message : String(e) },
