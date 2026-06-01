@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { Tag } from '../components/Tag';
@@ -143,6 +145,17 @@ const excerptOf = (t: TraceSummary): string => {
 // "View full session" toggle that swaps in the cross-trace transcript.
 
 type Role = 'user' | 'agent' | 'tool' | 'system';
+
+const MessageBody = ({ role, text }: { role: Role; text: string }) => {
+  if (role === 'agent') {
+    return (
+      <div className="md">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      </div>
+    );
+  }
+  return <>{text}</>;
+};
 
 const normalizeRole = (raw: string): Role => {
   const r = (raw || '').toLowerCase();
@@ -574,7 +587,7 @@ export const Traces = () => {
                       {isFlagged(t) && <Icon name="flag" size={11} />}
                     </div>
                     <div className="dim" style={{ fontSize: 11, marginTop: 2 }}>
-                      {fmtRelative(t.timestamp)} · webhook
+                      {fmtRelative(t.timestamp)} · {t.channel ?? 'webhook'}
                     </div>
                   </div>
                   <div className="cell-excerpt">
@@ -848,7 +861,7 @@ const TraceDrawer = ({
               >
                 <span>{fmtTimeOfDay(trace.timestamp)}</span>
                 <span>·</span>
-                <span>webhook</span>
+                <span>{trace.channel ?? 'webhook'}</span>
                 <span>·</span>
                 <span className="mono">{routingModel || '—'}</span>
                 <span>·</span>
@@ -975,7 +988,9 @@ const TraceDrawer = ({
                             <div className="msg-role">
                               {m.role === 'agent' ? 'Agent' : 'Customer'}
                             </div>
-                            <div className="msg-body">{m.text}</div>
+                            <div className="msg-body">
+                              <MessageBody role={m.role} text={m.text} />
+                            </div>
                           </div>
                         ))
                       : transcript.map((m, i) => (
@@ -989,7 +1004,9 @@ const TraceDrawer = ({
                                 ? 'System'
                                 : 'Customer'}
                             </div>
-                            <div className="msg-body">{m.text}</div>
+                            <div className="msg-body">
+                              <MessageBody role={m.role} text={m.text} />
+                            </div>
                           </div>
                         ))}
                     {trace.success &&
@@ -1171,7 +1188,7 @@ const TraceDrawer = ({
                   </div>
                   <div className="meta-row">
                     <div className="dim">Channel</div>
-                    <div>webhook</div>
+                    <div>{trace.channel ?? 'webhook'}</div>
                   </div>
                   <div className="meta-row">
                     <div className="dim">Routing model</div>

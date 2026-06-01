@@ -15,8 +15,15 @@ approval before they go live.
 - An **autonomous engineering loop** modeled on Lin et al.'s AHE algorithm
   (arxiv 2604.25850). The harness proposes candidate edits, critiques them,
   runs evals, and applies the winners as file-level patches with cheap rollback.
+  Each edit is a falsifiable change with a per-change KEEP / IMPROVE /
+  ROLLBACK_AND_PIVOT verdict, inline semantic verification of rollout responses,
+  optional best-of-N exploration, and a long-term memory tier.
 - A typed runtime that compiles `agent/` into an executable pipeline and serves
-  requests over HTTP, MCP, Slack, WhatsApp, and an embeddable web widget.
+  requests over HTTP, MCP, **Slack** (Socket Mode — no public URL needed), an
+  **opt-in WhatsApp** channel (see [docs/channels/whatsapp.md](docs/channels/whatsapp.md)),
+  and an embeddable web widget. Every trace records the channel it came from.
+- A guided onboarding that names the agent with a short, stable id, and a trace
+  view that renders agent messages as Markdown.
 - An eval suite with goldens, regression detection, and per-trace attribution
   so you can see *why* a proposed change is better (or worse).
 
@@ -36,11 +43,11 @@ uv run python -m runtime
 # 2. Backend gateway (port 8002) — new terminal
 cd backend && npm install && npm run dev
 
-# 3. UI (port 5173) — new terminal
+# 3. UI (port 5174) — new terminal
 cd ui && npm install && npm run dev
 ```
 
-Open <http://localhost:5173>. The shell boots straight to Evolution — no login,
+Open <http://localhost:5174>. The shell boots straight to Evolution — no login,
 no signup. OSS runs single-tenant on localhost by design.
 
 ## Architecture

@@ -50,6 +50,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 from dataclasses import dataclass, field
@@ -174,7 +175,7 @@ class Session:
     version: int = 1
     session_id: str = ""
     started_at: str = ""
-    phase: str = "intent"   # intent|model|key|channel|connect|live|done
+    phase: str = "intent"   # intent|model|key|name|channel|connect|live|done
     turns: list[Turn] = field(default_factory=list)
     decisions: dict[str, Any] = field(default_factory=dict)
     # The agent gets created when the user picks a channel. Holding
@@ -311,6 +312,34 @@ def _channel_card() -> dict[str, Any]:
         "type": "channel_picker",
         "recommended_id": "slack",
         "options": list(_CHANNEL_OPTIONS),
+    }
+
+
+_SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify_suggestion(text: str, max_len: int = 28) -> str:
+    cleaned = _SLUG_PATTERN.sub("-", (text or "").lower()).strip("-")
+    if not cleaned:
+        return ""
+    return cleaned[:max_len].rstrip("-")
+
+
+def _name_card(session: Session) -> dict[str, Any]:
+    """Name-picker card. Lets the operator choose a short, slug-friendly
+    name for the new agent BEFORE the channel is connected — the chosen
+    name drives the agent_id used to create the Slack app, WhatsApp
+    pairing, etc. A long purpose string would produce a 90-char Slack app
+    name (which the Slack manifest API rejects), so this step exists
+    specifically to keep that controllable."""
+    purpose = (session.decisions or {}).get("purpose") or ""
+    suggestion = _slugify_suggestion(purpose) or "support-agent"
+    current = (session.decisions or {}).get("agent_name")
+    return {
+        "type": "agent_name_picker",
+        "suggestion": suggestion,
+        "value": current or "",
+        "max_length": 32,
     }
 
 
@@ -469,6 +498,13 @@ _PHASE_GUIDANCE = {
         "Keys) in ONE sentence. Don't proceed until the key is saved — "
         "the host app gates the next step."
     ),
+    "name": (
+        "A 'name your agent' card is on screen. The operator types a short "
+        "kebab-case id (e.g. support-agent, sdr-bot) which becomes the "
+        "agent's stable id — used to create its Slack app, API endpoint, "
+        "etc. Suggest one short sensible name based on the use-case and "
+        "invite them to keep it or edit. ONE sentence."
+    ),
     "channel": (
         "Agent + model + API key are all set. A channel-picker card "
         "(Slack / WhatsApp / Web / API) is on screen — the LAST step "
@@ -495,7 +531,7 @@ def _phase_context(session: Session) -> str:
     snapshot for the brain to tailor its prose."""
     decisions = session.decisions or {}
     settled: list[str] = []
-    for key in ("purpose", "tone", "channel", "model"):
+    for key in ("purpose", "tone", "agent_name", "channel", "model"):
         v = decisions.get(key)
         if v:
             settled.append(f"  - {key}: {v}")
@@ -537,6 +573,7 @@ _DEFAULT_REPLIES = {
         "Tell me what it should do and who it's for. The more specific, the better I can pick a model and write the prompt."
     ),
     "model": "Based on what you've told me, here's the model I'd start with — happy to swap if you want something else.",
+    "name": "Pick a short name for this agent — it'll be the id everywhere (Slack app name, API endpoint, etc.).",
     "channel": "Got it. Where should this agent live? Pick one to start — you can add more later.",
     "connect": "Great. I've created your agent. Two things and you'll see your first real message land here.",
     "live": "🎉 Your first message just landed. From here on, every conversation lands in your inbox.",
@@ -639,13 +676,19 @@ def decide(decision_key: str, value: str) -> Session:
     card on a fresh assistant turn. The brain isn't asked here — the
     card pick is a deterministic transition.
     """
-    if decision_key not in {"model", "channel"}:
+    if decision_key not in {"model", "channel", "agent_name"}:
         raise ValueError(f"unknown decision_key: {decision_key!r}")
     path = _resolve_session_path()
     with _lock_for(path):
         session = _load(path) or _seed(path)
 
-        label = _model_label(value) if decision_key == "model" else _channel_label(value)
+        if decision_key == "model":
+            label = _model_label(value)
+        elif decision_key == "channel":
+            label = _channel_label(value)
+        else:
+            label = _slugify_suggestion(value) or value
+            value = label
         session.decisions[decision_key] = value
 
         # Chip-bearing user turn — empty text, the chip carries the
@@ -680,6 +723,19 @@ def decide(decision_key: str, value: str) -> Session:
                     "account for your usage."
                 ),
                 cards=[_provider_key_card(session)],
+            )
+            session.turns.append(reply)
+        elif decision_key == "agent_name":
+            session.phase = "channel"
+            reply = Turn(
+                id=_new_id("t"),
+                ts=_now_iso(),
+                role="assistant",
+                text=(
+                    "Saved — \"" + label + "\". Last step: where should this "
+                    "agent live?"
+                ),
+                cards=[_channel_card()],
             )
             session.turns.append(reply)
         elif decision_key == "channel":
@@ -740,17 +796,18 @@ def save_provider_key(provider: str, plaintext: str) -> Session:
 
         session.decisions["anthropic_key_set"] = True
         session.decisions["anthropic_key_mask"] = meta["mask"]
-        session.phase = "channel"
+        session.phase = "name"
 
         reply = Turn(
             id=_new_id("t"),
             ts=_now_iso(),
             role="assistant",
             text=(
-                "Key saved (KMS-encrypted). Last step — where should this "
-                "agent live?"
+                "Key saved (KMS-encrypted). Now give your agent a short "
+                "name — this becomes its id (used for the Slack app, the "
+                "API endpoint, etc.). Keep it kebab-case and snappy."
             ),
-            cards=[_channel_card()],
+            cards=[_name_card(session)],
         )
         session.turns.append(reply)
         _save(session, path)
@@ -765,7 +822,7 @@ def rewind(decision_key: str) -> Session:
     back to the picker's phase, and emits a fresh assistant turn
     with the picker re-attached.
     """
-    if decision_key not in {"model", "channel"}:
+    if decision_key not in {"model", "channel", "agent_name"}:
         raise ValueError(f"unknown decision_key: {decision_key!r}")
     path = _resolve_session_path()
     with _lock_for(path):
@@ -788,9 +845,18 @@ def rewind(decision_key: str) -> Session:
         session.decisions.pop(decision_key, None)
 
         # Cascading rewind: if the user rewinds model, they also
-        # lose the channel decision (which depended on the model
-        # picker having closed). Keeps the state machine coherent.
+        # lose the agent_name + channel decisions (which depended on
+        # the model picker having closed). Same idea for agent_name —
+        # the channel was picked after it. Keeps the state machine
+        # coherent.
         if decision_key == "model":
+            session.decisions.pop("agent_name", None)
+            session.decisions.pop("channel", None)
+            session.agent_id = None
+            session.agent_key_preview = None
+            session.slack["installed"] = False
+            session.slack["first_message_at"] = None
+        elif decision_key == "agent_name":
             session.decisions.pop("channel", None)
             session.agent_id = None
             session.agent_key_preview = None
@@ -798,8 +864,15 @@ def rewind(decision_key: str) -> Session:
             session.slack["first_message_at"] = None
 
         # Reset phase + re-emit the picker on a new assistant turn.
-        session.phase = "model" if decision_key == "model" else "channel"
-        card = _model_card(_model_rationale(session)) if decision_key == "model" else _channel_card()
+        if decision_key == "model":
+            session.phase = "model"
+            card = _model_card(_model_rationale(session))
+        elif decision_key == "agent_name":
+            session.phase = "name"
+            card = _name_card(session)
+        else:
+            session.phase = "channel"
+            card = _channel_card()
         reply = Turn(
             id=_new_id("t"),
             ts=_now_iso(),
@@ -903,15 +976,11 @@ def _materialize_agent(session: Session) -> None:
 
     channel = (session.decisions or {}).get("channel", "slack")
 
-    # Register the agent in the registry so /v1/api/<id>/chat and the
-    # widget endpoints can resolve it. Without this step the connect
-    # cards hand out tokens for a ghost id and every smoke-test returns
-    # `agent_not_found`. The registry seeds the agent dir from _default
-    # (or whatever the active seed is) so `agents/<id>/integrations/...`
-    # writes a few lines below land in a real directory.
     purpose = (session.decisions or {}).get("purpose") or ""
+    chosen_name = (session.decisions or {}).get("agent_name") or ""
+    name = chosen_name.strip() or purpose.strip() or "agent"
     payload = {
-        "name": purpose.strip() or "agent",
+        "name": name,
         "prompt": purpose.strip(),
         "model": (session.decisions or {}).get("model") or "claude-sonnet-4-6",
         "tools": [],

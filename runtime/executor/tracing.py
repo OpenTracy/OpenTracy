@@ -130,6 +130,7 @@ def _summary_event(env: dict[str, Any]) -> dict[str, Any]:
         "n_stages": len(stages),
         "n_turns": len(history) + 1,
         "request_preview": (request[:200] + "…") if len(request) > 200 else request,
+        "channel": env.get("channel"),
     }
 
 
@@ -149,13 +150,17 @@ def envelope(
     record: ExecutionRecord,
     trace_id: str | None = None,
     timestamp: str | None = None,
+    channel: Optional[str] = None,
 ) -> dict[str, Any]:
     """Build the on-disk dict from a record + optional ids."""
-    return {
+    env = {
         "trace_id": trace_id or _new_trace_id(),
         "timestamp": timestamp or _now_iso(),
         **record.to_dict(),
     }
+    if channel:
+        env["channel"] = channel
+    return env
 
 
 def write_trace(
@@ -164,6 +169,7 @@ def write_trace(
     trace_id: str | None = None,
     *,
     agent_id: Optional[str] = None,
+    channel: Optional[str] = None,
 ) -> str:
     """Append the trace as JSONL, then publish a summary event to TraceBus.
     Returns the trace_id.
@@ -176,7 +182,7 @@ def write_trace(
     traces_dir = Path(traces_dir)
     traces_dir.mkdir(parents=True, exist_ok=True)
 
-    env = envelope(record, trace_id=trace_id)
+    env = envelope(record, trace_id=trace_id, channel=channel)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     path = traces_dir / f"{today}.jsonl"
     with path.open("a") as f:
