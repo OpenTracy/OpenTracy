@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -4521,6 +4521,251 @@ def put_improvement_endpoint(
     cfg = ImprovementConfig.from_dict(cfg.to_dict())
     save(agent_id, cfg)
     return ImprovementConfigView(**cfg.to_dict())
+
+
+# ---------------------------------------------------------------------------
+# Evolution loop (AHE Algorithm 1) — REST surface
+# ---------------------------------------------------------------------------
+
+
+class EvolveRunRequest(BaseModel):
+    """Body for POST /agents/{id}/evolve.
+
+    ``tasks`` is the eval set the rollout replays. ``k`` is replays per
+    task (default matches :data:`runtime.evolution.loop.DEFAULT_K`).
+    ``n_variants`` activates Best-of-N when > 1 (each variant gets a
+    different strategy hint).
+    """
+    tasks: list[str]
+    k: Optional[int] = None
+    n_variants: Optional[int] = None
+
+
+class EvolveRunAck(BaseModel):
+    """202 response. Use lessons / manifest history to read results."""
+    iteration_id: str
+    agent_id: str
+    status: str = "dispatched"
+
+
+class ExploreSourceBody(BaseModel):
+    type: str   # "url" | "git"
+    url: str
+    focus: str = ""
+
+
+class ExploreRunRequest(BaseModel):
+    sources: list[ExploreSourceBody]
+
+
+class ExploreRunAck(BaseModel):
+    agent_id: str
+    status: str = "dispatched"
+    source_count: int
+
+
+def _evolve_iteration_id_now() -> str:
+    """Pre-generate the id the BackgroundTask will use, so the 202
+    response can include it. Mirrors the format in
+    :func:`runtime.evolution.loop._new_iteration_id`."""
+    import secrets
+    from datetime import datetime, timezone
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    return f"evo-{stamp}-{secrets.token_hex(3)}"
+
+
+def _check_byok_or_400(agent_id: str) -> None:
+    from runtime.agents.secrets import get_secret
+    if not get_secret("anthropic", agent_id=agent_id):
+        raise HTTPException(
+            status_code=400,
+            detail="byok_missing: set an Anthropic key for this agent",
+        )
+
+
+def _evolve_auth_or_raise(request: Request, agent_id: str) -> None:
+    """Authenticate evolve/explore dispatches.
+
+    Two valid auth paths (Wave E):
+
+      1. ``Authorization: Bearer otrcy_live_…`` — the operator-minted
+         token, validated by scanning ``integrations/api.json`` across
+         tenants (same lookup the public chat path uses). On success
+         the active tenant is set to the token's owner and we verify
+         the token was minted for THIS agent_id. This is the path
+         intended for any caller outside the trusted backend.
+      2. Backend-trusted ``x-tenant-id`` header — already-set active
+         tenant from upstream tenantAuth middleware (the backend
+         gateway forwards this after its own auth check). Used by
+         internal callers (the UI's review/promote flow, the policy
+         scheduler). When the header is absent AND there's no bearer
+         token, fail closed.
+
+    In OSS mode the function is a no-op (single tenant; no auth at
+    this layer).
+    """
+    from runtime.tenants.feature import is_multi_tenant_enabled
+    if not is_multi_tenant_enabled():
+        return
+
+    auth_header = request.headers.get("authorization") or request.headers.get(
+        "Authorization",
+    )
+    if auth_header:
+        m = _BEARER_RE.match(auth_header)
+        if not m:
+            raise HTTPException(
+                status_code=401,
+                detail="bad_authorization: expected 'Bearer <token>'",
+            )
+        token = m.group(1).strip()
+        # Reuses the public chat auth path: lookup the token across
+        # tenants' api.json files. Raises 401 if no match.
+        _resolve_api_token_tenant(agent_id, token)
+        # _resolve_api_token_tenant already set the tenant context.
+        return
+
+    # Fallback to x-tenant-id (backend-trusted path).
+    from runtime.tenant_context import get_active as _get_tenant
+    if not _get_tenant(default=None):
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "missing_auth: pass 'Authorization: Bearer otrcy_live_…' "
+                "or an upstream-set x-tenant-id header"
+            ),
+        )
+
+
+@app.post(
+    "/agents/{agent_id}/evolve",
+    response_model=EvolveRunAck,
+    status_code=202,
+)
+def evolve_endpoint(
+    agent_id: str,
+    payload: EvolveRunRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+) -> EvolveRunAck:
+    """Dispatch one AHE iteration in the background.
+
+    The rollout + evolve sandbox cycle can take minutes; we return 202
+    immediately and let the loop write its outputs to the workspace
+    (manifest history, change_evaluation, evolution_history.md). The
+    client polls those existing surfaces — no per-iteration job table.
+    """
+    _evolve_auth_or_raise(request, agent_id)
+    from runtime.agents.registry import get_agent
+    if get_agent(agent_id) is None:
+        raise HTTPException(status_code=404, detail=f"agent_not_found: {agent_id}")
+    if not payload.tasks:
+        raise HTTPException(status_code=422, detail="tasks_required")
+    _check_byok_or_400(agent_id)
+
+    iteration_id = _evolve_iteration_id_now()
+    # The background fn re-imports lazily so the import error budget
+    # stays in the request thread (any module-load bug surfaces here,
+    # not as a silent task-runner crash).
+    from runtime.evolution import run_one_iteration
+
+    k = payload.k
+    n_variants = payload.n_variants
+    # Pin the active tenant of THIS request thread so the background
+    # task inherits it — context vars don't auto-propagate to threads.
+    from runtime.tenant_context import get_active as _get_tenant
+    pinned_tenant = _get_tenant(default=None)
+
+    def _run() -> None:
+        try:
+            if pinned_tenant is not None:
+                from runtime.tenant_context import set_active as _set_tenant
+                _set_tenant(pinned_tenant)
+            kwargs: dict[str, Any] = {
+                "agent_id": agent_id,
+                "tasks": list(payload.tasks),
+                # Pass the pre-minted id so the loop's artifacts
+                # (analysis/{id}/, change_evaluation/{id}.json, etc.)
+                # are keyed under the id we already returned to the
+                # client in the 202 response. Without this the loop
+                # mints its own id and the client can't poll.
+                "iteration_id": iteration_id,
+            }
+            if k is not None:
+                kwargs["k"] = int(k)
+            if n_variants is not None:
+                kwargs["n_variants"] = int(n_variants)
+            run_one_iteration(**kwargs)
+        except Exception as exc:
+            # NOT pragma: no cover — this is the only thing standing
+            # between a crashed background task and silent failure
+            # in production. Issue #56: previously this swallowed real
+            # errors without surfacing them in Cloud Run logs.
+            logger.warning(
+                "evolve endpoint background task failed iteration=%s "
+                "agent=%s tenant=%s err=%s",
+                iteration_id, agent_id, pinned_tenant, exc,
+                exc_info=True,
+            )
+
+    background_tasks.add_task(_run)
+    return EvolveRunAck(iteration_id=iteration_id, agent_id=agent_id)
+
+
+@app.post(
+    "/agents/{agent_id}/explore",
+    response_model=ExploreRunAck,
+    status_code=202,
+)
+def explore_endpoint(
+    agent_id: str,
+    payload: ExploreRunRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+) -> ExploreRunAck:
+    """Dispatch a cold-start exploration sandbox in the background.
+
+    Reads each source and writes findings to
+    ``.opentracy/skills/explore_findings.md`` in the agent's workspace.
+    Idempotent on the file (sandbox overwrites it).
+    """
+    _evolve_auth_or_raise(request, agent_id)
+    from runtime.agents.registry import get_agent
+    if get_agent(agent_id) is None:
+        raise HTTPException(status_code=404, detail=f"agent_not_found: {agent_id}")
+    if not payload.sources:
+        raise HTTPException(status_code=422, detail="sources_required")
+    _check_byok_or_400(agent_id)
+
+    from runtime.agents.secrets import get_secret
+    from runtime.evolution.explore import ExploreSource, seed_workspace_via_explore
+    from runtime.tenant_context import get_active as _get_tenant
+    from runtime.workspaces import get_workspace
+
+    anthropic_key = get_secret("anthropic", agent_id=agent_id)
+    sources = [
+        ExploreSource(type=s.type, url=s.url, focus=s.focus) for s in payload.sources
+    ]
+    pinned_tenant = _get_tenant(default=None)
+
+    def _run() -> None:
+        try:
+            if pinned_tenant is not None:
+                from runtime.tenant_context import set_active as _set_tenant
+                _set_tenant(pinned_tenant)
+            workspace = get_workspace(agent_id)
+            seed_workspace_via_explore(
+                workspace=workspace,
+                anthropic_key=anthropic_key,
+                sources=sources,
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "explore endpoint background task failed: %s", exc, exc_info=True,
+            )
+
+    background_tasks.add_task(_run)
+    return ExploreRunAck(agent_id=agent_id, source_count=len(payload.sources))
 
 
 class AgentSecretsStatus(BaseModel):
