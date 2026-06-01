@@ -198,6 +198,7 @@ export interface TraceSummary {
   cost_usd?: number | null;
   // P16.3 — flag state (server-stamped from traces/flagged/<date>.jsonl).
   flagged?: boolean;
+  channel?: string | null;
 }
 
 export interface TracesPage {
@@ -1085,6 +1086,7 @@ export type OnboardingPhase =
   | 'intent'
   | 'model'
   | 'key'
+  | 'name'
   | 'channel'
   | 'connect'
   | 'live'
@@ -1109,6 +1111,12 @@ export interface ModelPickerCard {
   recommended_id: string;
   rationale: string;
   options: ModelPickerOption[];
+}
+export interface AgentNamePickerCard {
+  type: 'agent_name_picker';
+  suggestion: string;
+  value: string;
+  max_length: number;
 }
 export interface ChannelPickerCard {
   type: 'channel_picker';
@@ -1155,6 +1163,7 @@ export interface TracePreviewCard {
 }
 export type OnboardingCard =
   | ModelPickerCard
+  | AgentNamePickerCard
   | ChannelPickerCard
   | ConnectSlackCard
   | ConnectWhatsappCard
@@ -1216,10 +1225,12 @@ async function _postOnboardingV2<T>(path: string, body: unknown): Promise<T> {
 export const sayOnboardingV2 = (text: string) =>
   _postOnboardingV2<OnboardingV2Session>('/v1/onboarding/session/say', { text });
 
-export const decideOnboardingV2 = (decision_key: 'model' | 'channel', value: string) =>
+export type OnboardingDecisionKey = 'model' | 'channel' | 'agent_name';
+
+export const decideOnboardingV2 = (decision_key: OnboardingDecisionKey, value: string) =>
   _postOnboardingV2<OnboardingV2Session>('/v1/onboarding/session/decide', { decision_key, value });
 
-export const rewindOnboardingV2 = (decision_key: 'model' | 'channel') =>
+export const rewindOnboardingV2 = (decision_key: OnboardingDecisionKey) =>
   _postOnboardingV2<OnboardingV2Session>('/v1/onboarding/session/rewind', { decision_key });
 
 export const resetOnboardingV2 = () =>
@@ -1465,31 +1476,26 @@ export async function disconnectApiChannel(id: string): Promise<void> {
   }
 }
 
-// Slack channel (P3.3.2)
-
+// Slack channel — Socket Mode
 export interface SlackChannelStatus {
-  configured: boolean;
   connected: boolean;
-  source: 'per-agent' | 'global' | null;
   team_id: string | null;
   team_name: string | null;
   installer_user_id: string | null;
   installed_at: string | null;
-  install_url: string | null;
-  events_url: string | null;
-  client_id_mask: string | null;
+  socket_active: boolean;
   detail: string | null;
 }
 
-export interface SlackAppCredentialsView {
-  set: boolean;
-  client_id_mask: string | null;
-  signing_secret_mask: string | null;
-  saved_at: string | null;
+export interface SlackManifestInfo {
+  install_url: string;
 }
 
 export const getSlackChannel = (id: string) =>
   _getJson<SlackChannelStatus>(`/v1/agents/${encodeURIComponent(id)}/channels/slack`);
+
+export const getSlackManifest = (id: string) =>
+  _getJson<SlackManifestInfo>(`/v1/agents/${encodeURIComponent(id)}/channels/slack/manifest`);
 
 export async function disconnectSlackChannel(id: string): Promise<void> {
   const res = await fetch(`/v1/agents/${encodeURIComponent(id)}/channels/slack`, {
@@ -1501,19 +1507,14 @@ export async function disconnectSlackChannel(id: string): Promise<void> {
   }
 }
 
-export const getSlackAppCredentials = (id: string) =>
-  _getJson<SlackAppCredentialsView>(
-    `/v1/agents/${encodeURIComponent(id)}/channels/slack/credentials`,
-  );
-
-export async function putSlackAppCredentials(
+export async function installSlack(
   id: string,
-  body: { client_id: string; client_secret: string; signing_secret: string },
-): Promise<SlackAppCredentialsView> {
+  body: { bot_token: string; app_token: string },
+): Promise<SlackChannelStatus> {
   const res = await fetch(
-    `/v1/agents/${encodeURIComponent(id)}/channels/slack/credentials`,
+    `/v1/agents/${encodeURIComponent(id)}/channels/slack/install`,
     {
-      method: 'PUT',
+      method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     },
@@ -1525,47 +1526,25 @@ export async function putSlackAppCredentials(
   return res.json();
 }
 
-export async function deleteSlackAppCredentials(id: string): Promise<void> {
-  const res = await fetch(
-    `/v1/agents/${encodeURIComponent(id)}/channels/slack/credentials`,
-    { method: 'DELETE' },
-  );
-  if (!res.ok && res.status !== 204) {
-    const text = await res.text().catch(() => '');
-    throw new ApiError(res.status, `backend ${res.status}: ${text.slice(0, 200)}`);
-  }
-}
-
-// WhatsApp / Twilio channel (P3.3.3)
+// WhatsApp via Baileys (QR pairing as linked device)
 
 export interface WhatsAppChannelStatus {
   configured: boolean;
   connected: boolean;
-  from_number: string | null;
-  account_sid_mask: string | null;
-  installed_at: string | null;
-  inbound_url: string | null;
-  detail: string | null;
-}
-
-export interface WhatsAppConnectRequest {
-  account_sid: string;
-  auth_token: string;
-  from_number: string;
-  installer_email?: string | null;
+  jid: string | null;
+  push_name: string | null;
+  connected_at: string | null;
+  qr_png: string | null;
+  has_persisted_creds: boolean;
+  last_error: string | null;
 }
 
 export const getWhatsAppChannel = (id: string) =>
   _getJson<WhatsAppChannelStatus>(`/v1/agents/${encodeURIComponent(id)}/channels/whatsapp`);
 
-export async function connectWhatsAppChannel(
-  id: string,
-  body: WhatsAppConnectRequest,
-): Promise<WhatsAppChannelStatus> {
-  const res = await fetch(`/v1/agents/${encodeURIComponent(id)}/channels/whatsapp`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+export async function connectWhatsAppChannel(id: string): Promise<WhatsAppChannelStatus> {
+  const res = await fetch(`/v1/agents/${encodeURIComponent(id)}/channels/whatsapp/connect`, {
+    method: 'POST',
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');

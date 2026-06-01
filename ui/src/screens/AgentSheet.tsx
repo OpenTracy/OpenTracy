@@ -16,7 +16,6 @@ import {
   connectWebChannel,
   getOnboardingTransport,
   connectWhatsAppChannel,
-  deleteSlackAppCredentials,
   disconnectApiChannel,
   disconnectSlackChannel,
   disconnectWebChannel,
@@ -26,15 +25,15 @@ import {
   getAgentImprovement,
   getAgentSecrets,
   getApiChannel,
-  getSlackAppCredentials,
   getSlackChannel,
+  getSlackManifest,
+  installSlack,
   getWebChannel,
   getWhatsAppChannel,
   listAgents,
   listMCPServers,
   putAgentImprovement,
   putAgentSecrets,
-  putSlackAppCredentials,
   removeMCPServer,
   rotateApiChannel,
   rotateWebChannelSecret,
@@ -49,8 +48,8 @@ import {
   type ImprovementConfig,
   type MCPServer,
   type MCPTool,
-  type SlackAppCredentialsView,
   type SlackChannelStatus,
+  type SlackManifestInfo,
   type WebChannelConnectResponse,
   type WebChannelStatus,
   type WebWidgetSettings,
@@ -1567,24 +1566,22 @@ print(res.json()["response"])`,
 // ─── Slack panel — hero / connecting / configured with preview ──
 const SlackChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: () => void }) => {
   const [status, setStatus] = useState<SlackChannelStatus | null>(null);
-  const [creds, setCreds] = useState<SlackAppCredentialsView | null>(null);
+  const [manifest, setManifest] = useState<SlackManifestInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editingCreds, setEditingCreds] = useState(false);
   const { copied, copy } = useCopy();
-  // BYOK form state
-  const [clientId, setClientId] = useState('');
-  const [clientSecret, setClientSecret] = useState('');
-  const [signingSecret, setSigningSecret] = useState('');
+  // Install form (Socket Mode): paste bot token + app-level token.
+  const [botToken, setBotToken] = useState('');
+  const [appToken, setAppToken] = useState('');
 
   const refresh = async () => {
     try {
-      const [s, c] = await Promise.all([
+      const [s, m] = await Promise.all([
         getSlackChannel(agentId),
-        getSlackAppCredentials(agentId),
+        getSlackManifest(agentId).catch(() => null),
       ]);
       setStatus(s);
-      setCreds(c);
+      setManifest(m);
     } catch (e) {
       if (!(e instanceof ApiError)) console.warn('getSlackChannel failed', e);
     }
@@ -1593,25 +1590,6 @@ const SlackChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: () =>
   useEffect(() => {
     void refresh();
   }, [agentId]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('slack_connected') === agentId) {
-      void refresh();
-      params.delete('slack_connected');
-      const next = params.toString();
-      window.history.replaceState(
-        {},
-        '',
-        next ? `${window.location.pathname}?${next}` : window.location.pathname,
-      );
-    }
-  }, [agentId]);
-
-  const connect = () => {
-    if (!status?.install_url) return;
-    window.location.href = status.install_url;
-  };
 
   const disconnect = async () => {
     if (!confirm('Disconnect Slack? The agent will stop receiving messages from this workspace.')) return;
@@ -1627,39 +1605,20 @@ const SlackChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: () =>
     }
   };
 
-  const saveCreds = async () => {
-    if (!clientId.trim() || !clientSecret.trim() || !signingSecret.trim()) {
-      setError('All three fields are required.');
+  const saveInstall = async () => {
+    if (!botToken.trim() || !appToken.trim()) {
+      setError('Bot token and app-level token are both required.');
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await putSlackAppCredentials(agentId, {
-        client_id: clientId.trim(),
-        client_secret: clientSecret.trim(),
-        signing_secret: signingSecret.trim(),
+      await installSlack(agentId, {
+        bot_token: botToken.trim(),
+        app_token: appToken.trim(),
       });
-      setClientId('');
-      setClientSecret('');
-      setSigningSecret('');
-      setEditingCreds(false);
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const removeCreds = async () => {
-    if (!confirm("Remove this agent's Slack app credentials? The agent will fall back to the global env vars (if set), otherwise it can't connect.")) {
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await deleteSlackAppCredentials(agentId);
+      setBotToken('');
+      setAppToken('');
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1678,18 +1637,19 @@ const SlackChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: () =>
     );
   }
 
-  // Pre-connect hero — supports per-agent BYOK app creds.
+  // Pre-connect hero — Socket Mode: create app via manifest → install in
+  // workspace → paste bot token + app-level token.
   if (!status.connected) {
-    const showByokForm = !status.configured || editingCreds || (creds && !creds.set && !status.configured);
     return (
       <ChannelDrillFrame channelName="Slack" glyph={<SlackGlyphColored />} connected={false} onBack={onBack}>
         <div className="wcfg-config-pane" style={{ padding: '32px 24px' }}>
           <div className="connect-hero">
             <div className="connect-hero-tile"><SlackGlyphColored size={32} /></div>
-            <h2>Add support-agent to your Slack workspace</h2>
+            <h2>Add {agentId} to your Slack workspace</h2>
             <p>
-              Bring your own Slack app — paste its credentials below and we'll handle the install
-              + events end-to-end. Same brain, same policies — Slack is just another surface.
+              We'll generate a Slack app for you. Install it, paste two tokens here,
+              and the agent answers DMs and @-mentions over a websocket — no public
+              URL, no ngrok.
             </p>
             <div className="perms">
               <div className="perms-label">Once installed, the agent will</div>
@@ -1700,61 +1660,36 @@ const SlackChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: () =>
               </ul>
             </div>
 
-            {status.configured && !editingCreds ? (
-              <>
-                <button
+            {manifest && (
+              <div style={{ marginBottom: 14, textAlign: 'center', width: '100%', maxWidth: 480 }}>
+                <a
                   className="btn primary"
-                  style={{ height: 38, padding: '0 18px', fontSize: 13.5 }}
-                  onClick={connect}
-                  disabled={busy}
+                  href={manifest.install_url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  style={{ height: 38, padding: '0 18px', fontSize: 13.5, display: 'inline-flex', alignItems: 'center', gap: 6 }}
                 >
                   <SlackGlyphColored size={14} />
-                  Add to Slack
-                </button>
-                <div className="dim" style={{ fontSize: 11.5, marginTop: 10, lineHeight: 1.5, textAlign: 'center' }}>
-                  Using {status.source === 'per-agent' ? 'per-agent' : 'global'} Slack app credentials
-                  {status.client_id_mask && <> · <span className="mono">{status.client_id_mask}</span></>}
-                  {' · '}
-                  <button
-                    className="btn ghost"
-                    style={{ padding: 0, height: 'auto', fontSize: 11.5, textDecoration: 'underline' }}
-                    onClick={() => setEditingCreds(true)}
-                  >
-                    {creds?.set ? 'rotate' : 'override'}
-                  </button>
+                  Create Slack App (1 click)
+                </a>
+                <div className="dim" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.5 }}>
+                  Opens api.slack.com with scopes and Socket Mode pre-enabled. Then:
+                  <br />
+                  1. <span className="mono">Basic Information → App-Level Tokens → Generate</span> with
+                  scope <span className="mono">connections:write</span> → copy the <span className="mono">xapp-…</span>
+                  <br />
+                  2. <span className="mono">Install App → Install to Workspace</span> → copy the <span className="mono">xoxb-…</span>
                 </div>
-              </>
-            ) : showByokForm ? (
-              <SlackCredentialsForm
-                agentId={agentId}
-                clientId={clientId}
-                clientSecret={clientSecret}
-                signingSecret={signingSecret}
-                setClientId={setClientId}
-                setClientSecret={setClientSecret}
-                setSigningSecret={setSigningSecret}
-                busy={busy}
-                onSave={() => void saveCreds()}
-                onCancel={editingCreds ? () => {
-                  setEditingCreds(false);
-                  setClientId('');
-                  setClientSecret('');
-                  setSigningSecret('');
-                  setError(null);
-                } : null}
-                hasGlobalFallback={status.configured && status.source === 'global'}
-                redirectUri={
-                  // We can't know publicBaseUrl client-side; surface the
-                  // status.install_url's host as a hint.
-                  null
-                }
-                eventsUrl={status.events_url}
-              />
-            ) : (
-              <div className="dim" style={{ fontSize: 12, lineHeight: 1.5, textAlign: 'center' }}>
-                {status.detail}
               </div>
             )}
+            <SlackInstallForm
+              botToken={botToken}
+              appToken={appToken}
+              setBotToken={setBotToken}
+              setAppToken={setAppToken}
+              busy={busy}
+              onSave={() => void saveInstall()}
+            />
 
             {error && <div className="dim" style={{ fontSize: 12, color: 'var(--bad-fg)', marginTop: 10 }}>{error}</div>}
           </div>
@@ -1762,9 +1697,6 @@ const SlackChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: () =>
       </ChannelDrillFrame>
     );
   }
-
-  // Touch unused helpers so the linter doesn't complain.
-  void removeCreds;
 
   // Configured view with Slack-style preview
   return (
@@ -1808,35 +1740,27 @@ const SlackChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: () =>
             </div>
           </div>
 
-          {status.events_url && (
-            <div className="wcfg-section">
-              <div className="wcfg-section-head">
-                <h3>Events endpoint</h3>
-                <span className="desc">Slack posts events here. Already wired during install — you only need this if you re-add the app manually.</span>
-              </div>
-              <div className="endpoint-card">
-                <div className="endpoint-row">
-                  <span className="endpoint-method">POST</span>
-                  <span className="endpoint-url">{status.events_url}</span>
-                  <button
-                    className={`endpoint-copy ${copied.url ? 'ok' : ''}`}
-                    onClick={() => copy('url', status.events_url ?? '')}
-                  >
-                    <Icon name={copied.url ? 'check' : 'copy'} size={11} />
-                    {copied.url ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
-                <div className="endpoint-secret" style={{ borderBottom: 0 }}>
-                  <div className="k">Subscribed to</div>
-                  <div className="v" style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                    <span className="tag">app_mention</span>
-                    <span className="tag">message.im</span>
-                  </div>
-                  <div />
-                </div>
-              </div>
+          <div className="wcfg-section">
+            <div className="wcfg-section-head">
+              <h3>Connection</h3>
+              <span className="desc">Socket Mode — events stream over a websocket directly to this backend. No public URL needed.</span>
             </div>
-          )}
+            <div className="row-item on" style={{ marginBottom: 0 }}>
+              <div className="ricon" style={{ background: 'oklch(0.94 0.05 160)', color: 'oklch(0.42 0.13 160)' }}>
+                <Icon name="link" size={16} />
+              </div>
+              <div className="rmain">
+                <div className="rname">Socket Mode</div>
+                <div className="rmeta">
+                  Subscribed to <span className="mono">app_mention</span>, <span className="mono">message.im</span>
+                </div>
+              </div>
+              <Tag kind={status.socket_active ? 'success' : 'warn'}>
+                <span className="dot" />
+                {status.socket_active ? 'Active' : 'Disconnected'}
+              </Tag>
+            </div>
+          </div>
 
           <div className="wcfg-section">
             <div className="wcfg-section-head"><h3>Danger zone</h3></div>
@@ -1860,78 +1784,44 @@ const SlackChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: () =>
   );
 };
 
-// ─── Slack-style chat preview (static mock) ─────────────────────
-// ─── Slack BYOK credentials form ───────────────────────────────
-const SlackCredentialsForm = ({
-  agentId,
-  clientId,
-  clientSecret,
-  signingSecret,
-  setClientId,
-  setClientSecret,
-  setSigningSecret,
+// ─── Slack install form (Socket Mode: paste bot token + app-level token) ─
+const SlackInstallForm = ({
+  botToken,
+  appToken,
+  setBotToken,
+  setAppToken,
   busy,
   onSave,
-  onCancel,
-  hasGlobalFallback,
-  eventsUrl,
 }: {
-  agentId: string;
-  clientId: string;
-  clientSecret: string;
-  signingSecret: string;
-  setClientId: (s: string) => void;
-  setClientSecret: (s: string) => void;
-  setSigningSecret: (s: string) => void;
+  botToken: string;
+  appToken: string;
+  setBotToken: (s: string) => void;
+  setAppToken: (s: string) => void;
   busy: boolean;
   onSave: () => void;
-  onCancel: (() => void) | null;
-  hasGlobalFallback: boolean;
-  redirectUri: string | null;
-  eventsUrl: string | null;
 }) => (
   <div className="whatsapp-form" style={{ width: '100%', maxWidth: 480 }}>
-    <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', marginBottom: 10, lineHeight: 1.5 }}>
-      Create a Slack app at <span className="mono">api.slack.com/apps</span>, paste its credentials
-      below, then configure these URLs in the app:
-      <ul style={{ margin: '6px 0', paddingLeft: 16, fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-        <li><b>Redirect URL:</b> &lt;PUBLIC_BASE_URL&gt;/slack/oauth/callback</li>
-        {eventsUrl && <li><b>Events URL:</b> {eventsUrl}</li>}
-      </ul>
-      Scopes needed: <span className="mono">app_mentions:read, chat:write, im:history, im:read, im:write, team:read</span>
-    </div>
     <label className="whatsapp-field">
-      <span>Client ID</span>
-      <input
-        className="whatsapp-input mono"
-        autoComplete="off"
-        placeholder="e.g. 1234567890.987654321"
-        value={clientId}
-        onChange={(e) => setClientId(e.target.value)}
-        disabled={busy}
-      />
-    </label>
-    <label className="whatsapp-field">
-      <span>Client Secret</span>
+      <span>App-Level Token</span>
       <input
         className="whatsapp-input mono"
         type="password"
         autoComplete="off"
-        placeholder="paste from Basic Information"
-        value={clientSecret}
-        onChange={(e) => setClientSecret(e.target.value)}
+        placeholder="xapp-…"
+        value={appToken}
+        onChange={(e) => setAppToken(e.target.value)}
         disabled={busy}
       />
     </label>
     <label className="whatsapp-field">
-      <span>Signing Secret</span>
+      <span>Bot User OAuth Token</span>
       <input
         className="whatsapp-input mono"
         type="password"
         autoComplete="off"
-        placeholder="from Basic Information → App Credentials"
-        value={signingSecret}
-        onChange={(e) => setSigningSecret(e.target.value)}
+        placeholder="xoxb-…"
+        value={botToken}
+        onChange={(e) => setBotToken(e.target.value)}
         disabled={busy}
       />
     </label>
@@ -1944,23 +1834,7 @@ const SlackCredentialsForm = ({
       >
         {busy ? 'Saving…' : 'Save & enable Slack'}
       </button>
-      {onCancel && (
-        <button
-          className="btn ghost"
-          style={{ height: 36, padding: '0 16px' }}
-          onClick={onCancel}
-          disabled={busy}
-        >
-          Cancel
-        </button>
-      )}
     </div>
-    {hasGlobalFallback && (
-      <div className="dim" style={{ fontSize: 11.5, marginTop: 10, textAlign: 'center' }}>
-        Currently using the global <span className="mono">SLACK_*</span> env vars as fallback.
-        Saving here switches <span className="mono">{agentId}</span> to its own app.
-      </div>
-    )}
   </div>
 );
 
@@ -2006,16 +1880,11 @@ const SlackPreview = () => (
   </div>
 );
 
-// ─── WhatsApp panel — preview + business profile + behavior ─────
+// ─── WhatsApp panel — Baileys QR pairing ─────────────────────────
 const WhatsAppChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: () => void }) => {
   const [status, setStatus] = useState<WhatsAppChannelStatus | null>(null);
-  const [accountSid, setAccountSid] = useState('');
-  const [authToken, setAuthToken] = useState('');
-  const [fromNumber, setFromNumber] = useState('');
   const [busy, setBusy] = useState(false);
-  const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { copied, copy } = useCopy();
 
   const refresh = async () => {
     try {
@@ -2029,23 +1898,23 @@ const WhatsAppChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: ()
     void refresh();
   }, [agentId]);
 
-  const save = async () => {
-    if (!accountSid.trim() || !authToken.trim() || !fromNumber.trim()) {
-      setError('All three fields are required.');
-      return;
-    }
+  // Poll while waiting for a QR scan or while showing a fresh QR (it
+  // refreshes every ~20s).
+  useEffect(() => {
+    if (!status) return;
+    if (status.connected) return;
+    if (!status.configured && !status.has_persisted_creds) return;
+    const t = setInterval(() => {
+      void refresh();
+    }, 2000);
+    return () => clearInterval(t);
+  }, [status?.connected, status?.configured, status?.has_persisted_creds]);
+
+  const connect = async () => {
     setBusy(true);
     setError(null);
     try {
-      await connectWhatsAppChannel(agentId, {
-        account_sid: accountSid.trim(),
-        auth_token: authToken.trim(),
-        from_number: fromNumber.trim(),
-      });
-      setAccountSid('');
-      setAuthToken('');
-      setFromNumber('');
-      setEditing(false);
+      await connectWhatsAppChannel(agentId);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -2055,7 +1924,7 @@ const WhatsAppChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: ()
   };
 
   const disconnect = async () => {
-    if (!confirm('Disconnect WhatsApp? The agent will stop receiving messages on this number.')) return;
+    if (!confirm('Disconnect WhatsApp? This wipes the linked-device credentials — you\'ll need to scan a new QR to reconnect.')) return;
     setBusy(true);
     setError(null);
     try {
@@ -2078,87 +1947,77 @@ const WhatsAppChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: ()
     );
   }
 
-  // Pre-connect: BYOK form for Twilio creds (no global env-var setup needed).
-  if (!status.connected || editing) {
-    const showForm = !status.connected || editing;
+  // Pre-connect: show "Connect" CTA or live QR.
+  if (!status.connected) {
+    const showQr = !!status.qr_png;
+    const showCta = !status.configured && !status.has_persisted_creds;
     return (
       <ChannelDrillFrame
         channelName="WhatsApp"
         glyph={<WhatsAppGlyphColored />}
-        connected={!!status.connected}
+        connected={false}
         onBack={onBack}
       >
         <div className="wcfg-config-pane" style={{ padding: '32px 24px' }}>
           <div className="connect-hero">
             <div className="connect-hero-tile"><WhatsAppGlyphColored size={32} /></div>
-            <h2>{status.connected ? 'Rotate Twilio credentials' : 'Connect a WhatsApp number'}</h2>
+            <h2>Connect WhatsApp</h2>
             <p>
-              Bring your own Twilio number. The Twilio Sandbox is free and works in minutes; live
-              numbers run around $1/mo. Paste the creds below — they live in{' '}
-              <span className="mono">agents/{agentId}/integrations/whatsapp.json</span> (mode 0600).
+              We pair as a <b>linked device</b> on your phone. Same as opening WhatsApp Web —
+              no Twilio, no public URL, no tokens.
             </p>
-            {showForm && (
-              <div className="whatsapp-form" style={{ width: '100%', maxWidth: 480 }}>
-                <label className="whatsapp-field">
-                  <span>Account SID</span>
-                  <input
-                    className="whatsapp-input mono"
-                    autoComplete="off"
-                    placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                    value={accountSid}
-                    onChange={(e) => setAccountSid(e.target.value)}
-                    disabled={busy}
-                  />
-                </label>
-                <label className="whatsapp-field">
-                  <span>Auth Token</span>
-                  <input
-                    className="whatsapp-input mono"
-                    type="password"
-                    autoComplete="off"
-                    placeholder="paste your Twilio Auth Token"
-                    value={authToken}
-                    onChange={(e) => setAuthToken(e.target.value)}
-                    disabled={busy}
-                  />
-                </label>
-                <label className="whatsapp-field">
-                  <span>From Number</span>
-                  <input
-                    className="whatsapp-input mono"
-                    autoComplete="off"
-                    placeholder="whatsapp:+14155238886"
-                    value={fromNumber}
-                    onChange={(e) => setFromNumber(e.target.value)}
-                    disabled={busy}
-                  />
-                </label>
-                <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'center' }}>
-                  <button className="btn primary" style={{ height: 36, padding: '0 16px' }} onClick={() => void save()} disabled={busy}>
-                    {busy ? 'Saving…' : status.connected ? 'Rotate' : 'Connect WhatsApp'}
-                  </button>
-                  {editing && (
-                    <button
-                      className="btn ghost"
-                      style={{ height: 36, padding: '0 16px' }}
-                      onClick={() => {
-                        setEditing(false);
-                        setAccountSid('');
-                        setAuthToken('');
-                        setFromNumber('');
-                      }}
-                      disabled={busy}
-                    >
-                      Cancel
-                    </button>
-                  )}
+
+            {showCta && (
+              <>
+                <button
+                  className="btn primary"
+                  style={{ height: 38, padding: '0 18px', fontSize: 13.5 }}
+                  onClick={() => void connect()}
+                  disabled={busy}
+                >
+                  <WhatsAppGlyphColored size={14} />
+                  {busy ? 'Starting…' : 'Generate QR code'}
+                </button>
+                <div className="dim" style={{ fontSize: 11.5, marginTop: 10, lineHeight: 1.5, textAlign: 'center', maxWidth: 420 }}>
+                  Click to start. We open a session and show a QR you scan from your phone's
+                  WhatsApp: <span className="mono">Settings → Linked Devices → Link a Device</span>.
                 </div>
-              </div>
+              </>
             )}
-            {!status.configured && (
-              <div className="dim" style={{ fontSize: 12, marginTop: 4 }}>
-                Set <span className="mono">PUBLIC_BASE_URL</span> on the backend so Twilio can reach
-                the inbound webhook before connecting.
+
+            {showQr && (
+              <>
+                <div style={{ background: '#fff', padding: 12, borderRadius: 12, display: 'inline-block' }}>
+                  <img src={status.qr_png ?? ''} alt="WhatsApp QR code" width={240} height={240} />
+                </div>
+                <div className="dim" style={{ fontSize: 12, marginTop: 12, lineHeight: 1.55, textAlign: 'center', maxWidth: 380 }}>
+                  Open WhatsApp on your phone → <span className="mono">Settings → Linked Devices → Link a Device</span>
+                  {' '}→ scan this code. It auto-refreshes if it expires.
+                </div>
+              </>
+            )}
+
+            {!showCta && !showQr && (
+              <>
+                <div className="dim" style={{ fontSize: 12, marginTop: 4, lineHeight: 1.5, textAlign: 'center' }}>
+                  {status.configured ? 'Waiting for QR…' : 'Reconnecting to existing session…'}
+                </div>
+                {status.has_persisted_creds && !status.configured && (
+                  <button
+                    className="btn primary"
+                    style={{ height: 36, padding: '0 16px', marginTop: 12 }}
+                    onClick={() => void connect()}
+                    disabled={busy}
+                  >
+                    Resume connection
+                  </button>
+                )}
+              </>
+            )}
+
+            {status.last_error && (
+              <div className="dim" style={{ fontSize: 11.5, marginTop: 12, color: 'var(--bad-fg)' }}>
+                Last error: {status.last_error}
               </div>
             )}
             {error && <div className="dim" style={{ fontSize: 12, color: 'var(--bad-fg)', marginTop: 10 }}>{error}</div>}
@@ -2168,7 +2027,8 @@ const WhatsAppChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: ()
     );
   }
 
-  // Configured view with WhatsApp-style preview
+  // Connected view with WhatsApp-style preview.
+  const phone = (status.jid ?? '').split('@')[0]?.split(':')[0] ?? '';
   return (
     <ChannelDrillFrame
       channelName="WhatsApp"
@@ -2177,12 +2037,11 @@ const WhatsAppChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: ()
       onBack={onBack}
     >
       <div className="wcfg-grid">
-        {/* Preview pane */}
         <div className="wcfg-preview-pane">
           <div className="wcfg-preview-head">
             <span className="wcfg-preview-label">Live preview</span>
             <span style={{ fontSize: 11, color: 'var(--fg-subtle)', marginLeft: 'auto' }}>
-              {(status.from_number ?? '').replace(/^whatsapp:/, '')}
+              {phone ? `+${phone}` : status.jid}
             </span>
           </div>
           <WhatsAppPreview />
@@ -2191,55 +2050,24 @@ const WhatsAppChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: ()
           </div>
         </div>
 
-        {/* Config pane */}
         <div className="wcfg-config-pane">
           <div className="wcfg-section">
-            <div className="wcfg-section-head"><h3>Business profile</h3></div>
+            <div className="wcfg-section-head"><h3>Linked device</h3></div>
             <div className="row-item on" style={{ marginBottom: 0 }}>
               <div className="ricon" style={{ background: 'oklch(0.94 0.06 150)', color: 'oklch(0.42 0.13 150)' }}>
                 <WhatsAppGlyphColored size={18} />
               </div>
               <div className="rmain">
                 <div className="rname mono" style={{ fontSize: 13 }}>
-                  {(status.from_number ?? '').replace(/^whatsapp:/, '')}
+                  {phone ? `+${phone}` : status.jid}
                 </div>
                 <div className="rmeta">
-                  Twilio · SID {status.account_sid_mask}
-                  {status.installed_at && <> · installed {new Date(status.installed_at).toLocaleDateString()}</>}
+                  {status.push_name ? `${status.push_name} · ` : ''}
+                  Baileys linked device
+                  {status.connected_at && <> · connected {new Date(status.connected_at).toLocaleTimeString()}</>}
                 </div>
               </div>
               <Tag kind="success"><span className="dot" />Active</Tag>
-            </div>
-          </div>
-
-          {status.inbound_url && (
-            <div className="wcfg-section">
-              <div className="wcfg-section-head">
-                <h3>Inbound webhook</h3>
-                <span className="desc">Configure this in Twilio → Messaging → Sender → Webhooks.</span>
-              </div>
-              <div className="endpoint-card">
-                <div className="endpoint-row">
-                  <span className="endpoint-method">POST</span>
-                  <span className="endpoint-url">{status.inbound_url}</span>
-                  <button
-                    className={`endpoint-copy ${copied.url ? 'ok' : ''}`}
-                    onClick={() => copy('url', status.inbound_url ?? '')}
-                  >
-                    <Icon name={copied.url ? 'check' : 'copy'} size={11} />
-                    {copied.url ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="wcfg-section">
-            <div className="wcfg-section-head"><h3>Manage</h3></div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn sm" onClick={() => setEditing(true)} disabled={busy}>
-                <Icon name="refresh" size={12} /> Rotate credentials
-              </button>
             </div>
           </div>
 
@@ -2248,7 +2076,7 @@ const WhatsAppChannelPanel = ({ agentId, onBack }: { agentId: string; onBack: ()
             <div className="danger-zone">
               <div>
                 <div className="dz-title">Disconnect WhatsApp</div>
-                <div className="dz-meta">The number stays on Twilio — we just stop forwarding messages to the agent.</div>
+                <div className="dz-meta">Wipes the linked-device credentials. You'll need to scan a new QR to reconnect.</div>
               </div>
               <button className="btn sm danger" onClick={() => void disconnect()} disabled={busy}>
                 Disconnect

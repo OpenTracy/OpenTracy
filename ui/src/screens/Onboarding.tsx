@@ -29,14 +29,22 @@ import {
 
 import {
   completeOnboarding,
+  connectWhatsAppChannel,
   decideOnboardingV2,
   getOnboardingV2Session,
+  getSlackChannel,
   getSlackConnectStatus,
+  getSlackManifest,
+  getWhatsAppChannel,
+  installSlack,
+  resetOnboardingV2,
   rewindOnboardingV2,
   saveOnboardingV2Key,
   sayOnboardingV2,
   skipOnboarding,
+  type AgentNamePickerCard,
   type ChannelPickerCard,
+  type OnboardingDecisionKey,
   type ConnectApiCard,
   type ConnectSlackCard,
   type ConnectWebCard,
@@ -48,7 +56,10 @@ import {
   type OnboardingV2Session,
   type OnboardingV2Turn,
   type ProviderKeyPasteCard,
+  type SlackChannelStatus,
+  type SlackManifestInfo,
   type TracePreviewCard,
+  type WhatsAppChannelStatus,
 } from '../api';
 import { Icon } from '../components/Icon';
 import { UserMenu } from '../components/UserMenu';
@@ -210,12 +221,13 @@ const Panel = ({
     <>
       You are a {agentName} agent.{'\n\n'}
       <strong>Behavior</strong>{'\n'}
-      {purpose ? `• ${purpose}` : '• [awaiting your description…]'}{'\n\n'}
-      <strong>Tone</strong>{'\n'}
-      {tone ? (
-        <span className={updatedSection === 'tone' ? 'new' : undefined}>{tone}</span>
-      ) : (
-        <span className="pending">[awaiting tone…]</span>
+      {purpose ? `• ${purpose}` : '• [awaiting your description…]'}
+      {tone && (
+        <>
+          {'\n\n'}
+          <strong>Tone</strong>{'\n'}
+          <span className={updatedSection === 'tone' ? 'new' : undefined}>{tone}</span>
+        </>
       )}
     </>
   );
@@ -400,97 +412,239 @@ const ModelPickerView = ({
   );
 };
 
-const ConnectSlackView = ({
-  card,
-  plaintextKey,
-  liveStatus,
-}: {
-  card: ConnectSlackCard;
-  plaintextKey: string | null;
-  liveStatus: 'waiting' | 'connected';
-}) => {
-  const [revealed, setRevealed] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const masked = card.agent_key_preview;
-  const display = revealed && plaintextKey ? plaintextKey : masked;
+const AGENT_NAME_RE = /[^a-z0-9-]/g;
 
-  const copy = async () => {
-    const v = plaintextKey ?? masked;
-    if (!v) return;
+const AgentNamePickerView = ({
+  card,
+  onSubmit,
+  disabled,
+  pending,
+}: {
+  card: AgentNamePickerCard;
+  onSubmit: (value: string) => void;
+  disabled: boolean;
+  pending: boolean;
+}) => {
+  const initial = (card.value || card.suggestion || '').trim();
+  const [value, setValue] = useState(initial);
+  const settled = Boolean(card.value);
+  const cleaned = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, card.max_length || 32);
+  const submit = () => {
+    if (!cleaned) return;
+    onSubmit(cleaned);
+  };
+  return (
+    <div className="gd-card">
+      <div className="gd-card-head">
+        <Icon name="hash" size={13} />
+        <span className="gd-card-h">Name your agent</span>
+        <span className="gd-card-sub">{settled ? cleaned : 'kebab-case · short'}</span>
+      </div>
+      <div className="gd-card-body">
+        <div className="gd-slack">
+          <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', lineHeight: 1.55 }}>
+            This becomes the agent's id — used to create its Slack app, API
+            endpoint, etc. Slack caps the app name at 35 characters, so keep
+            it short. We'll lowercase and kebab-case automatically.
+          </div>
+          <div className="gd-input">
+            <Icon name="hash" size={13} style={{ color: 'var(--fg-subtle)' }} />
+            <input
+              autoFocus
+              value={value}
+              placeholder={card.suggestion || 'support-agent'}
+              onChange={(e) => setValue(e.target.value.replace(AGENT_NAME_RE, ''))}
+              onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+              disabled={disabled || settled}
+              maxLength={card.max_length || 32}
+              spellCheck={false}
+            />
+          </div>
+          {cleaned && cleaned !== value.toLowerCase() && (
+            <div style={{ fontSize: 11.5, color: 'var(--fg-subtle)' }}>
+              Will save as <span style={{ fontFamily: 'var(--font-mono)' }}>{cleaned}</span>
+            </div>
+          )}
+        </div>
+      </div>
+      {!settled && (
+        <div className="gd-card-actions">
+          <button
+            type="button"
+            className="gd-btn-primary"
+            onClick={submit}
+            disabled={disabled || pending || !cleaned}
+          >
+            {pending ? 'Saving…' : 'Use this name'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ConnectSlackView = ({
+  agentId,
+}: {
+  agentId: string | null;
+}) => {
+  const [status, setStatus] = useState<SlackChannelStatus | null>(null);
+  const [manifest, setManifest] = useState<SlackManifestInfo | null>(null);
+  const [botToken, setBotToken] = useState('');
+  const [appToken, setAppToken] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = async () => {
+    if (!agentId) return;
     try {
-      await navigator.clipboard.writeText(v);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
+      const [s, m] = await Promise.all([
+        getSlackChannel(agentId),
+        getSlackManifest(agentId).catch(() => null),
+      ]);
+      setStatus(s);
+      setManifest(m);
     } catch {
-      /* clipboard fail in insecure contexts — ignore */
+      /* ignore — will retry on next tick */
     }
   };
 
-  const installHref = card.install_url || '#';
+  useEffect(() => {
+    void refresh();
+  }, [agentId]);
+
+  useEffect(() => {
+    if (!agentId) return;
+    if (status?.connected && status?.socket_active) return;
+    const t = window.setInterval(() => {
+      void refresh();
+    }, 3000);
+    return () => window.clearInterval(t);
+  }, [agentId, status?.connected, status?.socket_active]);
+
+  const saveInstall = async () => {
+    if (!agentId) return;
+    if (!botToken.trim() || !appToken.trim()) {
+      setError('Bot token and app-level token are both required.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await installSlack(agentId, {
+        bot_token: botToken.trim(),
+        app_token: appToken.trim(),
+      });
+      setBotToken('');
+      setAppToken('');
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const connected = Boolean(status?.connected);
+  const subLabel = !agentId
+    ? 'Waiting for agent…'
+    : connected
+      ? 'Connected'
+      : 'Socket Mode setup';
 
   return (
     <div className="gd-card">
       <div className="gd-card-head">
         <SlackGlyph size={14} />
         <span className="gd-card-h">Connect Slack</span>
-        <span className="gd-card-sub">{liveStatus === 'connected' ? 'Connected' : '~30 seconds'}</span>
+        <span className="gd-card-sub">{subLabel}</span>
       </div>
       <div className="gd-card-body">
         <div className="gd-slack">
-          <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', lineHeight: 1.55 }}>
-            Install the OpenTracy app in your workspace, then paste the agent key below in the Slack app config.
-          </div>
-          <div className="gd-slack-row">
-            <span className="label">Your agent key</span>
-            <button
-              type="button"
-              className="button-link"
-              onClick={() => setRevealed((v) => !v)}
-              disabled={!plaintextKey}
-            >
-              {revealed ? 'Hide' : 'Reveal'}
-            </button>
-          </div>
-          <div className="gd-input">
-            <Icon name="lock" size={13} style={{ color: 'var(--fg-subtle)' }} />
-            <input value={display ?? ''} readOnly placeholder="ot_live_…" />
-            <button
-              type="button"
-              className="button-link"
-              onClick={copy}
-              style={{ marginRight: -4 }}
-            >
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          </div>
-          {liveStatus === 'connected' && (
+          {connected ? (
             <div className="gd-connected">
               <div className="icon"><Icon name="check" size={12} /></div>
               <div>
                 <div style={{ fontWeight: 500 }}>Slack connected</div>
-                <div className="meta">First message received</div>
+                <div className="meta">
+                  {status?.team_name ?? status?.team_id ?? 'Workspace linked'}
+                  {status?.socket_active ? ' · Socket Mode active' : ''}
+                </div>
               </div>
             </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', lineHeight: 1.55 }}>
+                Create a Slack app from the manifest, install it in your workspace, then paste the two tokens below. Events stream over a websocket — no public URL needed.
+              </div>
+              <div style={{ fontSize: 11.5, color: 'var(--fg-subtle)', lineHeight: 1.6 }}>
+                1. <span style={{ fontFamily: 'var(--font-mono)' }}>Basic Information → App-Level Tokens → Generate</span> with scope <span style={{ fontFamily: 'var(--font-mono)' }}>connections:write</span> → copy the <span style={{ fontFamily: 'var(--font-mono)' }}>xapp-…</span>
+                <br />
+                2. <span style={{ fontFamily: 'var(--font-mono)' }}>Install App → Install to Workspace</span> → copy the <span style={{ fontFamily: 'var(--font-mono)' }}>xoxb-…</span>
+              </div>
+              <div className="gd-slack-row">
+                <span className="label">App-Level Token</span>
+              </div>
+              <div className="gd-input">
+                <Icon name="lock" size={13} style={{ color: 'var(--fg-subtle)' }} />
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="xapp-…"
+                  value={appToken}
+                  onChange={(e) => setAppToken(e.target.value)}
+                  disabled={busy}
+                />
+              </div>
+              <div className="gd-slack-row">
+                <span className="label">Bot User OAuth Token</span>
+              </div>
+              <div className="gd-input">
+                <Icon name="lock" size={13} style={{ color: 'var(--fg-subtle)' }} />
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="xoxb-…"
+                  value={botToken}
+                  onChange={(e) => setBotToken(e.target.value)}
+                  disabled={busy}
+                />
+              </div>
+              {error && (
+                <div style={{ fontSize: 11.5, color: 'var(--danger-fg, #b00020)' }}>{error}</div>
+              )}
+            </>
           )}
         </div>
       </div>
-      <div className="gd-card-actions">
-        <a
-          className="gd-btn-primary"
-          href={installHref}
-          target="_blank"
-          rel="noreferrer noopener"
-          style={{ textDecoration: 'none' }}
-        >
-          <SlackGlyph size={13} />
-          Open install page
-        </a>
-        {liveStatus !== 'connected' && (
-          <span style={{ fontSize: 11.5, color: 'var(--fg-subtle)' }}>
-            Waiting for your first message in Slack… (polling 3s)
-          </span>
-        )}
-      </div>
+      {!connected && (
+        <div className="gd-card-actions">
+          {manifest?.install_url && (
+            <a
+              className="gd-btn-primary"
+              href={manifest.install_url}
+              target="_blank"
+              rel="noreferrer noopener"
+              style={{ textDecoration: 'none' }}
+            >
+              <SlackGlyph size={13} />
+              Create Slack App
+            </a>
+          )}
+          <button
+            type="button"
+            className="gd-btn-primary"
+            onClick={() => void saveInstall()}
+            disabled={busy || !agentId || !botToken.trim() || !appToken.trim()}
+          >
+            {busy ? 'Saving…' : 'Save & enable Slack'}
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -558,54 +712,134 @@ const CodeBlock = ({ children }: { children: string }) => {
 };
 
 const ConnectWhatsappView = ({
-  card,
-  liveStatus,
+  agentId,
 }: {
-  card: ConnectWhatsappCard;
-  liveStatus: 'waiting' | 'connected';
-}) => (
-  <div className="gd-card">
-    <div className="gd-card-head">
-      <Icon name="phone" size={14} style={{ color: '#25D366' }} />
-      <span className="gd-card-h">Connect WhatsApp</span>
-      <span className="gd-card-sub">{liveStatus === 'connected' ? 'Connected' : 'Meta Business setup'}</span>
-    </div>
-    <div className="gd-card-body">
-      <div className="gd-slack">
-        <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', lineHeight: 1.55 }}>
-          In Meta Business Manager, point your WhatsApp webhook at the URL below and paste the verify token.
-        </div>
-        <div className="gd-slack-row">
-          <span className="label">Webhook URL</span>
-        </div>
-        <CopyableInput value={card.webhook_url} plaintextKey={null} fallbackValue="" />
-        <div className="gd-slack-row">
-          <span className="label">Verify token</span>
-        </div>
-        <CopyableInput value={card.verify_token_preview} plaintextKey={null} fallbackValue="" />
-        {liveStatus === 'connected' && (
-          <div className="gd-connected">
-            <div className="icon"><Icon name="check" size={12} /></div>
-            <div>
-              <div style={{ fontWeight: 500 }}>WhatsApp connected</div>
-              <div className="meta">First message received</div>
-            </div>
-          </div>
-        )}
+  agentId: string | null;
+}) => {
+  const [status, setStatus] = useState<WhatsAppChannelStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = async () => {
+    if (!agentId) return;
+    try {
+      setStatus(await getWhatsAppChannel(agentId));
+    } catch {
+      /* ignore — retry on next tick */
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, [agentId]);
+
+  useEffect(() => {
+    if (!agentId) return;
+    if (!status) return;
+    if (status.connected) return;
+    if (!status.configured && !status.has_persisted_creds) return;
+    const t = window.setInterval(() => {
+      void refresh();
+    }, 2000);
+    return () => window.clearInterval(t);
+  }, [agentId, status?.connected, status?.configured, status?.has_persisted_creds]);
+
+  const connect = async () => {
+    if (!agentId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await connectWhatsAppChannel(agentId);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const connected = Boolean(status?.connected);
+  const showQr = !connected && Boolean(status?.qr_png);
+  const showCta = !connected && status !== null && !status.configured && !status.has_persisted_creds && !status.qr_png;
+  const phone = (status?.jid ?? '').split('@')[0]?.split(':')[0] ?? '';
+  const subLabel = !agentId
+    ? 'Waiting for agent…'
+    : connected
+      ? 'Connected'
+      : 'Linked-device pairing';
+
+  return (
+    <div className="gd-card">
+      <div className="gd-card-head">
+        <Icon name="phone" size={14} style={{ color: '#25D366' }} />
+        <span className="gd-card-h">Connect WhatsApp</span>
+        <span className="gd-card-sub">{subLabel}</span>
       </div>
-    </div>
-    <div className="gd-card-actions">
-      <a className="gd-btn-primary" href="https://business.facebook.com/" target="_blank" rel="noreferrer noopener" style={{ textDecoration: 'none' }}>
-        Open Meta Business
-      </a>
-      {liveStatus !== 'connected' && (
-        <span style={{ fontSize: 11.5, color: 'var(--fg-subtle)' }}>
-          Waiting for your first WhatsApp message…
-        </span>
+      <div className="gd-card-body">
+        <div className="gd-slack">
+          {connected ? (
+            <div className="gd-connected">
+              <div className="icon"><Icon name="check" size={12} /></div>
+              <div>
+                <div style={{ fontWeight: 500 }}>WhatsApp connected</div>
+                <div className="meta">
+                  {phone ? `+${phone}` : status?.jid}
+                  {status?.push_name ? ` · ${status.push_name}` : ''}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', lineHeight: 1.55 }}>
+                We pair as a linked device on your phone — same as WhatsApp Web. No Twilio, no public URL, no tokens.
+              </div>
+              {showQr && status?.qr_png && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                  <div style={{ background: '#fff', padding: 12, borderRadius: 12 }}>
+                    <img src={status.qr_png} alt="WhatsApp QR code" width={220} height={220} />
+                  </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--fg-subtle)', lineHeight: 1.55, textAlign: 'center', maxWidth: 360 }}>
+                    Open WhatsApp on your phone →{' '}
+                    <span style={{ fontFamily: 'var(--font-mono)' }}>Settings → Linked Devices → Link a Device</span>
+                    {' '}→ scan this code. It auto-refreshes if it expires.
+                  </div>
+                </div>
+              )}
+              {!showQr && !showCta && status && (
+                <div style={{ fontSize: 11.5, color: 'var(--fg-subtle)', lineHeight: 1.5 }}>
+                  {status.configured ? 'Waiting for QR…' : 'Reconnecting to existing session…'}
+                </div>
+              )}
+              {status?.last_error && (
+                <div style={{ fontSize: 11.5, color: 'var(--danger-fg, #b00020)' }}>
+                  Last error: {status.last_error}
+                </div>
+              )}
+              {error && (
+                <div style={{ fontSize: 11.5, color: 'var(--danger-fg, #b00020)' }}>{error}</div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      {!connected && (
+        <div className="gd-card-actions">
+          {(showCta || (status?.has_persisted_creds && !status?.configured)) && (
+            <button
+              type="button"
+              className="gd-btn-primary"
+              onClick={() => void connect()}
+              disabled={busy || !agentId}
+            >
+              <Icon name="phone" size={13} />
+              {busy ? 'Starting…' : status?.has_persisted_creds ? 'Resume connection' : 'Generate QR code'}
+            </button>
+          )}
+        </div>
       )}
     </div>
-  </div>
-);
+  );
+};
 
 const ConnectWebView = ({
   card,
@@ -793,15 +1027,17 @@ const RenderCard = ({
   pendingPick,
   onSaveKey,
   savingKey,
+  agentId,
 }: {
   card: OnboardingCard;
-  onPick: (key: 'model' | 'channel', value: string) => void;
+  onPick: (key: OnboardingDecisionKey, value: string) => void;
   disabled: boolean;
   plaintextKey: string | null;
   liveStatus: 'waiting' | 'connected';
-  pendingPick: { key: 'model' | 'channel'; value: string } | null;
+  pendingPick: { key: OnboardingDecisionKey; value: string } | null;
   onSaveKey: (plaintext: string) => Promise<void>;
   savingKey: boolean;
+  agentId: string | null;
 }) => {
   switch (card.type) {
     case 'model_picker':
@@ -822,14 +1058,23 @@ const RenderCard = ({
           pendingPick={pendingPick?.key === 'channel' ? pendingPick.value : null}
         />
       );
+    case 'agent_name_picker':
+      return (
+        <AgentNamePickerView
+          card={card}
+          onSubmit={(v) => onPick('agent_name', v)}
+          disabled={disabled}
+          pending={pendingPick?.key === 'agent_name'}
+        />
+      );
     case 'provider_key_paste':
       return (
         <ProviderKeyPasteView card={card} onSaveKey={onSaveKey} saving={savingKey} />
       );
     case 'connect_slack':
-      return <ConnectSlackView card={card} plaintextKey={plaintextKey} liveStatus={liveStatus} />;
+      return <ConnectSlackView agentId={agentId} />;
     case 'connect_whatsapp':
-      return <ConnectWhatsappView card={card} liveStatus={liveStatus} />;
+      return <ConnectWhatsappView agentId={agentId} />;
     case 'connect_web':
       return <ConnectWebView card={card} liveStatus={liveStatus} />;
     case 'connect_api':
@@ -852,15 +1097,17 @@ const AssistantTurn = ({
   pendingPick,
   onSaveKey,
   savingKey,
+  agentId,
 }: {
   turn: OnboardingV2Turn;
-  onPick: (key: 'model' | 'channel', value: string) => void;
+  onPick: (key: OnboardingDecisionKey, value: string) => void;
   pending: boolean;
   plaintextKey: string | null;
   liveStatus: 'waiting' | 'connected';
-  pendingPick: { key: 'model' | 'channel'; value: string } | null;
+  pendingPick: { key: OnboardingDecisionKey; value: string } | null;
   onSaveKey: (plaintext: string) => Promise<void>;
   savingKey: boolean;
+  agentId: string | null;
 }) => (
   <div className="gd-msg claude">
     <div className="gd-msg-meta">
@@ -881,6 +1128,7 @@ const AssistantTurn = ({
           pendingPick={pendingPick}
           onSaveKey={onSaveKey}
           savingKey={savingKey}
+          agentId={agentId}
         />
       ))}
     </div>
@@ -893,7 +1141,7 @@ const UserTurn = ({
   disabled,
 }: {
   turn: OnboardingV2Turn;
-  onEdit: (key: 'model' | 'channel') => void;
+  onEdit: (key: OnboardingDecisionKey) => void;
   disabled: boolean;
 }) => {
   const isChip = !turn.text && turn.decision_key;
@@ -911,7 +1159,7 @@ const UserTurn = ({
             <button
               type="button"
               className="edit"
-              onClick={() => onEdit(turn.decision_key as 'model' | 'channel')}
+              onClick={() => onEdit(turn.decision_key as OnboardingDecisionKey)}
               disabled={disabled}
             >
               edit
@@ -1046,6 +1294,7 @@ const PLACEHOLDERS: Record<OnboardingPhase, string> = {
   intent: 'Tell Claude what your agent should do…',
   model: 'Reply or pick from the card above.',
   key: 'Paste your Anthropic key in the card above — or reply.',
+  name: 'Type the agent name above, or reply with a suggestion…',
   channel: "Pick a card above or just type — e.g. \"Slack\"",
   connect: 'Paste the token above, or reply with anything to add to the prompt…',
   live: 'Ask Claude anything — e.g. "show me yesterday\'s tone issues"',
@@ -1125,7 +1374,7 @@ export const Onboarding = ({ onDone }: OnboardingProps) => {
   // What the user just clicked on a picker card. Cleared the moment the
   // server's reply arrives (the picker is replaced by a chip anyway) —
   // this only exists to give the click instant visual feedback.
-  const [pendingPick, setPendingPick] = useState<{ key: 'model' | 'channel'; value: string } | null>(null);
+  const [pendingPick, setPendingPick] = useState<{ key: OnboardingDecisionKey; value: string } | null>(null);
   const [savingKey, setSavingKey] = useState(false);
 
   // Cold load.
@@ -1216,7 +1465,7 @@ export const Onboarding = ({ onDone }: OnboardingProps) => {
     }
   };
 
-  const handlePick = async (key: 'model' | 'channel', value: string) => {
+  const handlePick = async (key: OnboardingDecisionKey, value: string) => {
     setPending(true);
     setError(null);
     setPendingPick({ key, value });
@@ -1257,7 +1506,24 @@ export const Onboarding = ({ onDone }: OnboardingProps) => {
     }
   };
 
-  const handleEdit = async (key: 'model' | 'channel') => {
+  const handleStartOver = async () => {
+    if (!confirm('Start a new agent? This discards the current onboarding session, including any channel connections set up on the in-progress agent.')) return;
+    setPending(true);
+    setError(null);
+    try {
+      const next = await resetOnboardingV2();
+      setPlaintextKey(null);
+      setSlackInstalled(false);
+      setPendingPick(null);
+      applySession(next);
+    } catch (e) {
+      setError(String((e as Error)?.message ?? e));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const handleEdit = async (key: OnboardingDecisionKey) => {
     setPending(true);
     setError(null);
     try {
@@ -1406,9 +1672,13 @@ export const Onboarding = ({ onDone }: OnboardingProps) => {
   const panelW = panelStage === 'empty' ? '0px' : '340px';
 
   const liveStatus: 'waiting' | 'connected' = slackInstalled ? 'connected' : 'waiting';
-  const showLiveCta = session.phase === 'live';
+  // `connect` phase: agent is materialized + channel card is on screen.
+  // We let the user finish manually here instead of waiting for the first
+  // real channel message (which may take a while or never come if they
+  // just want to wire it up later).
+  const showLiveCta = session.phase === 'live' || session.phase === 'connect';
 
-  const agentName = session.agent_id || (decisions.purpose ? 'checkout-support' : 'Untitled agent');
+  const agentName = decisions.agent_name || session.agent_id || (decisions.purpose ? 'checkout-support' : 'Untitled agent');
   const channelNode = decisions.channel ? channelLabel(decisions.channel) : null;
   const modelStr = modelLabel(decisions.model);
   const purposeShort = decisions.purpose
@@ -1439,6 +1709,15 @@ export const Onboarding = ({ onDone }: OnboardingProps) => {
           <button
             type="button"
             className="gd-toolbar-link"
+            onClick={handleStartOver}
+            disabled={pending}
+            title="Discard the current onboarding session and start a new agent"
+          >
+            Start a new agent
+          </button>
+          <button
+            type="button"
+            className="gd-toolbar-link"
             onClick={handleSkip}
             disabled={pending}
             title="Skip onboarding and go straight to the dashboard"
@@ -1460,6 +1739,7 @@ export const Onboarding = ({ onDone }: OnboardingProps) => {
                   pendingPick={pendingPick}
                   onSaveKey={handleSaveKey}
                   savingKey={savingKey}
+                  agentId={session.agent_id}
                 />
               ) : (
                 <UserTurn key={t.id} turn={t} onEdit={handleEdit} disabled={pending} />
@@ -1484,7 +1764,7 @@ export const Onboarding = ({ onDone }: OnboardingProps) => {
                   onClick={finish}
                   disabled={pending}
                 >
-                  Go to dashboard
+                  {session.phase === 'live' ? 'Go to dashboard' : 'Finish setup'}
                   <Icon name="arrowUp" size={12} />
                 </button>
               </div>
