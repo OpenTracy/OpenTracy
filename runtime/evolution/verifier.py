@@ -34,6 +34,87 @@ _PROMPT_TRUNCATE = 3000
 _JSON_OBJECT_RE = re.compile(r"\{[\s\S]*\}")
 
 
+def grade_for_rollout(
+    *,
+    task: str,
+    response: str,
+    success: bool,
+    error: Optional[str],
+    system_prompt: Optional[str],
+    anthropic_key: Optional[str],
+    model: str = _VERIFIER_MODEL_DEFAULT,
+) -> tuple[bool, Optional[str]]:
+    """Lightweight semantic grader for inline use inside the rollout.
+
+    Returns ``(semantic_pass, reason)``:
+      - ``semantic_pass=True`` if the response respects the contract.
+        Mechanical ``success=True`` rolls through unchanged.
+      - ``semantic_pass=False`` if the response violates the contract
+        (persona, hard rules, policy). The rollout uses this to flip
+        an otherwise-mechanically-OK outcome to a failure, which gives
+        cluster_failures + the Evolve Agent something to work with.
+        Without this, agents that produce off-policy text always
+        ``PASS`` mechanically and the loop converges to "nothing to
+        improve" even when there IS something to improve.
+
+    Skip semantics (returns ``(True, None)``):
+      - no anthropic_key supplied
+      - empty response AND no error (nothing to grade)
+      - pipeline already errored (mechanical failure is enough)
+      - judge call/parse failures (fail-open — don't punish for our bug)
+    """
+    if not anthropic_key or not system_prompt:
+        return True, None
+    if (not response) and (not error):
+        return True, None
+    if error:
+        # Mechanical failure already accounts for this.
+        return True, None
+    try:
+        from anthropic import Anthropic
+    except Exception:  # pragma: no cover
+        return True, None
+
+    # Reuse the full prompt machinery but ignore claim/risk fields —
+    # the rollout doesn't have a prior pending in scope. follows_contract
+    # alone is what we need.
+    prompt = _build_prompt(
+        task=task,
+        response=response,
+        success=success,
+        error=error,
+        system_prompt=system_prompt,
+        claimed_fixes=[],
+        at_risk_regressions=[],
+    )
+    try:
+        client = Anthropic(api_key=anthropic_key)
+        resp = client.messages.create(
+            model=model,
+            max_tokens=_VERIFIER_MAX_TOKENS,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as exc:
+        logger.warning("semantic grader: call failed (%s)", exc)
+        return True, None
+
+    text = ""
+    for block in getattr(resp, "content", []) or []:
+        if getattr(block, "type", None) == "text":
+            text += getattr(block, "text", "") or ""
+
+    parsed = _parse_verdict(text)
+    if parsed is None:
+        return True, None
+
+    fc = parsed.get("follows_contract") or {}
+    fc_passed = bool(fc.get("passed", True))
+    if fc_passed:
+        return True, None
+    reason = str(fc.get("reasoning", "") or parsed.get("overall_reasoning", ""))[:300]
+    return False, reason or "violates contract (no specific reason from judge)"
+
+
 def verify_trajectory(
     *,
     task: str,

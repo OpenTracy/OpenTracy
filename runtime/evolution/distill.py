@@ -44,6 +44,13 @@ def summarize_rollout(rollout: RolloutResult) -> Evidence:
     aggregate count at the top distinguishes "all runs passed" from
     "flaky on some retries" so the Evolve Agent can read variance at
     a glance.
+
+    When ``k>1`` and any task is flaky, a synthetic partial-pass
+    EvidenceCluster is attached up front (severity=5). Per AHE, this
+    is the most valuable diagnostic signal — the winning rollout shows
+    the strategy that worked; the failing one shows what didn't. The
+    LLM-driven clusterer downstream (:func:`cluster_failures`) can
+    still add its own root-cause clusters on top.
     """
     aggs = rollout.task_aggregates
     flaky = rollout.flaky_tasks
@@ -76,7 +83,52 @@ def summarize_rollout(rollout: RolloutResult) -> Evidence:
             f"  - {task!r}: {a['passed_runs']}/{a['total_runs']} runs → {verdict}"
         )
 
-    return Evidence(rollout=rollout, summary="\n".join(lines))
+    clusters: list[EvidenceCluster] = []
+    if rollout.k > 1 and flaky:
+        clusters.append(_partial_pass_cluster(rollout, flaky))
+
+    return Evidence(rollout=rollout, summary="\n".join(lines), clusters=clusters)
+
+
+def _partial_pass_cluster(
+    rollout: RolloutResult, flaky_tasks: list[str]
+) -> EvidenceCluster:
+    """Build the synthetic partial-pass diagnostic cluster.
+
+    Notes embeds, per flaky task, the divergence between a passing and
+    a failing run so the Evolve Agent can spot what changed between
+    them without reading the full trace. Truncated aggressively — the
+    detail/{task}.md analysis file holds the full responses.
+    """
+    note_lines: list[str] = []
+    for task in flaky_tasks:
+        runs = [o for o in rollout.outcomes if o.task == task]
+        winning = next(
+            (o for o in runs if o.success and not o.error), None,
+        )
+        losing = next(
+            (o for o in runs if not (o.success and not o.error)), None,
+        )
+        if winning is None or losing is None:
+            continue
+        win_snip = (winning.response or "").strip().replace("\n", " ")
+        lose_snip = (losing.error or losing.response or "").strip().replace("\n", " ")
+        win_snip = win_snip[:120] + ("…" if len(win_snip) > 120 else "")
+        lose_snip = lose_snip[:120] + ("…" if len(lose_snip) > 120 else "")
+        note_lines.append(
+            f"{task!r}: run{winning.run_index} PASS={win_snip!r} "
+            f"vs run{losing.run_index} FAIL={lose_snip!r}"
+        )
+    notes = " | ".join(note_lines)[:600]
+    return EvidenceCluster(
+        root_cause="partial-pass: task succeeds only on some replays",
+        tasks=list(flaky_tasks),
+        severity=5,
+        notes=(
+            notes or "compare passing vs failing replays of each flaky task; "
+            "make the winning strategy the reliable default"
+        ),
+    )
 
 
 def cluster_failures(
@@ -150,7 +202,11 @@ def cluster_failures(
         logger.info("distill: clustering returned 0 valid clusters")
         return evidence
 
-    evidence.clusters = clusters
+    # Preserve any synthetic clusters already on the evidence (e.g.
+    # the partial-pass diagnostic from :func:`summarize_rollout`) and
+    # append the LLM-discovered ones. Synthetic ones go first so they
+    # show up on top when sorted by severity.
+    evidence.clusters = list(evidence.clusters) + clusters
     return evidence
 
 

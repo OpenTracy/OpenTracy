@@ -140,8 +140,11 @@ def test_list_nexau_components_shows_zero_seed_baseline(root):
     assert snapshot["middleware"] == []
     assert snapshot["skills"] == []
     assert snapshot["subagents"] == []
-    # memory always has the two seeds.
-    assert sorted(snapshot["memory"]) == ["plan.md", "state.json"]
+    # memory bucket seeds: plan + state + long_term (Wave C pillar).
+    assert sorted(snapshot["memory"]) == ["long_term.md", "plan.md", "state.json"]
+    # long_term_memory is also surfaced as a standalone pillar so the
+    # Evolve Agent treats it distinctly from short-lived plan/state.
+    assert snapshot["long_term_memory"] == ["long_term.md"]
 
 
 def test_list_nexau_components_picks_up_added_files(root):
@@ -331,3 +334,109 @@ def test_opentracy_dir_constant_matches_layout(root):
         MANIFEST_HISTORY_DIR,
     ):
         assert relpath.startswith(OPENTRACY_DIR + "/")
+
+
+# ---------------------------------------------------------------------------
+# Wave A — pending_baseline + change_evaluation + scoped rollback
+# ---------------------------------------------------------------------------
+
+
+def test_pending_baseline_roundtrips(root):
+    ws = WorkspaceStore("demo", root=root)
+    ws.write_pending_baseline(
+        iteration_id="evo-x",
+        task_outcomes={"t1": "pass", "t2": "fail", "t3": "flaky"},
+    )
+    got = ws.read_pending_baseline()
+    assert got["iteration_id"] == "evo-x"
+    assert got["task_outcomes"] == {"t1": "pass", "t2": "fail", "t3": "flaky"}
+
+
+def test_pending_baseline_cleared_when_pending_rolled_to_history(root):
+    ws = WorkspaceStore("demo", root=root)
+    ws.write_pending_manifest({"claimed_fixes": ["x"]})
+    ws.write_pending_baseline(
+        iteration_id="evo-x", task_outcomes={"t1": "pass"},
+    )
+    ws.roll_pending_to_history(outcome={"verdict": "confirmed", "delta": {}})
+    # Baseline is paired with pending — once pending is archived the
+    # baseline must follow, otherwise a future iteration would attribute
+    # flips against a stale pre-edits world.
+    assert ws.read_pending_baseline() is None
+
+
+def test_change_evaluation_write_and_list_newest_first(root):
+    ws = WorkspaceStore("demo", root=root)
+    ws.write_change_evaluation(
+        iteration_id="evo-20260520T100000-aaa",
+        verdict="confirmed",
+        evaluations=[{
+            "change_id": "chg-1",
+            "constraint_level": "skill",
+            "failure_pattern": "plan-skipped",
+            "decision": "KEEP",
+            "reason": "all fixes landed",
+        }],
+    )
+    ws.write_change_evaluation(
+        iteration_id="evo-20260520T110000-bbb",
+        verdict="mixed",
+        evaluations=[],
+    )
+    items = ws.list_change_evaluations(limit=5)
+    assert [it["iteration_id"] for it in items] == [
+        "evo-20260520T110000-bbb",
+        "evo-20260520T100000-aaa",
+    ]
+
+
+def test_rollback_snapshot_by_change_scoped_apply(root):
+    ws = WorkspaceStore("demo", root=root)
+    ws.ensure()
+    # Snapshot two change buckets — only roll back chg-1, chg-2 stays.
+    (ws.path / "a.md").write_text("LIVE-A", encoding="utf-8")
+    (ws.path / "b.md").write_text("LIVE-B", encoding="utf-8")
+    ws.write_rollback_snapshot(
+        iteration_id="evo-x",
+        by_change={
+            "chg-1": {"files": {"a.md": "ORIGINAL-A"}},
+            "chg-2": {"files": {"b.md": "ORIGINAL-B"}},
+        },
+    )
+    rolled = ws.apply_rollback(only_changes=["chg-1"])
+    assert rolled == ["a.md"]
+    assert (ws.path / "a.md").read_text() == "ORIGINAL-A"
+    # chg-2 untouched and still queued for a future apply.
+    assert (ws.path / "b.md").read_text() == "LIVE-B"
+    snap = ws.read_rollback_snapshot()
+    assert list(snap["by_change"].keys()) == ["chg-2"]
+
+
+def test_rollback_snapshot_by_change_full_apply_drains_all_buckets(root):
+    ws = WorkspaceStore("demo", root=root)
+    ws.ensure()
+    (ws.path / "a.md").write_text("LIVE-A", encoding="utf-8")
+    (ws.path / "b.md").write_text("LIVE-B", encoding="utf-8")
+    ws.write_rollback_snapshot(
+        iteration_id="evo-x",
+        by_change={
+            "chg-1": {"files": {"a.md": "ORIGINAL-A"}},
+            "chg-2": {"files": {"b.md": "ORIGINAL-B"}},
+        },
+    )
+    # No only_changes → full apply across every bucket, snapshot cleared.
+    rolled = ws.apply_rollback()
+    assert set(rolled) == {"a.md", "b.md"}
+    assert ws.read_rollback_snapshot() is None
+
+
+def test_rollback_snapshot_rejects_ambiguous_call(root):
+    ws = WorkspaceStore("demo", root=root)
+    with pytest.raises(ValueError):
+        ws.write_rollback_snapshot(iteration_id="evo-x")
+    with pytest.raises(ValueError):
+        ws.write_rollback_snapshot(
+            iteration_id="evo-x",
+            files={"a.md": "X"},
+            by_change={"chg-1": {"files": {"a.md": "X"}}},
+        )

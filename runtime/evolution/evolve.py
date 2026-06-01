@@ -27,6 +27,12 @@ logger = logging.getLogger("runtime.evolution.evolve")
 _EVOLVE_PROMPT = """Improve this agent based on rollout evidence."""
 
 
+_CONSTRAINT_LEVELS = (
+    "system_prompt", "tool_desc", "tool_impl",
+    "middleware", "skill", "sub_agent", "memory",
+)
+
+
 def _build_system_prompt(
     *,
     agent_id: str,
@@ -34,17 +40,26 @@ def _build_system_prompt(
     nexau: dict[str, list[str]],
     manifest_history: list[dict[str, Any]],
     evidence_summary: str,
+    change_eval_history: Optional[list[dict[str, Any]]] = None,
+    strategy_hint: Optional[str] = None,
 ) -> str:
     """Compose the evolve-mode system prompt.
 
     Differs from the per-turn engineer prompt by:
       - Reframing the role as "evolution agent for this harness"
       - Forbidding chat-shaped replies (no user is waiting)
-      - Mandating a pending manifest with prediction + at-risk regressions,
-        so Decision Observability (AHE §3.3) actually works next round
+      - Mandating a pending manifest with a ``changes`` array, each
+        change carrying its own constraint_level + predicted_fixes +
+        risk_tasks, so Decision Observability (AHE §3.3) actually
+        works at the change-level and the loop can detect "same
+        failure persists at the same constraint_level → pivot"
+        (AHE §3.4 anti-pattern).
     """
     nexau_lines = []
-    for key in ("system_prompt", "tools", "middleware", "skills", "subagents", "memory"):
+    for key in (
+        "system_prompt", "tools", "middleware", "skills",
+        "subagents", "memory", "long_term_memory",
+    ):
         items = nexau.get(key, [])
         nexau_lines.append(
             f"- {key}: {', '.join(items) if items else '(empty — minimal-seed)'}"
@@ -58,16 +73,57 @@ def _build_system_prompt(
     else:
         history_lines.append("(no manifest history yet)")
 
+    # Surface per-change decisions from prior iterations. This is the
+    # signal the evolve agent needs to spot the §3.4 anti-pattern:
+    # "I keep trying skill-level fixes for failure_pattern=X and they
+    # keep landing ROLLBACK_AND_PIVOT — try middleware or tool_impl
+    # this time." Without this section the agent re-treads dead ends.
+    decision_lines: list[str] = []
+    if change_eval_history:
+        for entry in change_eval_history[:5]:
+            iid = entry.get("iteration_id", "?")
+            for ev in entry.get("evaluations", []) or []:
+                fp = ev.get("failure_pattern") or "(no pattern)"
+                lvl = ev.get("constraint_level") or "?"
+                dec = ev.get("decision") or "?"
+                reason = (ev.get("reason") or "").strip()
+                tail = f" — {reason}" if reason else ""
+                decision_lines.append(
+                    f"- [{iid}] level={lvl} pattern={fp!r} → {dec}{tail}"
+                )
+    if not decision_lines:
+        decision_lines.append("(no prior change evaluations)")
+
+    # Best-of-N strategy constraint, if any. Injected very high in the
+    # prompt so the agent cannot miss it — the AHE paper's recipe is
+    # that variants are only useful if each agent actually honors its
+    # mandated direction. Phrasing kept identical to §3.4.
+    strategy_block = ""
+    if strategy_hint:
+        strategy_block = (
+            "## MANDATORY Strategy Constraint (Best-of-N)\n"
+            f"{strategy_hint}\n"
+            "You are one of several parallel variants this iteration; "
+            "violating this constraint wastes the exploration budget.\n\n"
+        )
+
     return (
         f"You are the EVOLUTION agent for agent `{agent_id}` (not the\n"
         f"customer-facing engineer). No human is waiting on you — your\n"
         f"job is to improve this harness for the NEXT rollout.\n\n"
+        f"{strategy_block}"
         f"{base_system.rstrip()}\n\n"
         f"--- harness snapshot -----------------------------------------\n\n"
         f"## NexAU components (file at .opentracy/<type>/...)\n"
         f"{chr(10).join(nexau_lines)}\n\n"
         f"## Recent Change Manifest verdicts\n"
         f"{chr(10).join(history_lines)}\n\n"
+        f"## Per-change decisions from prior iterations\n"
+        f"{chr(10).join(decision_lines)}\n\n"
+        f"**If the same (failure_pattern, constraint_level) pair already\n"
+        f"earned ROLLBACK_AND_PIVOT, you MUST try a DIFFERENT\n"
+        f"constraint_level this iteration — the prior level is wrong\n"
+        f"for that pattern.**\n\n"
         f"--- rollout evidence -----------------------------------------\n\n"
         f"{evidence_summary}\n\n"
         f"--- your task ------------------------------------------------\n\n"
@@ -76,16 +132,33 @@ def _build_system_prompt(
         f"  - tighten `.opentracy/system_prompt.md`\n"
         f"  - add a reusable strategy to `.opentracy/skills/<name>.md`\n"
         f"  - add a tool description+impl to `.opentracy/tools/<name>.{{json,sh}}`\n"
-        f"  - add middleware in `.opentracy/middleware/<name>.{{py,sh}}`\n\n"
+        f"  - add middleware in `.opentracy/middleware/<name>.{{py,sh}}`\n"
+        f"  - **append** a confirmed lesson to `.opentracy/memory/long_term.md`\n"
+        f"    (do NOT rewrite or delete existing entries — that file is\n"
+        f"    a cumulative ledger of patterns proven across iterations;\n"
+        f"    entries are append-only unless you have strong evidence\n"
+        f"    a prior entry was wrong)\n\n"
         f"BEFORE finishing, you MUST write a Change Manifest to\n"
         f"`.opentracy/manifest/pending.json` with these keys:\n"
-        f"  - changed_files: [relative paths you edited]\n"
         f"  - rationale: short prose, why these edits\n"
-        f"  - claimed_fixes: [task patterns you expect to flip pass]\n"
-        f"  - at_risk_regressions: [task patterns that might newly fail]\n\n"
+        f"  - changes: array of per-change records (REQUIRED, see schema below)\n"
+        f"  - changed_files: union of all `files` across `changes` (kept for legacy readers)\n"
+        f"  - claimed_fixes: union of `predicted_fixes` across changes (legacy)\n"
+        f"  - at_risk_regressions: union of `risk_tasks` across changes (legacy)\n\n"
+        f"Each entry in `changes` MUST have:\n"
+        f"  - id: short unique label (e.g. 'chg-1')\n"
+        f"  - constraint_level: one of {list(_CONSTRAINT_LEVELS)}\n"
+        f"  - files: [relative paths edited by this change]\n"
+        f"  - failure_pattern: short stable key for the failure class\n"
+        f"      addressed (used to match across iterations)\n"
+        f"  - description: what the edit does\n"
+        f"  - predicted_fixes: [task ids that should flip FAIL→PASS because of this change]\n"
+        f"  - risk_tasks: [task ids at risk of flipping PASS→FAIL]\n"
+        f"  - why_this_component: why this constraint_level is right\n"
+        f"      (especially if prior iterations failed at a different one)\n\n"
         f"Be minimal. Each edit must be justifiable by specific evidence.\n"
         f"If the rollout already passes everything cleanly, write a manifest\n"
-        f"with empty `changed_files` and `rationale='nothing to improve'`.\n\n"
+        f"with empty `changes` and `rationale='nothing to improve'`.\n\n"
         f"Reply with one short paragraph summarizing what you changed."
     )
 
@@ -99,6 +172,7 @@ def run_evolve(
     sandbox_factory: Optional[Any] = None,
     timeout_s: int = 300,
     model: Optional[str] = None,
+    strategy_hint: Optional[str] = None,
 ) -> EvolveOutcome:
     """Spawn an Evolve sandbox, let claude edit the workspace, snapshot back.
 
@@ -113,6 +187,11 @@ def run_evolve(
     base_system = workspace.read_system_prompt()
     nexau = workspace.list_nexau_components()
     history = workspace.list_manifest_history(limit=5)
+    try:
+        change_eval_history = workspace.list_change_evaluations(limit=5)
+    except AttributeError:
+        # WorkspaceStore older than Wave A — graceful fallback.
+        change_eval_history = []
     files_before = set(workspace.list_files(max_files=10_000))
 
     system_prompt = _build_system_prompt(
@@ -121,6 +200,8 @@ def run_evolve(
         nexau=nexau,
         manifest_history=history,
         evidence_summary=evidence_summary,
+        change_eval_history=change_eval_history,
+        strategy_hint=strategy_hint,
     )
 
     tar_in = workspace.to_tar_bytes()
@@ -140,7 +221,7 @@ def run_evolve(
             if kind == "stdout":
                 response_chunks.append(evt.get("data") or "")
             elif kind == "stderr":
-                logger.info("evolve sandbox stderr: %s", evt.get("data"))
+                logger.warning("evolve sandbox stderr: %s", evt.get("data"))
             elif kind == "error":
                 logger.warning("evolve sandbox error: %s", evt.get("detail"))
                 break

@@ -145,17 +145,112 @@ class Evidence:
 
 @dataclass
 class EvolveOutcome:
-    """What the Evolve Agent sandbox did during one iteration."""
+    """What the Evolve Agent sandbox did during one iteration.
+
+    ``variant_summaries`` is populated only in Best-of-N mode — one
+    compact dict per variant explored, in declaration order. The
+    winner's index is also captured in :attr:`chosen_variant_index`
+    so the next iteration's agent can see which strategy was picked
+    and which were left on the table.
+    """
 
     files_edited: list[str] = field(default_factory=list)
     pending_manifest: Optional[dict[str, Any]] = None
     raw_response: str = ""
+    variant_summaries: list[dict[str, Any]] = field(default_factory=list)
+    chosen_variant_index: Optional[int] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "files_edited": list(self.files_edited),
             "pending_manifest": self.pending_manifest,
             "raw_response": self.raw_response,
+            "variant_summaries": list(self.variant_summaries),
+            "chosen_variant_index": self.chosen_variant_index,
+        }
+
+
+@dataclass
+class ChangeRecord:
+    """One harness edit inside a pending Change Manifest.
+
+    Per AHE §3.3, the Evolve Agent must commit each edit with four
+    fields the next round can falsify: failure evidence, root cause,
+    targeted fix, predicted impact. Plus the *constraint level* — which
+    of the seven NexAU component types this edit touched — so the loop
+    can detect "same failure persists 2+ iterations at the same level
+    → wrong component, pivot" (AHE §3.4 anti-pattern).
+
+    ``failure_pattern`` is the machine-comparable key for matching a
+    change across iterations: if the same failure_pattern keeps showing
+    up despite KEEP/IMPROVE attempts at the same constraint_level, the
+    next iteration's evolve agent must try a different level.
+    """
+
+    id: str
+    constraint_level: str   # system_prompt | tool_desc | tool_impl | middleware | skill | sub_agent | memory
+    files: list[str] = field(default_factory=list)
+    failure_pattern: str = ""
+    description: str = ""
+    predicted_fixes: list[str] = field(default_factory=list)
+    risk_tasks: list[str] = field(default_factory=list)
+    why_this_component: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "constraint_level": self.constraint_level,
+            "files": list(self.files),
+            "failure_pattern": self.failure_pattern,
+            "description": self.description,
+            "predicted_fixes": list(self.predicted_fixes),
+            "risk_tasks": list(self.risk_tasks),
+            "why_this_component": self.why_this_component,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ChangeRecord":
+        return cls(
+            id=str(data.get("id") or ""),
+            constraint_level=str(data.get("constraint_level") or "unknown"),
+            files=list(data.get("files") or []),
+            failure_pattern=str(data.get("failure_pattern") or ""),
+            description=str(data.get("description") or ""),
+            predicted_fixes=list(data.get("predicted_fixes") or []),
+            risk_tasks=list(data.get("risk_tasks") or []),
+            why_this_component=str(data.get("why_this_component") or ""),
+        )
+
+
+@dataclass
+class ChangeEvaluation:
+    """Attribution + decision for ONE change after the next rollout.
+
+    Computed by :func:`runtime.evolution.loop._verify_previous` once
+    the rollout following a change's iteration is in. Drives the
+    KEEP / IMPROVE / ROLLBACK_AND_PIVOT decision and feeds the next
+    Evolve Agent so it learns from successes AND falsified attempts.
+    """
+
+    change_id: str
+    constraint_level: str
+    failure_pattern: str
+    confirmed_fixes: list[str] = field(default_factory=list)
+    missed_fixes: list[str] = field(default_factory=list)
+    materialized_risks: list[str] = field(default_factory=list)
+    decision: str = "KEEP"  # KEEP | IMPROVE | ROLLBACK_AND_PIVOT
+    reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "change_id": self.change_id,
+            "constraint_level": self.constraint_level,
+            "failure_pattern": self.failure_pattern,
+            "confirmed_fixes": list(self.confirmed_fixes),
+            "missed_fixes": list(self.missed_fixes),
+            "materialized_risks": list(self.materialized_risks),
+            "decision": self.decision,
+            "reason": self.reason,
         }
 
 
@@ -166,22 +261,25 @@ class VerificationResult:
     Verdict is one of ``confirmed`` / ``regressed`` / ``mixed`` /
     ``no_signal`` — chosen based on whether the claimed fixes and
     at-risk regressions actually moved in the current rollout's
-    pass/fail relative to the prior one.
-
-    For v0 the only signal we have is "was this task overall a
-    success?", so verdicts are coarse. v1 will plug in per-claim
-    grading from the Agent Debugger output.
+    pass/fail relative to the prior one. Iteration-level rollup;
+    per-change attribution lives in :attr:`change_evaluations`.
     """
 
     pending_archived_to: Optional[str] = None
     verdict: str = "no_signal"
     delta: dict[str, Any] = field(default_factory=dict)
+    change_evaluations: list[ChangeEvaluation] = field(default_factory=list)
+    unexpected_flips_to_pass: list[str] = field(default_factory=list)
+    unexpected_flips_to_fail: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "pending_archived_to": self.pending_archived_to,
             "verdict": self.verdict,
             "delta": self.delta,
+            "change_evaluations": [c.to_dict() for c in self.change_evaluations],
+            "unexpected_flips_to_pass": list(self.unexpected_flips_to_pass),
+            "unexpected_flips_to_fail": list(self.unexpected_flips_to_fail),
         }
 
 
