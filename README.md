@@ -29,26 +29,67 @@ approval before they go live.
 
 ## Quick start
 
-Requirements: Python 3.11+, Node 20+, an Anthropic API key.
+### Requirements
+
+- **Python 3.11+** and [**uv**](https://docs.astral.sh/uv/)
+- **Node 20+** (ships `npm`)
+- An **Anthropic API key**
+
+### Setup
 
 ```bash
 git clone https://github.com/OpenTracy/OpenTracy
 cd OpenTracy
-
-# 1. Runtime (port 8001)
-uv sync               # or: pip install -e .
-cp .env.example .env  # then fill in ANTHROPIC_API_KEY
-uv run python -m runtime
-
-# 2. Backend gateway (port 8002) — new terminal
-cd backend && npm install && npm run dev
-
-# 3. UI (port 5174) — new terminal
-cd ui && npm install && npm run dev
+cp .env.example .env     # then set ANTHROPIC_API_KEY
+make install             # Python (uv) + backend + UI dependencies
 ```
 
-Open <http://localhost:5174>. The shell boots straight to Evolution — no login,
-no signup. OSS runs single-tenant on localhost by design.
+`make install` runs `uv sync --extra rag` (the default agent's retrieval stage
+needs it) and `npm install` in `backend/` and `ui/`. For tests/linting use
+`make install-dev`.
+
+### Run
+
+Start everything in the background:
+
+```bash
+make up      # runtime :8001, backend :8002, ui :5174 — logs in .run/
+make down    # stop all three
+```
+
+…or run each in its own terminal:
+
+```bash
+make runtime    # runtime API   → http://localhost:8001
+make backend    # gateway       → http://localhost:8002
+make ui         # web UI        → http://localhost:5174
+```
+
+Then open <http://localhost:5174>. The shell boots straight to Evolution — no
+login, no signup. OSS runs single-tenant on localhost by design.
+
+> Prefer raw commands? `make help` lists every target; each just wraps the
+> obvious `uv run` / `npm run` invocation.
+
+### Configuration
+
+- **`ANTHROPIC_API_KEY`** is the only required variable. See
+  [`.env.example`](.env.example) for the rest.
+- **Ports** default to `8001` (runtime), `8002` (backend), `5174` (UI). Override
+  them in `.env` with `OPENTRACY_RUNTIME_PORT` / `OPENTRACY_BACKEND_PORT` /
+  `OPENTRACY_UI_PORT`; `make` wires the services together accordingly.
+- **WhatsApp** is **off by default**. To enable it, install the optional
+  dependency (`cd backend && npm install baileys`) and run the gateway with the
+  flag:
+
+  ```bash
+  make backend WHATSAPP=1      # sets OPENTRACY_ENABLE_BAILEYS=1
+  ```
+
+  Baileys is GPLv3 and an unofficial WhatsApp Web client — read
+  [docs/channels/whatsapp.md](docs/channels/whatsapp.md) before enabling.
+- **ClickHouse** is optional. The `.env.example` enables it; set
+  `OPENTRACY_CH_ENABLED=false` to use the local store instead.
 
 ## Architecture
 
