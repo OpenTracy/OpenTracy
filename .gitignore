@@ -79,3 +79,6 @@ corpora/ingested/
 *.tsbuildinfo
 
 .cloudbuild.*
+
+# Background process logs from `make up`.
+.run/

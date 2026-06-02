@@ -5317,8 +5317,14 @@ def admin_features_endpoint() -> FeatureFlags:
 
 
 def main() -> None:
+    import os
+
+    from runtime.dotenv import load_env
+
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    uvicorn.run("runtime.server:app", host="127.0.0.1", port=8001, reload=False)
+    load_env()
+    port = int(os.environ.get("OPENTRACY_RUNTIME_PORT", "8001"))
+    uvicorn.run("runtime.server:app", host="127.0.0.1", port=port, reload=False)
 
 
 if __name__ == "__main__":

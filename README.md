@@ -50,7 +50,14 @@ needs it) and `npm install` in `backend/` and `ui/`. For tests/linting use
 
 ### Run
 
-Three services — one per terminal:
+Start everything in the background:
+
+```bash
+make up      # runtime :8001, backend :8002, ui :5174 — logs in .run/
+make down    # stop all three
+```
+
+…or run each in its own terminal:
 
 ```bash
 make runtime    # runtime API   → http://localhost:8001
@@ -68,6 +75,9 @@ login, no signup. OSS runs single-tenant on localhost by design.
 
 - **`ANTHROPIC_API_KEY`** is the only required variable. See
   [`.env.example`](.env.example) for the rest.
+- **Ports** default to `8001` (runtime), `8002` (backend), `5174` (UI). Override
+  them in `.env` with `OPENTRACY_RUNTIME_PORT` / `OPENTRACY_BACKEND_PORT` /
+  `OPENTRACY_UI_PORT`; `make` wires the services together accordingly.
 - **WhatsApp** is **off by default**. To enable it, install the optional
   dependency (`cd backend && npm install baileys`) and run the gateway with the
   flag:
