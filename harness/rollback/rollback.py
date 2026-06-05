@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import shutil
+from collections.abc import Iterable
 from pathlib import Path
 
-from ledger.versioning import LIVE_AGENT, list_snapshots, read_version, restore_version
+from ledger.versioning import (
+    LIVE_AGENT,
+    VERSIONS_DIR,
+    list_snapshots,
+    read_version,
+    restore_version,
+    snapshot_agent,
+    snapshot_path,
+)
 from ledger.writer import write_entry
 
 
@@ -38,3 +48,49 @@ def rollback_to(
         payload={"reason": reason},
     )
     return version
+
+
+def rollback_edits(
+    version: str,
+    files: Iterable[str],
+    *,
+    agent_dir: Path | str = LIVE_AGENT,
+    versions_dir: Path | str = VERSIONS_DIR,
+    reason: str = "file-level rollback",
+) -> dict[str, list[str]]:
+    """Revert only `files` (agent/-relative) to their state at `version`.
+
+    AHE-style file-granularity rollback of a rejected edit: restore each file
+    from the `version` snapshot; a file the snapshot lacks (added after it) is
+    removed to match. Snapshots the current tree first so this is itself
+    undoable, and records a rollback ledger entry. Returns {restored, removed}.
+    """
+    agent_dir = Path(agent_dir)
+    snap = snapshot_path(version, versions_dir)
+    if not snap.exists():
+        raise FileNotFoundError(f"no snapshot for version {version!r}: {snap}")
+
+    old_version = read_version(agent_dir)
+    snapshot_agent(agent_dir, versions_dir)
+
+    restored: list[str] = []
+    removed: list[str] = []
+    for rel in files:
+        src = snap / rel
+        dst = agent_dir / rel
+        if src.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            restored.append(rel)
+        elif dst.exists():
+            dst.unlink()
+            removed.append(rel)
+
+    write_entry(
+        kind="rollback",
+        agent_version_before=old_version,
+        agent_version_after=old_version,
+        summary=f"file-level rollback to {version}: {restored + removed} ({reason})",
+        payload={"version": version, "restored": restored, "removed": removed, "reason": reason},
+    )
+    return {"restored": restored, "removed": removed}

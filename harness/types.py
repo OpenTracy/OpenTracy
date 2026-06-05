@@ -206,6 +206,7 @@ class CriticContext:
 
     proposal: Proposal
     candidate_result: Optional[Any] = None  # experiments.runner.CandidateResult
+    manifest_verdict: Optional[ManifestVerdict] = None
 
 
 @dataclass

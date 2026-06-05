@@ -776,6 +776,8 @@ def promote_router_config(
             "rationale": outcome.proposal.prediction.rationale,
             "confidence": outcome.proposal.prediction.confidence,
         }
+    if outcome.manifest_verdict is not None:
+        ledger_payload["manifest_verdict"] = _manifest_verdict_dict(outcome.manifest_verdict)
 
     entry = write_entry(
         kind="promote",

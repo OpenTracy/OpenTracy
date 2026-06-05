@@ -19,7 +19,7 @@ from typing import Any, Optional
 import yaml
 
 from harness.critics.base import Critic, CriticStage, register_critic
-from harness.types import CriticContext, CriticVerdict
+from harness.types import CriticContext, CriticVerdict, EditVerdict
 
 
 @register_critic
@@ -255,4 +255,37 @@ class PredictionHonestyCritic(Critic):
             )
         return CriticVerdict(
             critic=self.name, approved=True, reason="prediction matched outcome",
+        )
+
+
+@register_critic
+class ManifestGateCritic(Critic):
+    """Block promotion when the per-edit manifest verdict is ROLLBACK_AND_PIVOT.
+
+    Turns the manifest verdict from advisory into enforcement. With no verdict
+    (the proposal staked no per-golden prediction) there is nothing to gate on,
+    so it passes. Opt-in via the blueprint, like regression_budget.
+    """
+
+    name = "manifest_gate"
+    stage = CriticStage.POST
+
+    def verdict(self, ctx: CriticContext) -> CriticVerdict:
+        mv = ctx.manifest_verdict
+        if mv is None:
+            return CriticVerdict(
+                critic=self.name, approved=True, reason="no manifest verdict to gate on",
+            )
+        if mv.verdict == EditVerdict.ROLLBACK_AND_PIVOT:
+            return CriticVerdict(
+                critic=self.name,
+                approved=False,
+                reason=(
+                    f"manifest verdict {mv.verdict.value}; "
+                    f"unpredicted regressions={mv.unpredicted_regressions}"
+                ),
+                severity="block",
+            )
+        return CriticVerdict(
+            critic=self.name, approved=True, reason=f"manifest verdict {mv.verdict.value}",
         )

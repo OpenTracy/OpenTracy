@@ -4,6 +4,8 @@
 # A critic is either a bare name or {name, params}. To gate on per-golden
 # regressions, add e.g.:
 #   - {name: regression_budget, params: {max_regressions: 1}}
+# To block promotion when the manifest verdict is ROLLBACK_AND_PIVOT, add:
+#   - manifest_gate
 #
 # selection: selection_key (pass-rate -> quality -> latency) or two_tier
 # (pass-rate -> latency, the Paper-2 literal).

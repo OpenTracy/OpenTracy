@@ -133,12 +133,16 @@ def distill_session(
             n_llm_calls=cand_view.get("n_llm_calls"),
         )
 
-    # Recover the prediction + verdict from the promote entry's payload.
+    # Recover the prediction + verdict from the latest decision entry — promoted,
+    # queued for review, or rejected (not just promoted).
     prediction_dict: Optional[dict[str, Any]] = None
     actual_dict: Optional[dict[str, Any]] = None
     prediction_verified: Optional[bool] = None
-    if promote_entries:
-        pl = promote_entries[-1].payload or {}
+    decision_entries = [
+        e for e in ledger_rows if e.kind in ("promote", "queued_review", "rejected")
+    ]
+    if decision_entries:
+        pl = decision_entries[-1].payload or {}
         pred = pl.get("prediction")
         if pred:
             prediction_dict = {
@@ -151,7 +155,12 @@ def distill_session(
             actual_dict = {"rubric": verif.get("rubric"), "actual_delta": verif.get("actual_delta")}
             prediction_verified = verif.get("verdict") == "verified"
         mv = pl.get("manifest_verdict")
-        if mv and prediction_verified is None:
+        if mv:
+            actual_dict = {
+                "manifest_verdict": mv.get("verdict"),
+                "fix_recall": mv.get("fix_recall"),
+                "regression_recall": mv.get("regression_recall"),
+            }
             prediction_verified = mv.get("verdict") == "keep"
 
     # Build summary

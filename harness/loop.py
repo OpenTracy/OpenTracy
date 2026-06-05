@@ -25,7 +25,7 @@ from harness.approver import ApprovalDecision, Policy, decide
 from harness.blueprint import Blueprint
 from harness.critics import Critic, CriticStage, make_critic
 from harness.executor import promote
-from harness.executor.promote import build_lesson
+from harness.executor.promote import _manifest_verdict_dict, build_lesson
 from harness.types import (
     CriticContext,
     CriticVerdict,
@@ -138,19 +138,28 @@ def propose_and_score(
         result: CandidateResult = run_candidate(manifest.id, suite_path)
         outcome.candidate_result = result
 
-        # Verify prediction (AHE pillar 3) — opt-in: only when proposal made one
+        # Verify prediction (AHE pillar 3) — opt-in: only when proposal made one.
+        # Per-golden predictions are scored by the ManifestVerdict (the real
+        # contract); rubric-only predictions (dataset/router) keep the scalar
+        # VerificationOutcome. The two don't both run, so the rubric verdict is
+        # never miscalibrated against a pass-rate-style expected_delta.
         if proposal.prediction is not None:
-            actual_delta = _actual_delta_for_rubric(result, proposal.prediction.rubric)
-            outcome.verification = VerificationOutcome.evaluate(
-                proposal.prediction, actual_delta
-            )
             if proposal.prediction.predicted_fixes or proposal.prediction.predicted_regressions:
                 outcome.manifest_verdict = ManifestVerdict.evaluate(
                     proposal.prediction, result.delta.get("per_golden", {})
                 )
+            else:
+                actual_delta = _actual_delta_for_rubric(result, proposal.prediction.rubric)
+                outcome.verification = VerificationOutcome.evaluate(
+                    proposal.prediction, actual_delta
+                )
 
         # Post-eval critics
-        ctx_post = CriticContext(proposal=proposal, candidate_result=result)
+        ctx_post = CriticContext(
+            proposal=proposal,
+            candidate_result=result,
+            manifest_verdict=outcome.manifest_verdict,
+        )
         post_verdicts, post_blocked = _run_critics(post, ctx_post)
         outcome.verdicts.extend(post_verdicts)
 
@@ -219,16 +228,27 @@ def run_loop(
         )
         delta_overall = delta.get("overall_score", 0.0) if delta else 0.0
 
+        queued_payload: dict = {
+            "mutations": [m.describe() for m in r.outcome.proposal.mutations],
+            "delta": delta,
+            "policy_mode": pol.mode,
+        }
+        pred = r.outcome.proposal.prediction
+        if pred is not None:
+            queued_payload["prediction"] = {
+                "rubric": pred.rubric,
+                "expected_delta": pred.expected_delta,
+                "rationale": pred.rationale,
+            }
+        if r.outcome.manifest_verdict is not None:
+            queued_payload["manifest_verdict"] = _manifest_verdict_dict(r.outcome.manifest_verdict)
+
         entry = write_entry(
             kind="queued_review",
             candidate_id=r.outcome.candidate_id,
             agent_version_before=live_version,
             summary=f"queued for human review (Δoverall={delta_overall:+.4f})",
-            payload={
-                "mutations": [m.describe() for m in r.outcome.proposal.mutations],
-                "delta": delta,
-                "policy_mode": pol.mode,
-            },
+            payload=queued_payload,
         )
         lesson = build_lesson(
             r.outcome,
