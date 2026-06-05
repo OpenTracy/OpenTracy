@@ -107,7 +107,7 @@ class EvalLiftCritic(Critic):
             )
 
         min_delta = float(self.params.get("min_delta", 0.0))
-        delta = float(ctx.candidate_result.delta["overall_score"])
+        delta = float((ctx.candidate_result.delta or {}).get("overall_score", 0.0))
 
         if delta >= min_delta:
             return CriticVerdict(

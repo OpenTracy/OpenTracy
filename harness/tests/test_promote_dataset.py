@@ -328,3 +328,33 @@ def test_promote_does_not_overwrite_caller_supplied_verification(
     promote_dataset(outcome)
     # Same instance — not replaced
     assert outcome.verification.actual_delta == -0.5
+
+
+def test_verify_dataset_facevalue_when_dataset_absent(monkeypatch):
+    from harness.executor.promote import _verify_dataset_promotion
+    from router.errors import DatasetNotFoundError
+
+    monkeypatch.setattr("router.config_io.load_current_config", lambda: (object(), None, None))
+
+    def missing(*a, **k):
+        raise DatasetNotFoundError("no such dataset")
+
+    monkeypatch.setattr("router.data.dataset_io.load_current", missing)
+    pred = Prediction(rubric="coverage_gap_score", expected_delta=0.05, rationale="x")
+    out = _verify_dataset_promotion(pred, _payload(version=1, n_samples=2))
+    assert out.verdict in {"verified", "no_change", "partial", "wrong"}
+
+
+def test_verify_dataset_surfaces_corrupt_dataset(monkeypatch):
+    from harness.executor.promote import _verify_dataset_promotion
+    from router.errors import DatasetInvalidError
+
+    monkeypatch.setattr("router.config_io.load_current_config", lambda: (object(), None, None))
+
+    def corrupt(*a, **k):
+        raise DatasetInvalidError("cannot parse")
+
+    monkeypatch.setattr("router.data.dataset_io.load_current", corrupt)
+    pred = Prediction(rubric="coverage_gap_score", expected_delta=0.05, rationale="x")
+    with pytest.raises(DatasetInvalidError):
+        _verify_dataset_promotion(pred, _payload(version=1, n_samples=2))

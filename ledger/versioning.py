@@ -31,6 +31,32 @@ def _read_version(agent_dir: Path) -> str:  # backward-compat alias
     return read_version(agent_dir)
 
 
+def bump_patch(version: str) -> str:
+    """v0.0.1 → v0.0.2 (or 0.0.1 → 0.0.2 if no `v` prefix).
+
+    Shared version primitive; the executor and the rollback path both bump
+    versions and must produce the same, distinct, snapshot-safe string.
+    """
+    has_v = version.startswith("v")
+    core = version[1:] if has_v else version
+    parts = core.split(".")
+    if not parts[-1].isdigit():
+        parts.append("1")
+    else:
+        parts[-1] = str(int(parts[-1]) + 1)
+    return ("v" if has_v else "") + ".".join(parts)
+
+
+def set_version(agent_dir: Path | str, new_version: str) -> None:
+    """Write `new_version` into agent.yaml's agent.version (dir-based)."""
+    cfg_path = Path(agent_dir) / "agent.yaml"
+    with cfg_path.open() as f:
+        doc = yaml.safe_load(f) or {}
+    doc.setdefault("agent", {})["version"] = new_version
+    with cfg_path.open("w") as f:
+        yaml.safe_dump(doc, f, sort_keys=False)
+
+
 def snapshot_path(version: str, versions_dir: Path | str = VERSIONS_DIR) -> Path:
     return Path(versions_dir) / version / "agent"
 

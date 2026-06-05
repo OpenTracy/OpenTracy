@@ -150,18 +150,31 @@ def distill_session(
                 "expected_delta": pred.get("expected_delta"),
                 "rationale": pred.get("rationale"),
             }
+        # A payload can carry the rubric-scalar verification AND the per-golden
+        # manifest verdict; keep them in separate namespaces so neither clobbers
+        # the other, and treat the prediction as verified only if every present
+        # signal verified.
+        actual: dict[str, Any] = {}
+        verdicts: list[bool] = []
         verif = pl.get("verification")
         if verif:
-            actual_dict = {"rubric": verif.get("rubric"), "actual_delta": verif.get("actual_delta")}
-            prediction_verified = verif.get("verdict") == "verified"
+            actual["rubric"] = {
+                "rubric": verif.get("rubric"),
+                "actual_delta": verif.get("actual_delta"),
+                "verdict": verif.get("verdict"),
+            }
+            verdicts.append(verif.get("verdict") == "verified")
         mv = pl.get("manifest_verdict")
         if mv:
-            actual_dict = {
-                "manifest_verdict": mv.get("verdict"),
+            actual["manifest"] = {
+                "verdict": mv.get("verdict"),
                 "fix_recall": mv.get("fix_recall"),
                 "regression_recall": mv.get("regression_recall"),
             }
-            prediction_verified = mv.get("verdict") == "keep"
+            verdicts.append(mv.get("verdict") == "keep")
+        if actual:
+            actual_dict = actual
+            prediction_verified = all(verdicts) if verdicts else None
 
     # Build summary
     mutations_str = ", ".join(m.describe() for m in manifest.mutations)

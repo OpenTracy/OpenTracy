@@ -39,7 +39,8 @@ logger = logging.getLogger("harness.brain.transport")
 
 DEFAULT_TIMEOUT_S = 120
 DEFAULT_MAX_TOKENS = 1024
-DEFAULT_API_MODEL = "claude-sonnet-4-5"
+# Keep in sync with harness/introspection/agent.py:DEFAULT_MODEL.
+DEFAULT_API_MODEL = "claude-sonnet-4-6"
 
 
 class BrainNotAvailableError(RuntimeError):
@@ -189,9 +190,10 @@ def _complete_via_cli(
     args: list[str] = [
         "claude",
         "--print",
-        # Auto-accept any MCP tool calls. The brain shouldn't be calling tools
-        # for a plain completion, but this matches the introspection setup so
-        # behavior is consistent in case the model ever does.
+        # Auto-accept MCP tool calls so --print doesn't hang on a prompt. A plain
+        # completion shouldn't call tools, but the subprocess still inherits the
+        # project .mcp.json, which exposes WRITE proposer tools — those are gated
+        # by Policy, not by this flag, which only silences the prompt.
         "--permission-mode",
         "bypassPermissions",
     ]

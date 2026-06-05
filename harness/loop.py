@@ -232,6 +232,10 @@ def run_loop(
             "mutations": [m.describe() for m in r.outcome.proposal.mutations],
             "delta": delta,
             "policy_mode": pol.mode,
+            "verdicts": [
+                {"critic": v.critic, "approved": v.approved, "reason": v.reason}
+                for v in r.outcome.verdicts
+            ],
         }
         pred = r.outcome.proposal.prediction
         if pred is not None:
@@ -239,6 +243,7 @@ def run_loop(
                 "rubric": pred.rubric,
                 "expected_delta": pred.expected_delta,
                 "rationale": pred.rationale,
+                "confidence": pred.confidence,
             }
         if r.outcome.manifest_verdict is not None:
             queued_payload["manifest_verdict"] = _manifest_verdict_dict(r.outcome.manifest_verdict)

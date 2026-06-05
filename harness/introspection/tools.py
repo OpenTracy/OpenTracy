@@ -125,8 +125,8 @@ TOOLS: list[Tool] = [
     Tool(
         name="list_available_epochs",
         description=(
-            "Discover which days and versions have distilled epochs available. "
-            "Use this before calling get_day_epoch / get_version_epoch."
+            "Discover which days have distilled epochs available. "
+            "Use this before calling get_day_epoch."
         ),
         inputSchema={"type": "object", "properties": {}},
     ),

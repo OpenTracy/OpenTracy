@@ -30,14 +30,38 @@ def test_rollback_on_unpredicted_regression():
     assert v.unpredicted_regressions == ["g9"]
 
 
-def test_rollback_when_net_not_positive():
+def test_honest_net_zero_is_improve_not_rollback():
+    # Fixed g1, regressed g2 — but g2 was predicted, so it's an honest lateral
+    # move (net 0, no surprise). It should continue (IMPROVE), not roll back.
     v = ManifestVerdict.evaluate(
         _pred(fixes=["g1"], regs=["g2"]),
         {"fixed": ["g1"], "regressed": ["g2"], "unchanged": []},
     )
-    assert v.verdict == EditVerdict.ROLLBACK_AND_PIVOT
+    assert v.verdict == EditVerdict.IMPROVE
+    assert v.net_fixes == 0
+    assert v.unpredicted_regressions == []
     assert v.regression_precision == 1.0
     assert v.regression_recall == 1.0
+
+
+def test_net_zero_with_unpredicted_still_rollback():
+    # Net 0, but the regression was a surprise — the AHE blind spot still forces
+    # a pivot (the unpredicted check precedes the net-zero branch).
+    v = ManifestVerdict.evaluate(
+        _pred(fixes=["g1"]),
+        {"fixed": ["g1"], "regressed": ["g9"], "unchanged": []},
+    )
+    assert v.verdict == EditVerdict.ROLLBACK_AND_PIVOT
+    assert v.unpredicted_regressions == ["g9"]
+
+
+def test_net_negative_rolls_back():
+    v = ManifestVerdict.evaluate(
+        _pred(fixes=["g1"], regs=["g2", "g3"]),
+        {"fixed": ["g1"], "regressed": ["g2", "g3"], "unchanged": []},
+    )
+    assert v.verdict == EditVerdict.ROLLBACK_AND_PIVOT
+    assert v.net_fixes == -1
 
 
 def test_improve_when_fixes_partial():
@@ -54,7 +78,8 @@ def test_empty_prediction_yields_zero_ratios():
     v = ManifestVerdict.evaluate(_pred(), {"fixed": [], "regressed": [], "unchanged": []})
     assert v.fix_precision == 0.0
     assert v.regression_recall == 0.0
-    assert v.verdict == EditVerdict.ROLLBACK_AND_PIVOT
+    # Net 0, no surprise → IMPROVE (a no-op edit isn't a pivot).
+    assert v.verdict == EditVerdict.IMPROVE
 
 
 def test_predicted_regression_does_not_force_rollback():
@@ -72,7 +97,8 @@ def test_predicted_regression_does_not_force_rollback():
 def test_missing_delta_keys_default_empty():
     v = ManifestVerdict.evaluate(_pred(fixes=["g1"]), {})
     assert v.realized_fixes == []
-    assert v.verdict == EditVerdict.ROLLBACK_AND_PIVOT
+    # No realized fixes or regressions → net 0, no surprise → IMPROVE.
+    assert v.verdict == EditVerdict.IMPROVE
 
 
 def test_fix_precision_below_one_when_overpredicted():

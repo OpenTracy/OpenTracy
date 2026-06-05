@@ -144,14 +144,17 @@ class RouterProposer:
             },
             prediction=Prediction(
                 rubric="overall",
-                expected_delta=max(0.0, materials.fit_result.silhouette - 0.0),
+                # A clustering silhouette is not an eval-score delta; stake a
+                # modest fixed lift at low confidence rather than miscalibrating
+                # the verifier against a different metric's scale.
+                expected_delta=0.02,
                 rationale=(
                     f"Fit K={materials.fit_result.k} clusters on "
                     f"{materials.fit_result.n_samples} production traces "
                     f"(silhouette={materials.fit_result.silhouette:.3f}). "
-                    "Expecting AUROC lift over the current config's baseline."
+                    "Expecting a small overall lift over the current config's baseline."
                 ),
-                confidence=0.4,
+                confidence=0.3,
             ),
         )
         logger.info(

@@ -149,8 +149,15 @@ class ManifestVerdict:
         def _ratio(num: int, den: int) -> float:
             return round(num / den, 4) if den else 0.0
 
-        if net <= 0 or unpredicted:
+        # Separate the honesty axis (was there a surprise?) from the value axis
+        # (net positive?). Only an *unpredicted* regression — the AHE blind spot —
+        # or a true net loss forces a pivot; an honest net-zero edit is allowed to
+        # continue (IMPROVE), not rolled back. A regressions-only prediction can
+        # therefore reach at most IMPROVE, never KEEP — that is intentional.
+        if unpredicted or net < 0:
             verdict = EditVerdict.ROLLBACK_AND_PIVOT
+        elif net == 0:
+            verdict = EditVerdict.IMPROVE
         elif predicted_fixes and predicted_fixes <= actual_fixes:
             verdict = EditVerdict.KEEP
         else:

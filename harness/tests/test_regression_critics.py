@@ -91,3 +91,10 @@ def test_prediction_honesty_approves_when_prediction_holds():
     c = make_critic("prediction_honesty")
     v = c.verdict(_ctx({"per_golden": {"fixed": ["g1"], "regressed": ["g2"]}}, prediction=pred))
     assert v.approved
+
+
+def test_eval_lift_tolerates_missing_overall_score():
+    # A degenerate delta without overall_score must not crash the critic.
+    c = make_critic("eval_lift")
+    v = c.verdict(_ctx({}))
+    assert v.approved  # default min_delta=0.0, missing score → 0.0 >= 0.0
