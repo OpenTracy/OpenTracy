@@ -167,3 +167,86 @@ class NoCriticalRegression(Critic):
             approved=True,
             reason=f"all rubrics ≥ floor {floor}",
         )
+
+
+@register_critic
+class RegressionBudgetCritic(Critic):
+    """Block when more goldens flipped pass→fail than `max_regressions`.
+
+    Per-task regression guard: fires even when Δoverall ≥ 0, catching the
+    "won on average but broke N goldens" case the aggregate score hides.
+
+    Params:
+      max_regressions: int = 0
+    """
+
+    name = "regression_budget"
+    stage = CriticStage.POST
+
+    def verdict(self, ctx: CriticContext) -> CriticVerdict:
+        if ctx.candidate_result is None:
+            return CriticVerdict(
+                critic=self.name, approved=False,
+                reason="no candidate_result available", severity="block",
+            )
+
+        max_regressions = int(self.params.get("max_regressions", 0))
+        per_golden = ctx.candidate_result.delta.get("per_golden", {})
+        regressed = list(per_golden.get("regressed", []))
+
+        if len(regressed) > max_regressions:
+            return CriticVerdict(
+                critic=self.name,
+                approved=False,
+                reason=f"{len(regressed)} golden(s) regressed (budget {max_regressions}): {regressed}",
+                severity="block",
+            )
+        return CriticVerdict(
+            critic=self.name,
+            approved=True,
+            reason=f"{len(regressed)} regression(s) within budget {max_regressions}",
+        )
+
+
+@register_critic
+class PredictionHonestyCritic(Critic):
+    """Warn (never block) when a prediction's fixes didn't land or its regressions did.
+
+    A learning signal, not a gate: surfaces mispredictions into the ledger so
+    the loop's regression blindness becomes visible round over round.
+    """
+
+    name = "prediction_honesty"
+    stage = CriticStage.POST
+
+    def verdict(self, ctx: CriticContext) -> CriticVerdict:
+        pred = ctx.proposal.prediction
+        if pred is None or not (pred.predicted_fixes or pred.predicted_regressions):
+            return CriticVerdict(
+                critic=self.name, approved=True, reason="no predicted task sets to check",
+            )
+        if ctx.candidate_result is None:
+            return CriticVerdict(
+                critic=self.name, approved=False,
+                reason="no candidate_result available", severity="block",
+            )
+
+        per_golden = ctx.candidate_result.delta.get("per_golden", {})
+        actual_fixes = set(per_golden.get("fixed", []))
+        actual_regressions = set(per_golden.get("regressed", []))
+        missed_fixes = set(pred.predicted_fixes) - actual_fixes
+        materialized = set(pred.predicted_regressions) & actual_regressions
+
+        if missed_fixes or materialized:
+            return CriticVerdict(
+                critic=self.name,
+                approved=False,
+                reason=(
+                    f"missed fixes={sorted(missed_fixes)}; "
+                    f"materialized regressions={sorted(materialized)}"
+                ),
+                severity="warn",
+            )
+        return CriticVerdict(
+            critic=self.name, approved=True, reason="prediction matched outcome",
+        )

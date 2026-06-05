@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Optional
 
 from experiments.types import Mutation
@@ -49,6 +50,9 @@ class Prediction:
     expected_delta: float        # signed; positive = improvement
     rationale: str
     confidence: float = 0.5      # optional 0-1; future routing use
+    # AHE Change Manifest: the two task-name sets an edit stakes its claim on.
+    predicted_fixes: frozenset[str] = frozenset()
+    predicted_regressions: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -102,6 +106,69 @@ class VerificationOutcome:
         )
 
 
+class EditVerdict(str, Enum):
+    KEEP = "keep"
+    IMPROVE = "improve"
+    ROLLBACK_AND_PIVOT = "rollback_and_pivot"
+
+
+@dataclass
+class ManifestVerdict:
+    """Per-edit verdict over the AHE Change Manifest (decision observability).
+
+    Scores a Prediction's predicted_fixes/predicted_regressions against the
+    candidate's realized per-golden delta. Precision/recall are tracked for
+    both fixes and regressions — the regression axis is the one AHE finds the
+    loop is blind to, so it is measured explicitly here.
+    """
+
+    verdict: EditVerdict
+    fix_precision: float
+    fix_recall: float
+    regression_precision: float
+    regression_recall: float
+    realized_fixes: list[str]
+    realized_regressions: list[str]
+    unpredicted_regressions: list[str]
+    net_fixes: int
+
+    @classmethod
+    def evaluate(
+        cls, prediction: "Prediction", per_golden_delta: dict[str, Any]
+    ) -> "ManifestVerdict":
+        predicted_fixes = set(prediction.predicted_fixes)
+        predicted_regressions = set(prediction.predicted_regressions)
+        actual_fixes = set(per_golden_delta.get("fixed", []))
+        actual_regressions = set(per_golden_delta.get("regressed", []))
+
+        fix_tp = predicted_fixes & actual_fixes
+        reg_tp = predicted_regressions & actual_regressions
+        unpredicted = actual_regressions - predicted_regressions
+        net = len(actual_fixes) - len(actual_regressions)
+
+        def _ratio(num: int, den: int) -> float:
+            return round(num / den, 4) if den else 0.0
+
+        if net <= 0 or unpredicted:
+            verdict = EditVerdict.ROLLBACK_AND_PIVOT
+        elif predicted_fixes and predicted_fixes <= actual_fixes:
+            verdict = EditVerdict.KEEP
+        else:
+            verdict = EditVerdict.IMPROVE
+
+        return cls(
+            verdict=verdict,
+            fix_precision=_ratio(len(fix_tp), len(predicted_fixes)),
+            fix_recall=_ratio(len(fix_tp), len(actual_fixes)),
+            regression_precision=_ratio(len(reg_tp), len(predicted_regressions)),
+            regression_recall=_ratio(len(reg_tp), len(actual_regressions)),
+            realized_fixes=sorted(actual_fixes),
+            realized_regressions=sorted(actual_regressions),
+            unpredicted_regressions=sorted(unpredicted),
+            net_fixes=net,
+        )
+
+
 @dataclass
 class Proposal:
     """A candidate mutation the proposer wants to test.
@@ -150,6 +217,7 @@ class LoopOutcome:
     verdicts: list[CriticVerdict] = field(default_factory=list)
     candidate_result: Optional[Any] = None # experiments.runner.CandidateResult
     verification: Optional[VerificationOutcome] = None   # if proposal had prediction
+    manifest_verdict: Optional[ManifestVerdict] = None   # if prediction named task sets
     final: str = "pending"                 # "approved" | "rejected" | "pending"
 
     @property

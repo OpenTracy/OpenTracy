@@ -14,29 +14,33 @@ Approved outcomes are what the next phase (`harness/approver/`) consumes.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from dataclasses import dataclass
-
+from evals.scoring import two_tier_key
 from experiments.branching import create_candidate
 from experiments.runner import CandidateResult, run_candidate
 from harness.approver import ApprovalDecision, Policy, decide
 from harness.critics import Critic, CriticStage, make_critic
 from harness.executor import promote
 from harness.executor.promote import build_lesson
-from ledger.versioning import LIVE_AGENT, read_version
-from ledger.writer import write_entry, write_lesson
 from harness.types import (
     CriticContext,
     CriticVerdict,
     LoopOutcome,
+    ManifestVerdict,
     Proposal,
     VerificationOutcome,
 )
+from ledger.versioning import LIVE_AGENT, read_version
+from ledger.writer import write_entry, write_lesson
 
-DEFAULT_PRE_CRITICS = ["scope"]
-DEFAULT_POST_CRITICS = ["eval_lift"]
+# A critic is named either bare ("scope") or with params (("eval_lift", {...})).
+CriticSpec = str | tuple[str, dict]
+
+DEFAULT_PRE_CRITICS: list[CriticSpec] = ["scope"]
+DEFAULT_POST_CRITICS: list[CriticSpec] = ["eval_lift", "regression_budget"]
 
 
 @dataclass
@@ -50,12 +54,19 @@ class LoopRound:
     queued_lesson_id: Optional[str] = None
 
 
+def _make_from_spec(spec: CriticSpec) -> Critic:
+    if isinstance(spec, str):
+        return make_critic(spec)
+    name, params = spec
+    return make_critic(name, params)
+
+
 def _split_critics(
-    pre_names: list[str], post_names: list[str]
+    pre_names: list[CriticSpec], post_names: list[CriticSpec]
 ) -> tuple[list[Critic], list[Critic]]:
     """Build critic instances and verify each is in its expected stage."""
-    pre = [make_critic(n) for n in pre_names]
-    post = [make_critic(n) for n in post_names]
+    pre = [_make_from_spec(s) for s in pre_names]
+    post = [_make_from_spec(s) for s in post_names]
     for c in pre:
         if c.stage != CriticStage.PRE:
             raise ValueError(f"critic {c.name!r} is {c.stage.value}, expected pre")
@@ -83,8 +94,8 @@ def _run_critics(
 def propose_and_score(
     proposals: list[Proposal],
     suite_path: Path | str,
-    pre_critics: Optional[list[str]] = None,
-    post_critics: Optional[list[str]] = None,
+    pre_critics: Optional[list[CriticSpec]] = None,
+    post_critics: Optional[list[CriticSpec]] = None,
 ) -> list[LoopOutcome]:
     """Run the full pipeline for a batch of proposals.
 
@@ -123,6 +134,10 @@ def propose_and_score(
             outcome.verification = VerificationOutcome.evaluate(
                 proposal.prediction, actual_delta
             )
+            if proposal.prediction.predicted_fixes or proposal.prediction.predicted_regressions:
+                outcome.manifest_verdict = ManifestVerdict.evaluate(
+                    proposal.prediction, result.delta.get("per_golden", {})
+                )
 
         # Post-eval critics
         ctx_post = CriticContext(proposal=proposal, candidate_result=result)
@@ -145,8 +160,8 @@ def _actual_delta_for_rubric(result: "CandidateResult", rubric: str) -> float:
 def run_loop(
     proposals: list[Proposal],
     suite_path: Path | str,
-    pre_critics: Optional[list[str]] = None,
-    post_critics: Optional[list[str]] = None,
+    pre_critics: Optional[list[CriticSpec]] = None,
+    post_critics: Optional[list[CriticSpec]] = None,
     policy: Optional[Policy] = None,
     auto_promote: bool = False,
     promote_strategy: str = "best",   # "best" | "all" | "none"
@@ -221,14 +236,12 @@ def run_loop(
         return rounds
 
     if promote_strategy == "best":
-        best_idx = max(
-            eligible_idxs,
-            key=lambda i: (
-                rounds[i].outcome.candidate_result.delta["overall_score"]
-                if rounds[i].outcome.candidate_result is not None
-                else float("-inf")
-            ),
-        )
+
+        def _best_key(idx: int) -> tuple[float, float]:
+            cr = rounds[idx].outcome.candidate_result
+            return two_tier_key(cr.candidate) if cr is not None else (float("-inf"), 0.0)
+
+        best_idx = max(eligible_idxs, key=_best_key)
         version, lesson_id = promote(rounds[best_idx].outcome)
         rounds[best_idx].promoted_version = version
         rounds[best_idx].promoted_lesson_id = lesson_id
