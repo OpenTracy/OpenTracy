@@ -64,6 +64,10 @@ def _summary_view(report: Any) -> dict[str, Any]:
         "per_golden": per_golden_pass(report),
         "avg_latency_ms": round(sum(durations) / len(durations), 2) if durations else 0.0,
         "p95_latency_ms": _percentile(durations, 0.95),
+        "stage_ms": dict(summary.get("stage_ms", {})),
+        "llm_ms": summary.get("llm_ms", 0.0),
+        "tool_ms": summary.get("tool_ms", 0.0),
+        "n_llm_calls": summary.get("n_llm_calls", 0),
     }
 
 
@@ -81,6 +85,7 @@ def _aggregate_views(reports: list[Any]) -> dict[str, Any]:
     views = [_summary_view(r) for r in reports]
     passrate = aggregate_per_golden([per_golden_pass(r) for r in reports])
     rubric_keys: set[str] = set().union(*(v["per_rubric"].keys() for v in views))
+    stage_keys: set[str] = set().union(*(v["stage_ms"].keys() for v in views))
     return {
         "overall_score": _mean([v["overall_score"] for v in views]),
         "pass_rate": _mean([v["pass_rate"] for v in views]),
@@ -92,6 +97,10 @@ def _aggregate_views(reports: list[Any]) -> dict[str, Any]:
         "flaky": flaky_goldens(passrate),
         "avg_latency_ms": _mean([v["avg_latency_ms"] for v in views]),
         "p95_latency_ms": _mean([v["p95_latency_ms"] for v in views]),
+        "stage_ms": {k: _mean([v["stage_ms"].get(k, 0.0) for v in views]) for k in stage_keys},
+        "llm_ms": _mean([v["llm_ms"] for v in views]),
+        "tool_ms": _mean([v["tool_ms"] for v in views]),
+        "n_llm_calls": _mean([v["n_llm_calls"] for v in views]),
     }
 
 

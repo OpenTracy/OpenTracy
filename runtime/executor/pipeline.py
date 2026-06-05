@@ -55,6 +55,10 @@ class ExecutionRecord:
     error: Optional[str] = None
     agent_version: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # LLM-inference vs in-turn tool latency from the generate stage (Paper 2 audit).
+    llm_ms: float = 0.0
+    tool_ms: float = 0.0
+    n_llm_calls: int = 0
     history: list[dict[str, Any]] = field(default_factory=list)
     session_id: Optional[str] = None
     tokens_in: int = 0
@@ -142,6 +146,7 @@ class PipelineExecutor:
                 request, ctx.response, model=chosen_model
             )
 
+        state = ctx.state if isinstance(ctx.state, dict) else {}
         record = ExecutionRecord(
             request=request,
             response=ctx.response,
@@ -149,6 +154,9 @@ class PipelineExecutor:
             stages=records,
             success=success,
             error=error,
+            llm_ms=float(state.get("llm_ms", 0.0) or 0.0),
+            tool_ms=float(state.get("tool_ms", 0.0) or 0.0),
+            n_llm_calls=int(state.get("n_llm_calls", 0) or 0),
             agent_version=self.pipeline.config.version,
             history=history_serialized,
             session_id=session_id,

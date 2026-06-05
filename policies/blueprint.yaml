@@ -14,3 +14,6 @@ post_critics:
   - eval_lift
 selection: selection_key
 promote_strategy: best
+# Stages counted as LLM time in the performance audit (the rest are tool/compute).
+llm_stages:
+  - generate

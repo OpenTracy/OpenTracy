@@ -55,6 +55,7 @@ class Blueprint:
     post_critics: list[CriticSpec] = field(default_factory=lambda: list(_DEFAULT_POST))
     selection: str = "selection_key"
     promote_strategy: str = "best"
+    llm_stages: list[str] = field(default_factory=lambda: ["generate"])
 
     @classmethod
     def from_yaml(cls, path: Path | str = DEFAULT_BLUEPRINT_PATH) -> Blueprint:
@@ -71,6 +72,7 @@ class Blueprint:
             post_critics=[_parse_critic(s) for s in (d.get("post_critics") or _DEFAULT_POST)],
             selection=selection,
             promote_strategy=str(d.get("promote_strategy", "best")),
+            llm_stages=[str(s) for s in (d.get("llm_stages") or ["generate"])],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -80,6 +82,7 @@ class Blueprint:
             "post_critics": [_critic_to_yaml(s) for s in self.post_critics],
             "selection": self.selection,
             "promote_strategy": self.promote_strategy,
+            "llm_stages": list(self.llm_stages),
         }
 
     def write_yaml(self, path: Path | str = DEFAULT_BLUEPRINT_PATH) -> None:

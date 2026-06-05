@@ -11,6 +11,7 @@ def test_blueprint_roundtrip(tmp_path):
         post_critics=["eval_lift", ("regression_budget", {"max_regressions": 1})],
         selection="two_tier",
         promote_strategy="all",
+        llm_stages=["generate", "rerank"],
     )
     path = tmp_path / "blueprint.yaml"
     bp.write_yaml(path)

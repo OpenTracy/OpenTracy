@@ -45,11 +45,19 @@ def run_suite(
 
     started_at = Report.now_iso()
     cases: list[EvalCase] = []
+    stage_ms: dict[str, float] = {}
+    llm_ms = tool_ms = 0.0
+    n_llm_calls = 0
 
     for golden in goldens:
         history = [Message(role=m.role, content=m.content) for m in golden.input.history]
         _, exec_record = executor.run(golden.input.request, history=history)
         trace_id = write_trace(exec_record)
+        for s in exec_record.stages:
+            stage_ms[s.stage] = round(stage_ms.get(s.stage, 0.0) + float(s.duration_ms), 3)
+        llm_ms += float(getattr(exec_record, "llm_ms", 0.0) or 0.0)
+        tool_ms += float(getattr(exec_record, "tool_ms", 0.0) or 0.0)
+        n_llm_calls += int(getattr(exec_record, "n_llm_calls", 0) or 0)
 
         ctx = EvalContext(
             golden=golden,
@@ -74,6 +82,10 @@ def run_suite(
 
     finished_at = Report.now_iso()
     summary = _aggregate(cases, suite.aggregation)
+    summary["stage_ms"] = stage_ms
+    summary["llm_ms"] = round(llm_ms, 3)
+    summary["tool_ms"] = round(tool_ms, 3)
+    summary["n_llm_calls"] = n_llm_calls
 
     report = Report(
         suite=suite.suite,

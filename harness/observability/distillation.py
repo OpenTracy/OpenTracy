@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from experiments.branching import list_candidates
+from harness.observability.audit import performance_audit
 from harness.observability.types import (
     DistilledEpoch,
     DistilledSession,
@@ -122,6 +123,16 @@ def distill_session(
             p95_latency_ms=float(cand.get("p95_latency_ms", 0.0) or 0.0),
         )
 
+    performance_dict: Optional[dict[str, Any]] = None
+    if latest is not None:
+        cand_view = latest.get("candidate", {})
+        performance_dict = performance_audit(
+            cand_view.get("stage_ms", {}),
+            llm_ms=cand_view.get("llm_ms"),
+            tool_ms=cand_view.get("tool_ms"),
+            n_llm_calls=cand_view.get("n_llm_calls"),
+        )
+
     # Recover the prediction + verdict from the promote entry's payload.
     prediction_dict: Optional[dict[str, Any]] = None
     actual_dict: Optional[dict[str, Any]] = None
@@ -182,6 +193,7 @@ def distill_session(
         actual=actual_dict,
         prediction_verified=prediction_verified,
         aggregate=agg,
+        performance=performance_dict,
         overall_score=(latest["candidate"]["overall_score"] if latest else None),
         pass_rate=(latest["candidate"]["pass_rate"] if latest else None),
         delta_overall=(latest["delta"]["overall_score"] if latest else None),

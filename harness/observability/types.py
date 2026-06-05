@@ -59,6 +59,7 @@ class DistilledSession:
 
     # Aggregate signals
     aggregate: Optional[SessionAggregate] = None
+    performance: Optional[dict[str, Any]] = None     # {llm_ms, tool_ms, bottleneck, …}
     overall_score: Optional[float] = None
     pass_rate: Optional[float] = None
     delta_overall: Optional[float] = None
