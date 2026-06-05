@@ -198,7 +198,10 @@ class RegressionBudgetCritic(Critic):
             return CriticVerdict(
                 critic=self.name,
                 approved=False,
-                reason=f"{len(regressed)} golden(s) regressed (budget {max_regressions}): {regressed}",
+                reason=(
+                    f"{len(regressed)} golden(s) regressed "
+                    f"(budget {max_regressions}): {regressed}"
+                ),
                 severity="block",
             )
         return CriticVerdict(
@@ -210,10 +213,13 @@ class RegressionBudgetCritic(Critic):
 
 @register_critic
 class PredictionHonestyCritic(Critic):
-    """Warn (never block) when a prediction's fixes didn't land or its regressions did.
+    """Warn (never block) when a prediction was inaccurate.
 
-    A learning signal, not a gate: surfaces mispredictions into the ledger so
-    the loop's regression blindness becomes visible round over round.
+    Inaccurate means a predicted fix didn't land, or a regression appeared that
+    the edit did NOT predict (a surprise). A regression that was correctly
+    predicted is honest and does not warn — matching ManifestVerdict, which only
+    forces a rollback on *unpredicted* regressions. A learning signal, not a
+    gate: it makes the loop's regression blindness visible round over round.
     """
 
     name = "prediction_honesty"
@@ -235,15 +241,15 @@ class PredictionHonestyCritic(Critic):
         actual_fixes = set(per_golden.get("fixed", []))
         actual_regressions = set(per_golden.get("regressed", []))
         missed_fixes = set(pred.predicted_fixes) - actual_fixes
-        materialized = set(pred.predicted_regressions) & actual_regressions
+        unpredicted_regressions = actual_regressions - set(pred.predicted_regressions)
 
-        if missed_fixes or materialized:
+        if missed_fixes or unpredicted_regressions:
             return CriticVerdict(
                 critic=self.name,
                 approved=False,
                 reason=(
                     f"missed fixes={sorted(missed_fixes)}; "
-                    f"materialized regressions={sorted(materialized)}"
+                    f"unpredicted regressions={sorted(unpredicted_regressions)}"
                 ),
                 severity="warn",
             )

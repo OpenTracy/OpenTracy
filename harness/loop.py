@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from evals.scoring import two_tier_key
+from evals.scoring import selection_key
 from experiments.branching import create_candidate
 from experiments.runner import CandidateResult, run_candidate
 from harness.approver import ApprovalDecision, Policy, decide
@@ -40,7 +40,10 @@ from ledger.writer import write_entry, write_lesson
 CriticSpec = str | tuple[str, dict]
 
 DEFAULT_PRE_CRITICS: list[CriticSpec] = ["scope"]
-DEFAULT_POST_CRITICS: list[CriticSpec] = ["eval_lift", "regression_budget"]
+# regression_budget is intentionally NOT a default: at budget 0 it blocks ~50%
+# of net-positive candidates (see harness/benchmarks/regression_detection.py),
+# which would stall the loop. Wire it with a chosen budget via the blueprint.
+DEFAULT_POST_CRITICS: list[CriticSpec] = ["eval_lift"]
 
 
 @dataclass
@@ -237,9 +240,9 @@ def run_loop(
 
     if promote_strategy == "best":
 
-        def _best_key(idx: int) -> tuple[float, float]:
+        def _best_key(idx: int) -> tuple[float, float, float]:
             cr = rounds[idx].outcome.candidate_result
-            return two_tier_key(cr.candidate) if cr is not None else (float("-inf"), 0.0)
+            return selection_key(cr.candidate) if cr is not None else (float("-inf"), 0.0, 0.0)
 
         best_idx = max(eligible_idxs, key=_best_key)
         version, lesson_id = promote(rounds[best_idx].outcome)
