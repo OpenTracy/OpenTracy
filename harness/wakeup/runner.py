@@ -207,6 +207,8 @@ def _maybe_auto_rollback(health_snapshot: dict[str, Any]) -> Optional[WakeupOutc
                 "csat_after": decision.after.csat,
                 "resolution_before": decision.before.resolution_rate,
                 "resolution_after": decision.after.resolution_rate,
+                "foreseen": decision.foreseen,
+                "manifest_verdict": decision.suspect_manifest_verdict,
             },
         )
     except Exception as e:
@@ -339,8 +341,8 @@ def _extract_proposed_lesson(result: Any) -> Optional[tuple[str, str]]:
     text = getattr(result, "response", "") or ""
     m = re.search(r"L-\d{8}-\d{6}-[a-f0-9]+", text)
     if m:
-        # Fallback — target unknown. Default to router for back-compat.
-        return "router", m.group(0)
+        # Target can't be inferred from free text — don't guess a tool.
+        return "unknown", m.group(0)
     return None
 
 

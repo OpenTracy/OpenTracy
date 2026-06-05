@@ -67,6 +67,11 @@ class RollbackDecision:
     after: WindowMetrics
     promote_entry_id: str
     promote_timestamp: str
+    # Post-promotion half of AHE attribution: did the pre-promotion manifest
+    # already flag this edit as risky? ``foreseen`` is True when the suspect
+    # promote's manifest verdict was ROLLBACK_AND_PIVOT.
+    foreseen: bool = False
+    suspect_manifest_verdict: Optional[str] = None
 
 
 def check_auto_rollback(
@@ -171,6 +176,13 @@ def check_auto_rollback(
         return None
 
     reason = "; ".join(reasons)
+
+    mv = (promote.get("payload") or {}).get("manifest_verdict") or {}
+    mv_verdict = mv.get("verdict")
+    foreseen = mv_verdict == "rollback_and_pivot"
+    if foreseen:
+        reason += " (foreseeable — pre-promotion manifest verdict was ROLLBACK_AND_PIVOT)"
+
     return RollbackDecision(
         target_version=target_version,
         suspect_version=suspect_version,
@@ -179,6 +191,8 @@ def check_auto_rollback(
         after=after,
         promote_entry_id=promote["entry_id"],
         promote_timestamp=promote["timestamp"],
+        foreseen=foreseen,
+        suspect_manifest_verdict=mv_verdict,
     )
 
 
