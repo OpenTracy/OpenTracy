@@ -44,17 +44,3 @@ def make_critic(name: str, params: Optional[dict[str, Any]] = None) -> Critic:
     if cls is None:
         raise ValueError(f"unknown critic {name!r}; registered: {sorted(_REGISTRY)}")
     return cls(params)
-
-
-def critics_for_stage(stage: CriticStage, names: list[str]) -> list[Critic]:
-    """Build the subset of named critics that run at the given stage."""
-    out: list[Critic] = []
-    for n in names:
-        c = make_critic(n)
-        if c.stage == stage:
-            out.append(c)
-    return out
-
-
-def registered_critics() -> list[str]:
-    return sorted(_REGISTRY)

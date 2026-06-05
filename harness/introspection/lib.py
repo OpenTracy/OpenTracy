@@ -27,23 +27,6 @@ ENTRIES_DIR = _PROJECT_ROOT / "ledger" / "entries"
 LESSONS_DIR = _PROJECT_ROOT / "ledger" / "lessons"
 
 
-# ---------- helpers ----------
-
-
-def _entry_to_dict(e: Any) -> dict[str, Any]:
-    return {
-        "entry_id": e.entry_id,
-        "kind": e.kind,
-        "timestamp": e.timestamp,
-        "parent_entry_id": e.parent_entry_id,
-        "candidate_id": e.candidate_id,
-        "agent_version_before": e.agent_version_before,
-        "agent_version_after": e.agent_version_after,
-        "summary": e.summary,
-        "payload": e.payload,
-    }
-
-
 # ---------- tools ----------
 
 

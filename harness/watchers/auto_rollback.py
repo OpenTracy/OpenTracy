@@ -98,7 +98,7 @@ def check_auto_rollback(
         logger.debug("no recent promote — nothing to roll back")
         return None
 
-    if _has_later_rollback(entries, after_id=promote["entry_id"], after_ts=promote["timestamp"]):
+    if _has_later_rollback(entries, after_ts=promote["timestamp"]):
         logger.debug("promote %s already rolled back — skipping", promote["entry_id"])
         return None
 
@@ -206,7 +206,7 @@ def _last_promote(entries: list) -> Optional[dict]:
     return best
 
 
-def _has_later_rollback(entries: list, *, after_id: str, after_ts: str) -> bool:
+def _has_later_rollback(entries: list, *, after_ts: str) -> bool:
     """True iff the ledger has a rollback entry that post-dates `after_ts`.
 
     We check timestamp (string-compared, ISO sorts lex == temporal) so

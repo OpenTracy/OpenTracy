@@ -29,7 +29,6 @@ from ledger.writer import read_entries, read_lessons
 SESSIONS_DIR = Path("traces/distilled/sessions")
 EPOCHS_DIR = Path("traces/distilled/epochs")
 RESULTS_GLOB = Path("experiments/results")
-TRACES_GLOB = Path("traces/raw")
 
 
 # ---------- helpers ----------
@@ -53,21 +52,6 @@ def _all_results() -> list[dict[str, Any]]:
     for p in sorted(RESULTS_GLOB.glob("*.jsonl")):
         out.extend(_read_jsonl(p))
     return out
-
-
-def _all_traces() -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for p in sorted(TRACES_GLOB.glob("*.jsonl")):
-        out.extend(_read_jsonl(p))
-    return out
-
-
-def _percentile(xs: list[float], q: float) -> float:
-    if not xs:
-        return 0.0
-    s = sorted(xs)
-    k = max(0, min(len(s) - 1, int(q * (len(s) - 1))))
-    return s[k]
 
 
 def _now_iso() -> str:
