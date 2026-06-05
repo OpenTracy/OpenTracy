@@ -90,6 +90,14 @@ def run_suite(
     return report
 
 
+def per_golden_pass(report: Report) -> dict[str, bool]:
+    """Per-golden pass map: a golden passes iff it ran clean and every rubric passed."""
+    return {
+        case.golden_id: bool(case.success) and all(r.passed for r in case.rubric_results)
+        for case in report.cases
+    }
+
+
 def _aggregate(cases: list[EvalCase], method: str) -> dict[str, Any]:
     by_rubric: dict[str, list[float]] = {}
     pass_count = 0

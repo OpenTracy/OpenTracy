@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from evals.runners.runner import run_suite
+from evals.runners.runner import per_golden_pass, run_suite
 from experiments.branching import candidate_agent_path, list_candidates
 from experiments.types import CandidateManifest
 
@@ -38,18 +38,34 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _summary_view(summary: dict[str, Any]) -> dict[str, Any]:
-    """Trim Report.summary to what we want pinned in the JSONL."""
+def _percentile(xs: list[float], q: float) -> float:
+    if not xs:
+        return 0.0
+    s = sorted(xs)
+    k = max(0, min(len(s) - 1, int(q * (len(s) - 1))))
+    return round(s[k], 2)
+
+
+def _summary_view(report: Any) -> dict[str, Any]:
+    """Trim a Report to what we pin in the JSONL: aggregates + per-golden + latency."""
+    summary = report.summary
+    durations = [float(c.duration_ms) for c in report.cases]
     return {
         "overall_score": summary.get("overall_score"),
         "pass_rate": summary.get("pass_rate"),
         "per_rubric": dict(summary.get("per_rubric", {})),
         "n_passed": summary.get("n_passed"),
         "n_total": summary.get("n_total"),
+        "per_golden": per_golden_pass(report),
+        "avg_latency_ms": round(sum(durations) / len(durations), 2) if durations else 0.0,
+        "p95_latency_ms": _percentile(durations, 0.95),
     }
 
 
 def _compute_delta(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    base_pg: dict[str, bool] = baseline.get("per_golden", {})
+    cand_pg: dict[str, bool] = candidate.get("per_golden", {})
+    ids = set(base_pg) | set(cand_pg)
     return {
         "overall_score": round(candidate["overall_score"] - baseline["overall_score"], 4),
         "pass_rate": round(candidate["pass_rate"] - baseline["pass_rate"], 4),
@@ -57,6 +73,14 @@ def _compute_delta(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[
             k: round(candidate["per_rubric"].get(k, 0.0) - baseline["per_rubric"].get(k, 0.0), 4)
             for k in baseline["per_rubric"].keys() | candidate["per_rubric"].keys()
         },
+        "per_golden": {
+            "fixed": sorted(g for g in ids if cand_pg.get(g) and not base_pg.get(g)),
+            "regressed": sorted(g for g in ids if base_pg.get(g) and not cand_pg.get(g)),
+            "unchanged": sorted(g for g in ids if bool(base_pg.get(g)) == bool(cand_pg.get(g))),
+        },
+        "latency_ms_delta": round(
+            candidate.get("avg_latency_ms", 0.0) - baseline.get("avg_latency_ms", 0.0), 2
+        ),
     }
 
 
@@ -88,8 +112,8 @@ def run_candidate(
     # trace lineage later (lesson.candidate_id → cand_<id>.json → cases[].trace_id).
     _persist_candidate_report(candidate_id, candidate_report)
 
-    baseline_view = _summary_view(baseline_report.summary)
-    candidate_view = _summary_view(candidate_report.summary)
+    baseline_view = _summary_view(baseline_report)
+    candidate_view = _summary_view(candidate_report)
     delta = _compute_delta(baseline_view, candidate_view)
 
     result = CandidateResult(

@@ -8,7 +8,7 @@ Pydantic where we need validation, dataclass where we want speed and clarity.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field, model_validator
@@ -112,4 +112,8 @@ class Report:
 
     @staticmethod
     def now_iso() -> str:
-        return datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+        return (
+            datetime.now(timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z")
+        )
