@@ -30,6 +30,21 @@ from ledger.versioning import LIVE_AGENT, read_version, snapshot_agent
 from ledger.writer import read_lesson, update_lesson, write_entry, write_lesson
 
 
+def _manifest_verdict_dict(mv: Any) -> dict[str, Any]:
+    """Serialize a ManifestVerdict for the ledger payload."""
+    return {
+        "verdict": mv.verdict.value,
+        "fix_precision": mv.fix_precision,
+        "fix_recall": mv.fix_recall,
+        "regression_precision": mv.regression_precision,
+        "regression_recall": mv.regression_recall,
+        "realized_fixes": mv.realized_fixes,
+        "realized_regressions": mv.realized_regressions,
+        "unpredicted_regressions": mv.unpredicted_regressions,
+        "net_fixes": mv.net_fixes,
+    }
+
+
 def _bump_patch(version: str) -> str:
     """v0.0.1 → v0.0.2 (or 0.0.1 → 0.0.2 if no `v` prefix)."""
     has_v = version.startswith("v")
@@ -263,6 +278,8 @@ def promote(
             "magnitude_met": outcome.verification.magnitude_met,
             "verdict": outcome.verification.verdict,
         }
+    if outcome.manifest_verdict is not None:
+        payload["manifest_verdict"] = _manifest_verdict_dict(outcome.manifest_verdict)
 
     entry = write_entry(
         kind="promote",
@@ -922,15 +939,10 @@ def promote_dataset(
     new_version = int(payload["version"])
     name = str(payload["name"])
 
-    # AHE Pillar 3 — materialize the VerificationOutcome from live state
-    # before recording the Lesson. Only when the proposer attached a
-    # Prediction *and* the caller didn't pre-compute one (e.g. via
-    # harness.loop._actual_delta_for_rubric).
-    if (
-        outcome.proposal.prediction is not None
-        and outcome.verification is None
-    ):
-        outcome.verification = _verify_dataset_promotion(
+    # Local so we never mutate the caller's outcome.
+    verification = outcome.verification
+    if outcome.proposal.prediction is not None and verification is None:
+        verification = _verify_dataset_promotion(
             outcome.proposal.prediction,
             payload,
             datasets_dir=datasets_dir,
@@ -969,15 +981,17 @@ def promote_dataset(
             "rationale": outcome.proposal.prediction.rationale,
             "confidence": outcome.proposal.prediction.confidence,
         }
-    if outcome.verification is not None:
+    if verification is not None:
         ledger_payload["verification"] = {
-            "rubric": outcome.verification.rubric,
-            "expected_delta": outcome.verification.expected_delta,
-            "actual_delta": outcome.verification.actual_delta,
-            "direction_correct": outcome.verification.direction_correct,
-            "magnitude_met": outcome.verification.magnitude_met,
-            "verdict": outcome.verification.verdict,
+            "rubric": verification.rubric,
+            "expected_delta": verification.expected_delta,
+            "actual_delta": verification.actual_delta,
+            "direction_correct": verification.direction_correct,
+            "magnitude_met": verification.magnitude_met,
+            "verdict": verification.verdict,
         }
+    if outcome.manifest_verdict is not None:
+        ledger_payload["manifest_verdict"] = _manifest_verdict_dict(outcome.manifest_verdict)
 
     entry = write_entry(
         kind="promote",
@@ -1013,10 +1027,8 @@ def promote_dataset(
     if gap_score_before is not None and gap_score_after is not None:
         gap_text = f" (gap_score {float(gap_score_before):.2f} → {float(gap_score_after):.2f})"
     verification_text = ""
-    if outcome.verification is not None:
-        verification_text = (
-            f" Prediction {outcome.verification.verdict}."
-        )
+    if verification is not None:
+        verification_text = f" Prediction {verification.verdict}."
     lesson_summary = (
         f"Promoted dataset {name!r} v{new_version} — "
         f"added {added} sample(s){gap_text}.{verification_text}"

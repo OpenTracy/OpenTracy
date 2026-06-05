@@ -229,29 +229,66 @@ def test_kind_from_mutations_recognizes_datasets():
 # ---------------------------------------------------------------------------
 
 
+def _read_promote_entry(tmp_ledger):
+    entry_files = list((tmp_ledger / "entries").glob("*.jsonl"))
+    lines = entry_files[0].read_text().strip().split("\n")
+    return json.loads(lines[0])
+
+
 def test_promote_computes_verification_when_prediction_present_cold_router(
     tmp_datasets, tmp_ledger,
 ):
-    """With a Prediction attached but no router config fitted, verification
-    is degenerate — actual_delta := expected_delta, verdict='verified'."""
+    """With a Prediction attached but no router config fitted, verification is
+    degenerate — actual_delta := expected_delta, verdict='verified'. The caller's
+    outcome is never mutated; the verification rides on the ledger payload."""
     payload = _payload(version=1, n_samples=2)
     outcome = _outcome(payload, with_prediction=True)
     _new_version, lesson_id = promote_dataset(outcome)
 
-    # outcome was mutated with the materialized verification
-    assert outcome.verification is not None
-    assert outcome.verification.rubric == "coverage_gap_score"
-    assert outcome.verification.verdict in {"verified", "no_change", "partial", "wrong"}
+    assert outcome.verification is None
 
-    # Ledger entry has verification block
-    entry_files = list((tmp_ledger / "entries").glob("*.jsonl"))
-    entry = json.loads(entry_files[0].read_text().strip().split("\n")[0])
-    assert "verification" in entry["payload"]
-    assert entry["payload"]["verification"]["rubric"] == "coverage_gap_score"
+    verif = _read_promote_entry(tmp_ledger)["payload"]["verification"]
+    assert verif["rubric"] == "coverage_gap_score"
+    assert verif["verdict"] in {"verified", "no_change", "partial", "wrong"}
 
-    # Lesson summary mentions the verdict
     lesson = json.loads((tmp_ledger / "lessons" / f"{lesson_id}.json").read_text())
     assert "Prediction" in lesson["summary"]
+
+
+def test_promote_persists_manifest_verdict(tmp_datasets, tmp_ledger):
+    from harness.types import EditVerdict, ManifestVerdict, Prediction
+
+    payload = _payload(version=1, n_samples=2)
+    outcome = _outcome(payload)
+    outcome.manifest_verdict = ManifestVerdict.evaluate(
+        Prediction(
+            rubric="overall", expected_delta=0.1, rationale="x",
+            predicted_fixes=frozenset(["g1"]),
+        ),
+        {"fixed": ["g1"], "regressed": [], "unchanged": []},
+    )
+    promote_dataset(outcome)
+
+    mv = _read_promote_entry(tmp_ledger)["payload"]["manifest_verdict"]
+    assert mv["verdict"] == EditVerdict.KEEP.value
+    assert mv["fix_recall"] == 1.0
+    assert mv["unpredicted_regressions"] == []
+
+
+def test_manifest_verdict_dict_round_trips():
+    from harness.executor.promote import _manifest_verdict_dict
+    from harness.types import EditVerdict, ManifestVerdict, Prediction
+
+    mv = ManifestVerdict.evaluate(
+        Prediction(rubric="overall", expected_delta=0.1, rationale="x",
+                   predicted_fixes=frozenset(["a", "b"])),
+        {"fixed": ["a"], "regressed": ["c"], "unchanged": []},
+    )
+    d = _manifest_verdict_dict(mv)
+    assert d["verdict"] == EditVerdict.ROLLBACK_AND_PIVOT.value
+    assert d["realized_regressions"] == ["c"]
+    assert d["unpredicted_regressions"] == ["c"]
+    assert d["net_fixes"] == 0
 
 
 def test_promote_no_prediction_no_verification(tmp_datasets, tmp_ledger):

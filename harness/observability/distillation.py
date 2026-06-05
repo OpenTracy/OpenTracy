@@ -118,12 +118,13 @@ def distill_session(
     if promote_entries:
         final_decision = "auto_approve"
         promoted_version = promote_entries[-1].agent_version_after
+    elif any(e.kind == "rejected" for e in ledger_rows):
+        final_decision = "rejected_by_critic"
+    elif any(e.kind == "queued_review" for e in ledger_rows):
+        final_decision = "queued_for_review"
     elif latest is not None:
-        # Couldn't find promotion → either queued, rejected by critic, or rejected by policy
-        # We don't have full visibility from the result row alone; we mark unknown for now
-        final_decision = "queue_human_or_rejected"
+        final_decision = "scored_only"
 
-    # Aggregate (we approximate from result summary; raw trace timing not always tied here)
     agg: Optional[SessionAggregate] = None
     if latest is not None:
         cand = latest.get("candidate", {})
@@ -133,9 +134,30 @@ def distill_session(
             n_traces=n_total,
             n_passed=n_passed,
             n_failed=max(0, n_total - n_passed),
-            avg_latency_ms=0.0,   # not in result row; would need trace lookup
-            p95_latency_ms=0.0,
+            avg_latency_ms=float(cand.get("avg_latency_ms", 0.0) or 0.0),
+            p95_latency_ms=float(cand.get("p95_latency_ms", 0.0) or 0.0),
         )
+
+    # Recover the prediction + verdict from the promote entry's payload.
+    prediction_dict: Optional[dict[str, Any]] = None
+    actual_dict: Optional[dict[str, Any]] = None
+    prediction_verified: Optional[bool] = None
+    if promote_entries:
+        pl = promote_entries[-1].payload or {}
+        pred = pl.get("prediction")
+        if pred:
+            prediction_dict = {
+                "rubric": pred.get("rubric"),
+                "expected_delta": pred.get("expected_delta"),
+                "rationale": pred.get("rationale"),
+            }
+        verif = pl.get("verification")
+        if verif:
+            actual_dict = {"rubric": verif.get("rubric"), "actual_delta": verif.get("actual_delta")}
+            prediction_verified = verif.get("verdict") == "verified"
+        mv = pl.get("manifest_verdict")
+        if mv and prediction_verified is None:
+            prediction_verified = mv.get("verdict") == "keep"
 
     # Build summary
     mutations_str = ", ".join(m.describe() for m in manifest.mutations)
@@ -172,9 +194,9 @@ def distill_session(
         suite=latest.get("suite") if latest else None,
         proposal_source=None,            # not tracked in v0
         mutations=[m.describe() for m in manifest.mutations],
-        prediction=None,                  # P7.4 will populate
-        actual=None,
-        prediction_verified=None,
+        prediction=prediction_dict,
+        actual=actual_dict,
+        prediction_verified=prediction_verified,
         aggregate=agg,
         overall_score=(latest["candidate"]["overall_score"] if latest else None),
         pass_rate=(latest["candidate"]["pass_rate"] if latest else None),
