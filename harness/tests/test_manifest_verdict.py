@@ -55,3 +55,31 @@ def test_empty_prediction_yields_zero_ratios():
     assert v.fix_precision == 0.0
     assert v.regression_recall == 0.0
     assert v.verdict == EditVerdict.ROLLBACK_AND_PIVOT
+
+
+def test_predicted_regression_does_not_force_rollback():
+    v = ManifestVerdict.evaluate(
+        _pred(fixes=["g1", "g2"], regs=["g3"]),
+        {"fixed": ["g1", "g2"], "regressed": ["g3"], "unchanged": []},
+    )
+    assert v.verdict == EditVerdict.KEEP
+    assert v.regression_precision == 1.0
+    assert v.regression_recall == 1.0
+    assert v.unpredicted_regressions == []
+    assert v.net_fixes == 1
+
+
+def test_missing_delta_keys_default_empty():
+    v = ManifestVerdict.evaluate(_pred(fixes=["g1"]), {})
+    assert v.realized_fixes == []
+    assert v.verdict == EditVerdict.ROLLBACK_AND_PIVOT
+
+
+def test_fix_precision_below_one_when_overpredicted():
+    v = ManifestVerdict.evaluate(
+        _pred(fixes=["g1", "g2", "g3"]),
+        {"fixed": ["g1", "g2"], "regressed": [], "unchanged": []},
+    )
+    assert v.fix_precision == round(2 / 3, 4)
+    assert v.fix_recall == 1.0
+    assert v.verdict == EditVerdict.IMPROVE
