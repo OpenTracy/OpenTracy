@@ -1,20 +1,4 @@
-from types import SimpleNamespace
-
-from harness.observability.audit import aggregate_stage_ms, performance_audit
-
-
-def test_aggregate_stage_ms_sums_by_name():
-    stages = [
-        {"stage": "retrieve", "duration_ms": 10.0},
-        {"stage": "generate", "duration_ms": 100.0},
-        {"stage": "retrieve", "duration_ms": 5.0},
-    ]
-    assert aggregate_stage_ms(stages) == {"retrieve": 15.0, "generate": 100.0}
-
-
-def test_aggregate_stage_ms_accepts_objects():
-    stages = [SimpleNamespace(stage="generate", duration_ms=50.0)]
-    assert aggregate_stage_ms(stages) == {"generate": 50.0}
+from harness.observability.audit import performance_audit
 
 
 def test_performance_audit_llm_bottleneck():

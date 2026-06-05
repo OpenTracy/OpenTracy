@@ -25,7 +25,12 @@ from harness.approver import ApprovalDecision, Policy, decide
 from harness.blueprint import Blueprint
 from harness.critics import Critic, CriticStage, make_critic
 from harness.executor import promote
-from harness.executor.promote import _manifest_verdict_dict, build_lesson
+from harness.executor.promote import (
+    _manifest_verdict_dict,
+    _prediction_dict,
+    _verdicts_list,
+    build_lesson,
+)
 from harness.types import (
     CriticContext,
     CriticVerdict,
@@ -232,19 +237,11 @@ def run_loop(
             "mutations": [m.describe() for m in r.outcome.proposal.mutations],
             "delta": delta,
             "policy_mode": pol.mode,
-            "verdicts": [
-                {"critic": v.critic, "approved": v.approved, "reason": v.reason}
-                for v in r.outcome.verdicts
-            ],
+            "verdicts": _verdicts_list(r.outcome.verdicts),
         }
         pred = r.outcome.proposal.prediction
         if pred is not None:
-            queued_payload["prediction"] = {
-                "rubric": pred.rubric,
-                "expected_delta": pred.expected_delta,
-                "rationale": pred.rationale,
-                "confidence": pred.confidence,
-            }
+            queued_payload["prediction"] = _prediction_dict(pred)
         if r.outcome.manifest_verdict is not None:
             queued_payload["manifest_verdict"] = _manifest_verdict_dict(r.outcome.manifest_verdict)
 

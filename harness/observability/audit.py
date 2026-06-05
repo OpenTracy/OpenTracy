@@ -14,18 +14,6 @@ from typing import Any
 LLM_STAGES = frozenset({"generate"})
 
 
-def aggregate_stage_ms(stages: list) -> dict[str, float]:
-    """Total duration per stage name across stage records (objects or dicts)."""
-    out: dict[str, float] = {}
-    for s in stages:
-        name = s.get("stage") if isinstance(s, dict) else getattr(s, "stage", None)
-        dur = s.get("duration_ms") if isinstance(s, dict) else getattr(s, "duration_ms", 0.0)
-        if name is None:
-            continue
-        out[name] = round(out.get(name, 0.0) + float(dur or 0.0), 3)
-    return out
-
-
 def performance_audit(
     stage_ms: dict[str, float],
     *,

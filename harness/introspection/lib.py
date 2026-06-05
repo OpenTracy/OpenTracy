@@ -21,10 +21,6 @@ from ledger.writer import read_entries, read_lessons
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 EPOCHS_DIR = _PROJECT_ROOT / "traces" / "distilled" / "epochs"
-SESSIONS_DIR = _PROJECT_ROOT / "traces" / "distilled" / "sessions"
-POLICIES_PATH = _PROJECT_ROOT / "policies" / "auto_approve.yaml"
-ENTRIES_DIR = _PROJECT_ROOT / "ledger" / "entries"
-LESSONS_DIR = _PROJECT_ROOT / "ledger" / "lessons"
 
 
 # ---------- tools ----------

@@ -127,6 +127,9 @@ class EvalLiftCritic(Critic):
 class NoCriticalRegression(Critic):
     """No per-rubric score may drop below `floor`.
 
+    Experimental: registered and usable via the blueprint, but not wired into
+    the default critic set.
+
     Catches "won on average but tanked a key rubric" — a Goodhart guard.
 
     Params:
@@ -214,6 +217,9 @@ class RegressionBudgetCritic(Critic):
 @register_critic
 class PredictionHonestyCritic(Critic):
     """Warn (never block) when a prediction was inaccurate.
+
+    Experimental: registered and usable via the blueprint, but not wired into
+    the default critic set.
 
     Inaccurate means a predicted fix didn't land, or a regression appeared that
     the edit did NOT predict (a surprise). A regression that was correctly

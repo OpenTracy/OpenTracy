@@ -1,5 +1,5 @@
 from evals.runners.runner import per_golden_pass
-from evals.scoring import compare_two_tier, selection_key, two_tier_key
+from evals.scoring import selection_key, two_tier_key
 from evals.types import EvalCase, Report, RubricResult
 
 
@@ -27,13 +27,12 @@ def _report(cases):
 def test_two_tier_prefers_higher_pass_rate():
     a = {"pass_rate": 0.8, "avg_latency_ms": 500.0}
     b = {"pass_rate": 0.6, "avg_latency_ms": 100.0}
-    assert compare_two_tier(a, b) == 1
+    assert two_tier_key(a) > two_tier_key(b)
 
 
 def test_two_tier_breaks_tie_on_lower_latency():
     a = {"pass_rate": 0.8, "avg_latency_ms": 100.0}
     b = {"pass_rate": 0.8, "avg_latency_ms": 500.0}
-    assert compare_two_tier(a, b) == 1
     assert two_tier_key(a) > two_tier_key(b)
 
 
@@ -43,14 +42,6 @@ def test_two_tier_handles_missing_fields():
 
 def test_two_tier_handles_none_fields():
     assert two_tier_key({"pass_rate": None, "avg_latency_ms": None}) == (0.0, 0.0)
-
-
-def test_compare_two_tier_all_three_branches():
-    a = {"pass_rate": 0.9, "avg_latency_ms": 100.0}
-    b = {"pass_rate": 0.5, "avg_latency_ms": 100.0}
-    assert compare_two_tier(a, b) == 1
-    assert compare_two_tier(b, a) == -1
-    assert compare_two_tier(a, dict(a)) == 0
 
 
 def test_selection_key_none_fields_default_to_zero():

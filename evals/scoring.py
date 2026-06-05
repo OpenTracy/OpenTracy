@@ -17,12 +17,6 @@ def two_tier_key(summary: dict[str, Any]) -> tuple[float, float]:
     return (pass_rate, -avg_latency_ms)
 
 
-def compare_two_tier(a: dict[str, Any], b: dict[str, Any]) -> int:
-    """Return 1 if a ranks above b, -1 if below, 0 if tied."""
-    ka, kb = two_tier_key(a), two_tier_key(b)
-    return (ka > kb) - (ka < kb)
-
-
 def selection_key(summary: dict[str, Any]) -> tuple[float, float, float]:
     """Quality-aware selection key: pass-rate, then response quality, then -latency.
 

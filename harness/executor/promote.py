@@ -53,6 +53,46 @@ def _manifest_verdict_dict(mv: Any) -> dict[str, Any]:
     }
 
 
+def _now_iso() -> str:
+    """Second-precision UTC ISO with a trailing Z — the promoted_at format."""
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _new_lesson_id() -> str:
+    return f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
+
+
+def _prediction_dict(pred: Any) -> dict[str, Any]:
+    return {
+        "rubric": pred.rubric,
+        "expected_delta": pred.expected_delta,
+        "rationale": pred.rationale,
+        "confidence": pred.confidence,
+    }
+
+
+def _verification_dict(v: Any) -> dict[str, Any]:
+    return {
+        "rubric": v.rubric,
+        "expected_delta": v.expected_delta,
+        "actual_delta": v.actual_delta,
+        "direction_correct": v.direction_correct,
+        "magnitude_met": v.magnitude_met,
+        "verdict": v.verdict,
+    }
+
+
+def _verdicts_list(verdicts: Any) -> list[dict[str, Any]]:
+    return [
+        {"critic": v.critic, "approved": v.approved, "reason": v.reason}
+        for v in verdicts
+    ]
+
+
 _bump_patch = bump_patch  # shared primitive; see ledger.versioning
 
 
@@ -239,9 +279,7 @@ def build_lesson(
     """
     mutations = [m.describe() for m in outcome.proposal.mutations]
     kind = _kind_from_mutations(mutations)
-    lesson_id = (
-        f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
-    )
+    lesson_id = _new_lesson_id()
     delta = outcome.candidate_result.delta if outcome.candidate_result else {}
     delta_overall = delta.get("overall_score", 0.0) if delta else 0.0
 
@@ -297,28 +335,13 @@ def promote(
     payload: dict = {
         "mutations": [m.describe() for m in outcome.proposal.mutations],
         "delta": delta,
-        "verdicts": [
-            {"critic": v.critic, "approved": v.approved, "reason": v.reason}
-            for v in outcome.verdicts
-        ],
+        "verdicts": _verdicts_list(outcome.verdicts),
     }
     # AHE pillar 3 — record prediction + verification when present
     if outcome.proposal.prediction is not None:
-        payload["prediction"] = {
-            "rubric": outcome.proposal.prediction.rubric,
-            "expected_delta": outcome.proposal.prediction.expected_delta,
-            "rationale": outcome.proposal.prediction.rationale,
-            "confidence": outcome.proposal.prediction.confidence,
-        }
+        payload["prediction"] = _prediction_dict(outcome.proposal.prediction)
     if outcome.verification is not None:
-        payload["verification"] = {
-            "rubric": outcome.verification.rubric,
-            "expected_delta": outcome.verification.expected_delta,
-            "actual_delta": outcome.verification.actual_delta,
-            "direction_correct": outcome.verification.direction_correct,
-            "magnitude_met": outcome.verification.magnitude_met,
-            "verdict": outcome.verification.verdict,
-        }
+        payload["verification"] = _verification_dict(outcome.verification)
     if outcome.manifest_verdict is not None:
         payload["manifest_verdict"] = _manifest_verdict_dict(outcome.manifest_verdict)
 
@@ -338,9 +361,7 @@ def promote(
         parent_version=old_version,
         new_version=new_version,
         entry_id=entry.entry_id,
-        promoted_at=datetime.now(timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z"),
+        promoted_at=_now_iso(),
     )
     write_lesson(lesson)
 
@@ -384,9 +405,7 @@ def promote_queued(
     new_version = _bump_patch(old_version)
     _atomic_swap_agent(cand_agent_dir, agent_dir, new_version)
 
-    promoted_at = (
-        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    )
+    promoted_at = _now_iso()
 
     payload: dict[str, Any] = {
         "mutations": lesson.mutations,
@@ -464,9 +483,7 @@ def record_manual_change(
     new_version = _bump_patch(old_version)
     _set_version(agent_dir / "agent.yaml", new_version)
 
-    promoted_at = (
-        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    )
+    promoted_at = _now_iso()
 
     entry = write_entry(
         kind="promote",
@@ -480,9 +497,7 @@ def record_manual_change(
         },
     )
 
-    lesson_id = (
-        f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
-    )
+    lesson_id = _new_lesson_id()
     lesson = Lesson(
         id=lesson_id,
         version=new_version,
@@ -537,9 +552,7 @@ def record_manual_router_change(
 
     json_path, _ = apply_router_candidate(new_payload, versions_dir=versions_dir)
 
-    promoted_at = (
-        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    )
+    promoted_at = _now_iso()
 
     mutations_desc = [f"versions/router_config_v{new_version}.json"]
     entry = write_entry(
@@ -553,9 +566,7 @@ def record_manual_router_change(
         },
     )
 
-    lesson_id = (
-        f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
-    )
+    lesson_id = _new_lesson_id()
     lesson = Lesson(
         id=lesson_id,
         version=str(new_version),
@@ -605,9 +616,7 @@ def record_manual_dataset_change(
     apply_edit()
     parent_version = max(0, new_version - 1)
 
-    promoted_at = (
-        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    )
+    promoted_at = _now_iso()
 
     mutations_desc = [f"datasets/{name}/v{new_version}.json"]
     entry = write_entry(
@@ -621,9 +630,7 @@ def record_manual_dataset_change(
         },
     )
 
-    lesson_id = (
-        f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
-    )
+    lesson_id = _new_lesson_id()
     lesson = Lesson(
         id=lesson_id,
         version=str(new_version),
@@ -803,11 +810,7 @@ def promote_router_config(
     json_path, npz_path = apply_router_candidate(payload, versions_dir=versions_dir)
     new_version = int(payload["version"])
 
-    promoted_at = (
-        datetime.now(timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z")
-    )
+    promoted_at = _now_iso()
 
     # 2. Ledger entry — record the candidate metadata for later inspection.
     metadata = payload.get("metadata") or {}
@@ -821,18 +824,10 @@ def promote_router_config(
         "n_models": len(payload.get("model_psi") or {}),
         "fitted_from": payload.get("fitted_from"),
         "metadata": metadata,
-        "verdicts": [
-            {"critic": v.critic, "approved": v.approved, "reason": v.reason}
-            for v in outcome.verdicts
-        ],
+        "verdicts": _verdicts_list(outcome.verdicts),
     }
     if outcome.proposal.prediction is not None:
-        ledger_payload["prediction"] = {
-            "rubric": outcome.proposal.prediction.rubric,
-            "expected_delta": outcome.proposal.prediction.expected_delta,
-            "rationale": outcome.proposal.prediction.rationale,
-            "confidence": outcome.proposal.prediction.confidence,
-        }
+        ledger_payload["prediction"] = _prediction_dict(outcome.proposal.prediction)
     if outcome.manifest_verdict is not None:
         ledger_payload["manifest_verdict"] = _manifest_verdict_dict(outcome.manifest_verdict)
 
@@ -847,10 +842,7 @@ def promote_router_config(
 
     # 3. Lesson — uses the existing build_lesson scaffold so the Evolution
     # timeline picks it up uniformly.
-    lesson_id = (
-        f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-"
-        f"{secrets.token_hex(2)}"
-    )
+    lesson_id = _new_lesson_id()
     proposal_source = (
         "claude_code"
         if outcome.proposal.source == "claude_code"
@@ -1010,11 +1002,7 @@ def promote_dataset(
             datasets_dir=datasets_dir,
         )
 
-    promoted_at = (
-        datetime.now(timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z")
-    )
+    promoted_at = _now_iso()
 
     metadata = payload.get("metadata") or {}
     added = int(metadata.get("added", 0))
@@ -1031,27 +1019,12 @@ def promote_dataset(
         "gap_score_before": gap_score_before,
         "gap_score_after": gap_score_after,
         "metadata": metadata,
-        "verdicts": [
-            {"critic": v.critic, "approved": v.approved, "reason": v.reason}
-            for v in outcome.verdicts
-        ],
+        "verdicts": _verdicts_list(outcome.verdicts),
     }
     if outcome.proposal.prediction is not None:
-        ledger_payload["prediction"] = {
-            "rubric": outcome.proposal.prediction.rubric,
-            "expected_delta": outcome.proposal.prediction.expected_delta,
-            "rationale": outcome.proposal.prediction.rationale,
-            "confidence": outcome.proposal.prediction.confidence,
-        }
+        ledger_payload["prediction"] = _prediction_dict(outcome.proposal.prediction)
     if verification is not None:
-        ledger_payload["verification"] = {
-            "rubric": verification.rubric,
-            "expected_delta": verification.expected_delta,
-            "actual_delta": verification.actual_delta,
-            "direction_correct": verification.direction_correct,
-            "magnitude_met": verification.magnitude_met,
-            "verdict": verification.verdict,
-        }
+        ledger_payload["verification"] = _verification_dict(verification)
     if outcome.manifest_verdict is not None:
         ledger_payload["manifest_verdict"] = _manifest_verdict_dict(outcome.manifest_verdict)
 
@@ -1064,10 +1037,7 @@ def promote_dataset(
         payload=ledger_payload,
     )
 
-    lesson_id = (
-        f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-"
-        f"{secrets.token_hex(2)}"
-    )
+    lesson_id = _new_lesson_id()
     proposal_source = (
         "claude_code"
         if outcome.proposal.source == "claude_code"
