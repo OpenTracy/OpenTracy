@@ -18,10 +18,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from evals.scoring import selection_key
+from evals.scoring import selection_key, two_tier_key
 from experiments.branching import create_candidate
 from experiments.runner import CandidateResult, run_candidate
 from harness.approver import ApprovalDecision, Policy, decide
+from harness.blueprint import Blueprint
 from harness.critics import Critic, CriticStage, make_critic
 from harness.executor import promote
 from harness.executor.promote import build_lesson
@@ -37,13 +38,17 @@ from ledger.versioning import LIVE_AGENT, read_version
 from ledger.writer import write_entry, write_lesson
 
 # A critic is named either bare ("scope") or with params (("eval_lift", {...})).
+# The default critic set + selection live in harness.blueprint.Blueprint.
 CriticSpec = str | tuple[str, dict]
 
-DEFAULT_PRE_CRITICS: list[CriticSpec] = ["scope"]
-# regression_budget is intentionally NOT a default: at budget 0 it blocks ~50%
-# of net-positive candidates (see harness/benchmarks/regression_detection.py),
-# which would stall the loop. Wire it with a chosen budget via the blueprint.
-DEFAULT_POST_CRITICS: list[CriticSpec] = ["eval_lift"]
+_SELECTION_FNS = {"selection_key": selection_key, "two_tier": two_tier_key}
+
+
+def _selection_fn(name: str):
+    fn = _SELECTION_FNS.get(name)
+    if fn is None:
+        raise ValueError(f"unknown selection {name!r}; expected {sorted(_SELECTION_FNS)}")
+    return fn
 
 
 @dataclass
@@ -99,6 +104,7 @@ def propose_and_score(
     suite_path: Path | str,
     pre_critics: Optional[list[CriticSpec]] = None,
     post_critics: Optional[list[CriticSpec]] = None,
+    blueprint: Optional[Blueprint] = None,
 ) -> list[LoopOutcome]:
     """Run the full pipeline for a batch of proposals.
 
@@ -106,9 +112,10 @@ def propose_and_score(
     decides what to do with `approved` outcomes — promote to live, queue
     for human review, etc.
     """
+    bp = blueprint or Blueprint()
     pre, post = _split_critics(
-        pre_critics if pre_critics is not None else DEFAULT_PRE_CRITICS,
-        post_critics if post_critics is not None else DEFAULT_POST_CRITICS,
+        pre_critics if pre_critics is not None else bp.pre_critics,
+        post_critics if post_critics is not None else bp.post_critics,
     )
 
     outcomes: list[LoopOutcome] = []
@@ -167,7 +174,8 @@ def run_loop(
     post_critics: Optional[list[CriticSpec]] = None,
     policy: Optional[Policy] = None,
     auto_promote: bool = False,
-    promote_strategy: str = "best",   # "best" | "all" | "none"
+    promote_strategy: Optional[str] = None,   # "best" | "all" | "none"; default from blueprint
+    blueprint: Optional[Blueprint] = None,
 ) -> list[LoopRound]:
     """Full pipeline including approver + executor.
 
@@ -182,10 +190,12 @@ def run_loop(
 
     Returns one LoopRound per input proposal.
     """
-    if promote_strategy not in {"best", "all", "none"}:
-        raise ValueError(f"promote_strategy must be best|all|none, got {promote_strategy!r}")
+    bp = blueprint or Blueprint()
+    strategy = promote_strategy if promote_strategy is not None else bp.promote_strategy
+    if strategy not in {"best", "all", "none"}:
+        raise ValueError(f"promote_strategy must be best|all|none, got {strategy!r}")
 
-    outcomes = propose_and_score(proposals, suite_path, pre_critics, post_critics)
+    outcomes = propose_and_score(proposals, suite_path, pre_critics, post_critics, blueprint=bp)
     pol = policy or Policy.from_yaml()
 
     decisions = [decide(o, pol) for o in outcomes]
@@ -229,7 +239,7 @@ def run_loop(
         write_lesson(lesson)
         r.queued_lesson_id = lesson.id
 
-    if not auto_promote or promote_strategy == "none":
+    if not auto_promote or strategy == "none":
         return rounds
 
     eligible_idxs = [
@@ -238,11 +248,12 @@ def run_loop(
     if not eligible_idxs:
         return rounds
 
-    if promote_strategy == "best":
+    if strategy == "best":
+        sel = _selection_fn(bp.selection)
 
-        def _best_key(idx: int) -> tuple[float, float, float]:
+        def _best_key(idx: int) -> tuple[float, ...]:
             cr = rounds[idx].outcome.candidate_result
-            return selection_key(cr.candidate) if cr is not None else (float("-inf"), 0.0, 0.0)
+            return sel(cr.candidate) if cr is not None else (float("-inf"),)
 
         best_idx = max(eligible_idxs, key=_best_key)
         version, lesson_id = promote(rounds[best_idx].outcome)

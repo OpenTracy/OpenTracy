@@ -11,13 +11,9 @@ import json
 import sys
 from typing import Any
 
-from harness.approver import ApprovalDecision, Policy
-from harness.loop import (
-    DEFAULT_POST_CRITICS,
-    DEFAULT_PRE_CRITICS,
-    propose_and_score,
-    run_loop,
-)
+from harness.approver import Policy
+from harness.blueprint import Blueprint
+from harness.loop import run_loop
 from harness.proposer import sweep_knob
 from harness.rollback import rollback_to
 from ledger.versioning import list_snapshots, read_version
@@ -48,8 +44,9 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         return 2
 
     proposals = sweep_knob(file_part.strip(), path_part.strip(), values)
-    pre = args.pre_critics.split(",") if args.pre_critics else DEFAULT_PRE_CRITICS
-    post = args.post_critics.split(",") if args.post_critics else DEFAULT_POST_CRITICS
+    blueprint = Blueprint.from_yaml()
+    pre = args.pre_critics.split(",") if args.pre_critics else blueprint.pre_critics
+    post = args.post_critics.split(",") if args.post_critics else blueprint.post_critics
 
     policy = (
         Policy(mode=args.policy_mode, auto_min_lift=args.policy_min_lift)
@@ -73,6 +70,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         policy=policy,
         auto_promote=args.auto_promote,
         promote_strategy=args.promote_strategy,
+        blueprint=blueprint,
     )
 
     print(
