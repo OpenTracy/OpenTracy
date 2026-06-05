@@ -61,7 +61,6 @@ def run_wakeup(
 ) -> WakeupOutcome:
     """Compose prompt with current health, call Claude Code, persist outcome."""
     from harness.wakeup.prompt import WAKEUP_PROMPT
-    from ledger.writer import write_decision
     from router.feedback.health import compute_router_health
 
     health = compute_router_health(embedder=embedder)

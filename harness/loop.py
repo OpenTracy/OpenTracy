@@ -213,7 +213,7 @@ def run_loop(
     pol = policy or Policy.from_yaml()
 
     decisions = [decide(o, pol) for o in outcomes]
-    rounds = [LoopRound(outcome=o, decision=d) for o, d in zip(outcomes, decisions)]
+    rounds = [LoopRound(outcome=o, decision=d) for o, d in zip(outcomes, decisions, strict=True)]
 
     # Queue-for-human path. Write a provisional lesson + queued_review entry
     # so the UI Review queue can surface the candidate. The candidate's agent

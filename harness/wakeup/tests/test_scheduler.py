@@ -6,7 +6,6 @@ import threading
 import time
 from pathlib import Path
 
-import pytest
 
 from harness.wakeup.scheduler import (
     increment_trace_counter,

@@ -275,7 +275,6 @@ def _run_router_pipeline(proposal, policy, mode: str) -> dict[str, Any]:
     (critic blocked or policy=off), or ``"blocked"`` (cache/dataset missing
     so the critic can't run).
     """
-    from harness.approver.policy import ApprovalDecision, decide
     from harness.critics.router_critic import RouterCritic
     from harness.types import CriticContext, LoopOutcome
     from harness.executor.promote import promote_router_config

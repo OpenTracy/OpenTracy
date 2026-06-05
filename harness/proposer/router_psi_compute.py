@@ -25,7 +25,7 @@ falls back to that model's overall production error rate
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -35,7 +35,6 @@ from router.feedback.trace_to_training import (
     TraceRecord,
     TraceToTraining,
 )
-from router.models.llm_profile import LLMProfile
 from router.models.llm_registry import LLMRegistry
 
 

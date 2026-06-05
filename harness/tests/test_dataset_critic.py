@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from experiments.types import Mutation
 from harness.critics.dataset_critic import DatasetCritic

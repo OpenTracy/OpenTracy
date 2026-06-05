@@ -5,11 +5,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 
-import pytest
 
 from harness.watchers.auto_rollback import (
     RollbackDecision,
-    WindowMetrics,
     check_auto_rollback,
 )
 
@@ -341,7 +339,6 @@ def test_notification_round_trip(tmp_path, monkeypatch):
     from runtime.store.notifications import (
         notify_channels,
         iter_notifications,
-        write_notification,
     )
 
     root = tmp_path / "notifications"

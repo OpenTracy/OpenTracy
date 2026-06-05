@@ -26,7 +26,12 @@ from typing import Any, Optional
 import yaml
 
 from experiments.branching import candidate_agent_path
-from harness.types import LoopOutcome, VerificationOutcome, kind_from_mutations
+from harness.types import (
+    LoopOutcome,
+    Prediction,
+    VerificationOutcome,
+    kind_from_mutations,
+)
 from ledger.types import Lesson
 from ledger.versioning import LIVE_AGENT, bump_patch, read_version, snapshot_agent
 from ledger.writer import (

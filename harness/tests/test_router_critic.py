@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from experiments.types import Mutation
 from harness.critics.router_critic import RouterCritic

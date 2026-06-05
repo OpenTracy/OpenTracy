@@ -78,7 +78,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     print("-" * 110, file=sys.stderr)
-    for r, p in zip(rounds, proposals):
+    for r, p in zip(rounds, proposals, strict=True):
         o = r.outcome
         v = p.mutations[0].value
         delta = (

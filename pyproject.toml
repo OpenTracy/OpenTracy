@@ -21,7 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 llm = ["anthropic>=0.40", "openai>=1.40"]
 rag = ["faiss-cpu>=1.8", "numpy>=1.26"]
-dev = ["pytest>=8.0", "ruff>=0.5", "mypy>=1.10"]
+dev = ["pytest>=8.0", "ruff>=0.15", "mypy>=1.10"]
 # Only needed to run infra/restate/serve.py (the daily compactor scheduler).
 # Stays out of the default dependency set so the runtime + harness don't pull
 # in a Restate dep they never import.

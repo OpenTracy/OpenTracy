@@ -44,7 +44,7 @@ def cmd_version(args: argparse.Namespace) -> int:
 def cmd_all(_: argparse.Namespace) -> int:
     sessions = distill_all_sessions()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    day_epoch = distill_day(today)
+    distill_day(today)
     version_epochs = []
     for v in list_snapshots():
         try:
