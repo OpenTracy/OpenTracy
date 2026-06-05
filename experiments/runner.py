@@ -13,7 +13,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from evals.runners.runner import per_golden_pass, run_suite
+from evals.runners.runner import (
+    aggregate_per_golden,
+    flaky_goldens,
+    per_golden_pass,
+    run_suite,
+)
 from experiments.branching import candidate_agent_path, list_candidates
 from experiments.types import CandidateManifest
 
@@ -62,6 +67,34 @@ def _summary_view(report: Any) -> dict[str, Any]:
     }
 
 
+def _mean(xs: list[float]) -> float:
+    return round(sum(xs) / len(xs), 4) if xs else 0.0
+
+
+def _aggregate_views(reports: list[Any]) -> dict[str, Any]:
+    """Aggregate k single-rollout views into one (AHE k≥2: stabilize pass@1).
+
+    per_golden collapses to a majority bool (so the delta logic and critics are
+    unchanged); per_golden_passrate + flaky carry the variance the extra
+    rollouts buy.
+    """
+    views = [_summary_view(r) for r in reports]
+    passrate = aggregate_per_golden([per_golden_pass(r) for r in reports])
+    rubric_keys: set[str] = set().union(*(v["per_rubric"].keys() for v in views))
+    return {
+        "overall_score": _mean([v["overall_score"] for v in views]),
+        "pass_rate": _mean([v["pass_rate"] for v in views]),
+        "per_rubric": {k: _mean([v["per_rubric"].get(k, 0.0) for v in views]) for k in rubric_keys},
+        "n_passed": views[-1]["n_passed"],
+        "n_total": views[-1]["n_total"],
+        "per_golden": {g: rate >= 0.5 for g, rate in passrate.items()},
+        "per_golden_passrate": passrate,
+        "flaky": flaky_goldens(passrate),
+        "avg_latency_ms": _mean([v["avg_latency_ms"] for v in views]),
+        "p95_latency_ms": _mean([v["p95_latency_ms"] for v in views]),
+    }
+
+
 def _compute_delta(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     base_pg: dict[str, bool] = baseline.get("per_golden", {})
     cand_pg: dict[str, bool] = candidate.get("per_golden", {})
@@ -97,28 +130,45 @@ def run_candidate(
     baseline_agent: Path | str = BASELINE_AGENT,
     results_dir: Path | str = RESULTS_DIR,
     write_result: bool = True,
+    n_rollouts: int = 1,
 ) -> CandidateResult:
-    """Run baseline + candidate against the same suite; record the delta."""
+    """Run baseline + candidate against the same suite; record the delta.
+
+    n_rollouts > 1 runs each suite k times and aggregates per-golden pass-rates
+    (AHE Algorithm 1: k≥2 rollouts stabilize pass@1). Default 1 is unchanged.
+    """
+    if n_rollouts < 1:
+        raise ValueError(f"n_rollouts must be >= 1, got {n_rollouts}")
     manifest = _load_manifest(candidate_id)
     cand_yaml = candidate_agent_path(candidate_id)
     if not cand_yaml.exists():
         raise FileNotFoundError(f"candidate agent.yaml missing: {cand_yaml}")
 
     # Run baseline first so the candidate sees identical golden state.
-    baseline_report = run_suite(suite_path, agent_path=baseline_agent, write_report=False)
-    candidate_report = run_suite(suite_path, agent_path=cand_yaml, write_report=False)
+    baseline_reports = [
+        run_suite(suite_path, agent_path=baseline_agent, write_report=False)
+        for _ in range(n_rollouts)
+    ]
+    candidate_reports = [
+        run_suite(suite_path, agent_path=cand_yaml, write_report=False)
+        for _ in range(n_rollouts)
+    ]
 
     # Persist the candidate's full report so the UI Lesson view can recover the
     # trace lineage later (lesson.candidate_id → cand_<id>.json → cases[].trace_id).
-    _persist_candidate_report(candidate_id, candidate_report)
+    _persist_candidate_report(candidate_id, candidate_reports[-1])
 
-    baseline_view = _summary_view(baseline_report)
-    candidate_view = _summary_view(candidate_report)
+    if n_rollouts == 1:
+        baseline_view = _summary_view(baseline_reports[0])
+        candidate_view = _summary_view(candidate_reports[0])
+    else:
+        baseline_view = _aggregate_views(baseline_reports)
+        candidate_view = _aggregate_views(candidate_reports)
     delta = _compute_delta(baseline_view, candidate_view)
 
     result = CandidateResult(
         candidate_id=candidate_id,
-        suite=baseline_report.suite,
+        suite=baseline_reports[0].suite,
         parent_version=manifest.parent_version,
         mutations=[m.describe() for m in manifest.mutations],
         recorded_at=_now_iso(),

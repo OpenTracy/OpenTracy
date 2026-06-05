@@ -98,6 +98,19 @@ def per_golden_pass(report: Report) -> dict[str, bool]:
     }
 
 
+def aggregate_per_golden(maps: list[dict[str, bool]]) -> dict[str, float]:
+    """Pass-fraction per golden across k rollouts (AHE: k≥2 stabilizes pass@1)."""
+    if not maps:
+        return {}
+    keys: set[str] = set().union(*maps)
+    return {g: round(sum(1 for m in maps if m.get(g)) / len(maps), 4) for g in keys}
+
+
+def flaky_goldens(passrate: dict[str, float]) -> list[str]:
+    """Goldens that neither always pass nor always fail across rollouts."""
+    return sorted(g for g, rate in passrate.items() if 0.0 < rate < 1.0)
+
+
 def _aggregate(cases: list[EvalCase], method: str) -> dict[str, Any]:
     by_rubric: dict[str, list[float]] = {}
     pass_count = 0
