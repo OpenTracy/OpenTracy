@@ -124,6 +124,22 @@ def agents_root() -> Path:
     return _resolve_root(None)
 
 
+def live_agent_dir(agent_id: Optional[str] = None) -> Optional[Path]:
+    """Directory the runtime should read an agent's live surface from.
+
+    The catalog entry ``agents/<id>/`` IS the live agent — there is no
+    separate global copy. ``agent_id=None`` resolves the registry's active
+    agent. Returns ``None`` when the agent has no dir on disk, so callers can
+    fall back to the legacy ``agent/`` slot during the transition.
+    """
+    root = _resolve_root(None)
+    aid = agent_id or _load_registry(root).active
+    if not aid:
+        return None
+    d = root / aid
+    return d if d.is_dir() else None
+
+
 def list_agents(*, root: Optional[Path] = None) -> list[AgentMetadata]:
     return _load_registry(_resolve_root(root)).agents
 

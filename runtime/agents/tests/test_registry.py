@@ -16,6 +16,7 @@ from runtime.agents.registry import (
     get_active,
     get_registry,
     list_agents,
+    live_agent_dir,
     update_agent,
 )
 
@@ -54,6 +55,19 @@ def test_bootstrap_migrates_legacy_agent_dir(workspace):
     seeded = workspace["root"] / "_default"
     assert (seeded / "agent.yaml").is_file()
     assert "You are a helpful assistant" in (seeded / "prompts" / "system.md").read_text()
+
+
+def test_live_agent_dir_resolves_active_and_specific(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    agent_dir = tmp_path / "agent"
+    (agent_dir / "pipeline").mkdir(parents=True)
+    (agent_dir / "agent.yaml").write_text("agent:\n  version: v0.0.1\n")
+    ensure_bootstrapped()  # default root agents/ under cwd → agents/_default
+
+    active = live_agent_dir()
+    assert active is not None and active.name == "_default" and active.is_dir()
+    assert live_agent_dir("_default") == active
+    assert live_agent_dir("nonexistent-agent") is None
 
 
 def test_bootstrap_is_idempotent(workspace):
