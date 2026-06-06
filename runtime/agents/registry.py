@@ -3,14 +3,15 @@
 Operations
 ----------
 
-  - ``ensure_bootstrapped()`` — first-run migration. If ``agents/registry.json``
-    is missing, snapshot the current ``agent/`` directory into
-    ``agents/_default/``, write the registry with ``_default`` as the
+  - ``ensure_bootstrapped()`` — first-run setup. If ``agents/registry.json``
+    is missing, seed ``agents/_default/`` from the committed template
+    (``templates/agent/``) and write the registry with ``_default`` as the
     active agent. Idempotent.
   - ``list_agents()`` / ``get_agent(id)`` — read.
-  - ``create_agent(payload)`` — make a new ``agents/<id>/``. Seeded with
-    the operator's prompt/model/channels (from onboarding) and a default
-    pipeline copied from the currently-active agent.
+  - ``create_agent(payload)`` — make a new ``agents/<id>/``. Seeded from
+    the committed template (or an explicit ``seed_from`` agent), stripped
+    of inherited per-agent state, then the operator's
+    prompt/model/channels (from onboarding) are applied.
   - ``activate(id)`` — copy ``agents/<id>/*`` → ``agent/*`` and update
     the registry's ``active`` pointer. Triggers ``on_activate`` hook so
     the runtime can recompile its pipeline.
@@ -47,6 +48,18 @@ _DELETED_BUCKET = "_deleted"
 _DEFAULT_ID = "_default"
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 
+# Committed, clean structural template that seeds both the default agent
+# and every new agent. Resolved off this file so it is found regardless
+# of cwd or tenant root.
+_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates" / "agent"
+
+# Per-agent state a seed source may carry that a new agent must NOT
+# inherit. Files are unlinked; dirs are removed; mcp.json / improvement.yaml
+# are reset to the template defaults afterward.
+_INHERITED_STATE_FILES = ("secrets.env", "secrets.enc.json", "onboarding_session.json")
+_INHERITED_STATE_DIRS = ("integrations", "workspace")
+_TEMPLATE_RESET_FILES = ("mcp.json", "improvement.yaml")
+
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -60,8 +73,11 @@ def ensure_bootstrapped(
     now_iso: Optional[str] = None,
     project_root: Optional[Path] = None,
 ) -> Registry:
-    """If ``agents/registry.json`` is missing, migrate ``agent/`` to
-    ``agents/_default/`` and write a registry. Idempotent.
+    """If ``agents/registry.json`` is missing, seed ``agents/_default/``
+    from the committed template and write a registry. Idempotent.
+
+    ``live_dir`` overrides the seed source (tests point it at a fixture);
+    when omitted the committed template (``templates/agent/``) is used.
 
     P2.1 — also partitions storage. Flat dirs that pre-date multi-agent
     (``ledger/{entries,lessons,decisions,notifications}/...`` +
@@ -73,7 +89,7 @@ def ensure_bootstrapped(
     Returns the registry in its post-bootstrap state.
     """
     root = _resolve_root(root)
-    live = Path(live_dir) if live_dir is not None else _LIVE_AGENT_DIR
+    seed = Path(live_dir) if live_dir is not None else _TEMPLATE_DIR
     project = Path(project_root) if project_root is not None else Path.cwd()
     root.mkdir(parents=True, exist_ok=True)
 
@@ -86,20 +102,20 @@ def ensure_bootstrapped(
     if registry_path.is_file():
         return _load_registry(root)
 
-    logger.info("agents/registry.json missing — migrating agent/ → agents/_default/")
+    logger.info("agents/registry.json missing — seeding agents/_default/ from the template")
     default_dir = root / _DEFAULT_ID
     if not default_dir.is_dir():
-        if live.is_dir():
-            _copy_tree(live, default_dir)
+        if seed.is_dir():
+            _copy_tree(seed, default_dir)
         else:
             default_dir.mkdir(parents=True, exist_ok=True)
-            logger.warning("no live agent/ dir to migrate — created empty agents/_default/")
+            logger.warning("no agent template at %s — created empty agents/_default/", seed)
 
     meta = AgentMetadata(
         id=_DEFAULT_ID,
         name="Default agent",
         template=None,
-        description="Migrated from the single-agent layout that preceded P2.0.",
+        description="Seeded from the committed agent template.",
         created_at=_now_iso(now_iso),
         updated_at=_now_iso(now_iso),
     )
@@ -176,10 +192,11 @@ def create_agent(
     (unique across the registry; appends a hex suffix on collision).
 
     ``seed_from`` (optional) is the id of an existing agent whose
-    pipeline yamls are used as the starting point. Defaults to the
-    currently-active agent so the new agent inherits the routing /
-    rerank / generate stages. The prompt + model + name are overwritten
-    by the payload.
+    pipeline yamls are used as the starting point — an explicit opt-in
+    to inherit another agent's tuning. When omitted, the new agent is
+    seeded from the committed template (``templates/agent/``). Either
+    way the agent dir is stripped of inherited per-agent state and the
+    prompt + model + name from the payload are applied.
     """
     rroot = _resolve_root(root)
     registry = _load_registry(rroot)
@@ -189,29 +206,24 @@ def create_agent(
     if agent_dir.exists():
         raise ValueError(f"agents/{agent_id} already exists")
 
-    source_id = seed_from or registry.active or _DEFAULT_ID
-    source_dir = rroot / source_id
-    if not source_dir.is_dir():
-        # New tenants start with empty agents/ dirs (see
-        # tenants.registry.create_tenant), so the per-tenant _default
-        # seed isn't there yet. Fall back to the canonical seed at
-        # tenants/_default/agents/_default — the migration bootstrap
-        # always populates it on first boot. Without this fallback,
-        # create_agent for a fresh tenant produces an empty dir with
-        # no pipeline yaml, and activate_agent silently fails to load
-        # a pipeline at chat time.
-        fallback = _baseline_seed_dir(rroot)
-        if fallback is not None and fallback.is_dir():
-            source_dir = fallback
+    if seed_from:
+        source_dir = rroot / seed_from
+        if not source_dir.is_dir():
+            # The opt-in source isn't on disk (eg. a fresh tenant whose
+            # per-tenant _default isn't seeded yet). Fall back to the
+            # canonical baseline so the new agent still gets a working
+            # pipeline instead of an empty dir.
+            fallback = _baseline_seed_dir(rroot)
+            if fallback is not None and fallback.is_dir():
+                source_dir = fallback
+    else:
+        source_dir = _TEMPLATE_DIR
     if source_dir.is_dir():
         _copy_tree(source_dir, agent_dir)
     else:
         agent_dir.mkdir(parents=True, exist_ok=True)
 
-    integrations_dir = agent_dir / "integrations"
-    if integrations_dir.is_dir():
-        shutil.rmtree(integrations_dir, ignore_errors=True)
-
+    _strip_inherited_state(agent_dir)
     _apply_payload_to_dir(agent_dir, payload)
 
     timestamp = _now_iso(now_iso)
@@ -341,6 +353,28 @@ def delete_agent(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
+
+def _strip_inherited_state(agent_dir: Path) -> None:
+    """Remove per-agent state a seed source may carry so a new agent
+    starts isolated — no inherited secrets, integrations, onboarding
+    session, or workspace. ``mcp.json`` / ``improvement.yaml`` are reset
+    to the committed template defaults."""
+    for rel in _INHERITED_STATE_FILES:
+        path = agent_dir / rel
+        if path.exists():
+            path.unlink()
+    for rel in _INHERITED_STATE_DIRS:
+        directory = agent_dir / rel
+        if directory.is_dir():
+            shutil.rmtree(directory, ignore_errors=True)
+    for rel in _TEMPLATE_RESET_FILES:
+        src = _TEMPLATE_DIR / rel
+        dst = agent_dir / rel
+        if src.is_file():
+            shutil.copyfile(src, dst)
+        elif dst.exists():
+            dst.unlink()
 
 
 def _apply_payload_to_dir(agent_dir: Path, payload: dict[str, Any]) -> None:
@@ -516,12 +550,12 @@ def _baseline_seed_dir(tenant_agents_root: Path) -> Optional[Path]:
 
     ``tenant_agents_root`` is the per-tenant agents dir (eg.
     ``tenants/acme/agents/``). Walks up two levels to the tenants/
-    root, then back down to ``_default/agents/_default``. Returns
-    None in OSS mode (when this helper shouldn't be needed at all).
+    root, then back down to ``_default/agents/_default``. In OSS mode
+    there are no tenants, so the committed template is the baseline.
     """
     from runtime.tenants.feature import is_multi_tenant_enabled
     if not is_multi_tenant_enabled():
-        return None
+        return _TEMPLATE_DIR
     # tenants/<t>/agents → tenants/<t> → tenants → tenants/_default/agents/_default
     try:
         tenants_root = tenant_agents_root.parent.parent

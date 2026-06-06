@@ -120,7 +120,7 @@ def test_create_agent_writes_dir_and_registry(workspace):
     body = (agent_dir / "prompts" / "system.md").read_text()
     assert "Shopify store" in body
     assert "trainable surface" in body
-    # Pipeline copied from the seed (_default)
+    # Pipeline copied from the committed template
     assert (agent_dir / "agent.yaml").is_file()
     # Onboarding snapshot saved
     snapshot = json.loads((agent_dir / "onboarding.json").read_text())
@@ -273,8 +273,8 @@ def _seed_route_yaml(agent_dir, model: str = "claude-haiku-4-5") -> None:
 
 def test_create_agent_propagates_model_to_route_yaml(workspace):
     """The model picked during onboarding lands in the new agent's
-    route.yaml (small knob) so /run actually uses it."""
-    _seed_route_yaml(workspace["live"])
+    route.yaml (small knob) so /run actually uses it. The new agent is
+    seeded from the committed template, so the other knobs come from it."""
     ensure_bootstrapped(root=workspace["root"], live_dir=workspace["live"])
 
     meta = create_agent(
@@ -289,9 +289,9 @@ def test_create_agent_propagates_model_to_route_yaml(workspace):
         workspace["root"] / meta.id / "pipeline" / "route.yaml"
     ).read_text()
     assert "small: claude-sonnet-4-6" in route_body
-    # Other knobs preserved
-    assert "big: claude-sonnet-4-6" in route_body  # the seed's big stays
-    assert "confidence_threshold: 0.8" in route_body
+    # Other knobs come from the template
+    assert "big: claude-sonnet-4-6" in route_body
+    assert "confidence_threshold: 0.7" in route_body
     assert "escalate_on_failure: true" in route_body
 
 
@@ -307,6 +307,60 @@ def test_update_agent_model_rewrites_route_yaml(workspace):
     # Registry metadata also updated
     meta = get_agent("_default", root=workspace["root"])
     assert meta.model == "claude-opus-4-7"
+
+
+# ---------------------------------------------------------------------------
+# S2 — seed from the committed template + strip inherited state
+# ---------------------------------------------------------------------------
+
+
+def test_bootstrap_seeds_default_from_template(tmp_path):
+    """No ``live_dir`` override → ``_default`` is seeded from the committed
+    ``templates/agent/`` so a fresh checkout boots a working pipeline."""
+    reg = ensure_bootstrapped(root=tmp_path / "agents")
+    assert reg.active == "_default"
+
+    default_dir = tmp_path / "agents" / "_default"
+    assert (default_dir / "agent.yaml").is_file()
+    route = (default_dir / "pipeline" / "route.yaml").read_text()
+    assert "small: claude-haiku-4-5" in route
+    assert (default_dir / "improvement.yaml").is_file()
+    assert (default_dir / "mcp.json").is_file()
+
+
+def test_create_agent_strips_inherited_state(workspace):
+    """``seed_from`` an agent carrying secrets / integrations / workspace /
+    onboarding session → the new agent starts isolated, with mcp.json and
+    improvement.yaml reset to the template defaults."""
+    ensure_bootstrapped(root=workspace["root"], live_dir=workspace["live"])
+
+    # Pollute _default with per-agent state a new agent must not inherit.
+    src = workspace["root"] / "_default"
+    (src / "secrets.env").write_text("API_KEY=super-secret\n")
+    (src / "onboarding_session.json").write_text("{}\n")
+    (src / "integrations").mkdir()
+    (src / "integrations" / "slack.json").write_text("{}\n")
+    (src / "workspace" / ".opentracy").mkdir(parents=True)
+    (src / "workspace" / ".opentracy" / "state.json").write_text("{}\n")
+    (src / "mcp.json").write_text('{"servers": [{"name": "leak"}]}\n')
+
+    meta = create_agent(
+        {"name": "isolated", "prompt": "Fresh agent."},
+        root=workspace["root"],
+        seed_from="_default",
+    )
+
+    new_dir = workspace["root"] / meta.id
+    # Inherited state is gone
+    assert not (new_dir / "secrets.env").exists()
+    assert not (new_dir / "onboarding_session.json").exists()
+    assert not (new_dir / "integrations").exists()
+    assert not (new_dir / "workspace").exists()
+    # mcp.json / improvement.yaml reset to the template defaults
+    assert "leak" not in (new_dir / "mcp.json").read_text()
+    assert (new_dir / "improvement.yaml").is_file()
+    # But the trainable surface (prompt) was still applied
+    assert "Fresh agent." in (new_dir / "prompts" / "system.md").read_text()
 
 
 def test_set_route_yaml_no_op_when_missing(workspace, tmp_path):
