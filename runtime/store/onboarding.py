@@ -1,14 +1,13 @@
-"""Day-0 onboarding state — `agent/onboarding.json`.
+"""Day-0 onboarding state — ``agents/<active>/onboarding.json``.
 
 When the operator first opens the UI, the Onboarding screen takes over
 until they pick a template, name + describe the agent, choose a model,
 and select channels. ``record_complete()`` materializes that into the
-actual agent surface:
+active agent's surface:
 
-  - ``agent/prompts/system.md`` — rewritten with the rendered prompt
+  - ``prompts/system.md`` — rewritten with the rendered prompt
     (``{{company}}`` filled in).
-  - ``agent/agent.yaml`` description — set to the agent name + template.
-  - ``agent/onboarding.json`` — full config saved for replay/audit.
+  - ``onboarding.json`` — full config saved for replay/audit.
   - Manual Lesson ``kind=agent_created`` — so the agent's birth shows
     up in Evolution alongside future autonomous changes.
 
@@ -32,8 +31,20 @@ from typing import Any, Optional
 
 logger = logging.getLogger("runtime.store.onboarding")
 
-_LEGACY_PATH = Path("agent") / "onboarding.json"
-_LEGACY_PROMPT_PATH = Path("agent") / "prompts" / "system.md"
+# Relative to the active agent's catalog dir (``agents/<active>/``).
+_STATE_FILENAME = "onboarding.json"
+_PROMPT_RELPATH = Path("prompts") / "system.md"
+# Multi-tenant scopes onboarding under ``tenants/<active>/agent/...``.
+_TENANT_STATE_PATH = Path("agent") / _STATE_FILENAME
+_TENANT_PROMPT_PATH = Path("agent") / _PROMPT_RELPATH
+
+
+def _active_agent_dir() -> Path:
+    """OSS-local: the active agent's catalog dir (``agents/<active>/``)."""
+    from runtime.agents.registry import agents_root, get_registry
+
+    reg = get_registry()
+    return agents_root() / (reg.active or "_default")
 
 
 def _resolve_state_path(path: Optional[Path]) -> Path:
@@ -46,18 +57,17 @@ def _resolve_state_path(path: Optional[Path]) -> Path:
     ``agent/onboarding.json`` (completed=true) baked into the container
     image and skips the chat-onboarding flow on first login.
 
-    In OSS-local mode we keep the legacy global path so single-tenant
-    dev keeps working.
+    In OSS-local mode the state lives in the active agent's catalog dir.
     """
     if path is not None:
         return Path(path)
     from runtime.tenants.feature import is_multi_tenant_enabled
 
     if not is_multi_tenant_enabled():
-        return _LEGACY_PATH
+        return _active_agent_dir() / _STATE_FILENAME
     from runtime.tenant_context import get_active
 
-    return Path("tenants") / get_active() / _LEGACY_PATH
+    return Path("tenants") / get_active() / _TENANT_STATE_PATH
 
 
 def _resolve_prompt_path(path: Optional[Path]) -> Path:
@@ -66,16 +76,10 @@ def _resolve_prompt_path(path: Optional[Path]) -> Path:
     from runtime.tenants.feature import is_multi_tenant_enabled
 
     if not is_multi_tenant_enabled():
-        return _LEGACY_PROMPT_PATH
+        return _active_agent_dir() / _PROMPT_RELPATH
     from runtime.tenant_context import get_active
 
-    return Path("tenants") / get_active() / _LEGACY_PROMPT_PATH
-
-
-# Backwards-compat alias for any external caller still importing the
-# legacy name. Resolves the active tenant at call time.
-_DEFAULT_PATH = _LEGACY_PATH
-_DEFAULT_PROMPT_PATH = _LEGACY_PROMPT_PATH
+    return Path("tenants") / get_active() / _TENANT_PROMPT_PATH
 
 
 @dataclass

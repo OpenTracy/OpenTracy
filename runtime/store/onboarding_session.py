@@ -230,12 +230,15 @@ def _resolve_session_path() -> Path:
     """Tenant-aware path to the session JSON.
 
     Multi-tenant: ``tenants/<active>/agent/onboarding_session.json``.
-    OSS-local: ``agent/onboarding_session.json`` at the runtime cwd.
+    OSS-local: ``agents/<active>/onboarding_session.json``.
     """
     from runtime.tenants.feature import is_multi_tenant_enabled
 
     if not is_multi_tenant_enabled():
-        return Path(_AGENT_DIRNAME) / _SESSION_FILENAME
+        from runtime.agents.registry import agents_root, get_registry
+
+        reg = get_registry()
+        return agents_root() / (reg.active or "_default") / _SESSION_FILENAME
 
     from runtime.tenant_context import get_active
 
