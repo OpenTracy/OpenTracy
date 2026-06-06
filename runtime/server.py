@@ -161,7 +161,12 @@ async def lifespan(app: FastAPI):
         _set_active_agent(reg.active)
         logger.info("active agent: %s", reg.active)
 
-    cfg = load_agent("agent/agent.yaml")
+    # Boot the fallback executor from the ACTIVE agent's catalog dir, not the
+    # legacy agent/ slot — the slot may be stale/empty under per-agent serving.
+    from runtime.agents.registry import live_agent_dir as _live_agent_dir
+
+    _boot_dir = _live_agent_dir(reg.active)
+    cfg = load_agent(str(_boot_dir / "agent.yaml") if _boot_dir else "agent/agent.yaml")
     pipeline = compile_agent(cfg)
     executor = PipelineExecutor(pipeline)
     _state["cfg"] = cfg
@@ -3492,11 +3497,13 @@ def _summarize(meta, *, active_id: Optional[str]) -> AgentSummary:
 
 
 def _reload_live_pipeline(agent_id: Optional[str] = None) -> None:
-    """Recompile the pipeline from the live ``agent/`` dir and swap into
-    the running executor. Called after activate(). Also updates the
-    process-global agent context so subsequent writes (traces, lessons,
-    etc) partition under the new agent."""
-    cfg = load_agent("agent/agent.yaml")
+    """Recompile the fallback executor from the agent's catalog dir and swap
+    it into ``_state``. Called after activate(). Also updates the active-agent
+    context so subsequent writes (traces, lessons) partition under it."""
+    from runtime.agents.registry import live_agent_dir as _live_agent_dir
+
+    _dir = _live_agent_dir(agent_id)
+    cfg = load_agent(str(_dir / "agent.yaml") if _dir else "agent/agent.yaml")
     pipeline = compile_agent(cfg)
     executor = PipelineExecutor(pipeline)
     _state["cfg"] = cfg
