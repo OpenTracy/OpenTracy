@@ -1,0 +1,5 @@
+enabled: true
+transport: auto
+model: claude-sonnet-4-6
+cadence_minutes: 30
+notes: ""
