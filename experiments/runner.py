@@ -11,7 +11,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from evals.runners.runner import (
     aggregate_per_golden,
@@ -136,18 +136,25 @@ def _load_manifest(candidate_id: str) -> CandidateManifest:
 def run_candidate(
     candidate_id: str,
     suite_path: Path | str,
-    baseline_agent: Path | str = BASELINE_AGENT,
+    baseline_agent: Optional[Path | str] = None,
     results_dir: Path | str = RESULTS_DIR,
     write_result: bool = True,
     n_rollouts: int = 1,
 ) -> CandidateResult:
     """Run baseline + candidate against the same suite; record the delta.
 
+    ``baseline_agent`` defaults to the active agent's agent.yaml so the delta
+    is measured against the same surface the candidate was branched from.
+
     n_rollouts > 1 runs each suite k times and aggregates per-golden pass-rates
     (AHE Algorithm 1: k≥2 rollouts stabilize pass@1). Default 1 is unchanged.
     """
     if n_rollouts < 1:
         raise ValueError(f"n_rollouts must be >= 1, got {n_rollouts}")
+    if baseline_agent is None:
+        from ledger.versioning import resolve_live_dir
+
+        baseline_agent = resolve_live_dir() / "agent.yaml"
     manifest = _load_manifest(candidate_id)
     cand_yaml = candidate_agent_path(candidate_id)
     if not cand_yaml.exists():

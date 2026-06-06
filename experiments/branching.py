@@ -63,18 +63,24 @@ def _apply_mutation(candidate_dir: Path, m: Mutation) -> None:
 def create_candidate(
     mutations: list[Mutation],
     description: Optional[str] = None,
-    baseline_dir: Path | str = BASELINE_AGENT_DIR,
+    baseline_dir: Optional[Path | str] = None,
     candidates_dir: Path | str = CANDIDATES_DIR,
 ) -> CandidateManifest:
-    """Branch agent/ into a new candidate dir and apply mutations.
+    """Branch the active agent's surface into a new candidate dir and apply
+    mutations.
 
-    Returns the candidate manifest. The candidate's agent.yaml is fully
-    runnable on its own; point the runner at
-    experiments/candidates/<id>/agent/agent.yaml.
+    ``baseline_dir`` defaults to the active agent (``agents/<id>/``) so a
+    candidate is branched from the same surface ``promote`` will swap it back
+    over — never the stale single ``agent/`` slot. Returns the candidate
+    manifest; the candidate's agent.yaml is fully runnable on its own.
     """
     if not mutations:
         raise ValueError("at least one mutation required")
 
+    if baseline_dir is None:
+        from ledger.versioning import resolve_live_dir
+
+        baseline_dir = resolve_live_dir()
     baseline_dir = Path(baseline_dir)
     candidates_dir = Path(candidates_dir)
     candidates_dir.mkdir(parents=True, exist_ok=True)

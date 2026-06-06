@@ -88,10 +88,10 @@ def distill_session(
     latest = rows[-1] if rows else None
 
     # Ledger entries for this candidate (causal chain)
-    ledger_rows = [e for e in read_entries() if e.candidate_id == candidate_id]
+    ledger_rows = [e for e in read_entries(agent_id="__all__") if e.candidate_id == candidate_id]
 
     # Lesson if any
-    lessons = [le for le in read_lessons() if le.candidate_id == candidate_id]
+    lessons = [le for le in read_lessons(agent_id="__all__") if le.candidate_id == candidate_id]
     lesson = lessons[-1] if lessons else None
 
     # Decide final_decision + promoted_version + blocking_critic
@@ -251,7 +251,7 @@ def distill_all_sessions(sessions_dir: Path | str = SESSIONS_DIR) -> list[Distil
 
 
 def _entries_in_window(start_iso: str, end_iso: str) -> list:
-    return [e for e in read_entries() if start_iso <= e.timestamp <= end_iso]
+    return [e for e in read_entries(agent_id="__all__") if start_iso <= e.timestamp <= end_iso]
 
 
 def _build_top_events(entries: list, max_events: int = 8) -> list[TopEvent]:
@@ -341,7 +341,7 @@ def distill_version(version: str, epochs_dir: Path | str = EPOCHS_DIR) -> Distil
     """All ledger activity where this version was either before or after."""
     entries = [
         e
-        for e in read_entries()
+        for e in read_entries(agent_id="__all__")
         if e.agent_version_before == version or e.agent_version_after == version
     ]
     if not entries:

@@ -24,8 +24,8 @@ def _entry(cid, payload):
 def _patch(monkeypatch, cid, payload):
     monkeypatch.setattr(dist, "list_candidates", lambda: [_manifest(cid)])
     monkeypatch.setattr(dist, "_all_results", lambda: [])
-    monkeypatch.setattr(dist, "read_entries", lambda: [_entry(cid, payload)])
-    monkeypatch.setattr(dist, "read_lessons", lambda: [])
+    monkeypatch.setattr(dist, "read_entries", lambda **k: [_entry(cid, payload)])
+    monkeypatch.setattr(dist, "read_lessons", lambda **k: [])
 
 
 def test_distill_preserves_both_verification_and_manifest(tmp_path, monkeypatch):

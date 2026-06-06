@@ -13,6 +13,7 @@ introspection prompt.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import threading
@@ -244,7 +245,7 @@ def _pid_alive(pid: int) -> bool:
         os.kill(pid, 0)
     except OSError as e:
         # ESRCH = no such process; EPERM = exists but we lack permission.
-        if getattr(e, "errno", None) == 1:  # EPERM — process exists, owned by another user
+        if getattr(e, "errno", None) == errno.EPERM:  # process exists, owned by another user
             return True
         return False
     return True

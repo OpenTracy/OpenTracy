@@ -240,6 +240,32 @@ async def tenant_middleware(request: Request, call_next):
         tenant_context.set_active(previous)
 
 
+@app.middleware("http")
+async def agent_middleware(request: Request, call_next):
+    """Pin the agent this request reads/writes as. An explicit ``x-agent-id``
+    header wins; otherwise default to the registry's active agent so read
+    endpoints (lessons, versions, traces) scope to the UI-selected agent.
+    Channel/serving handlers override this with the path's agent_id."""
+    from runtime import agent_context
+
+    previous = agent_context._active
+    incoming = (request.headers.get("x-agent-id") or "").strip()
+    chosen = incoming
+    if not chosen:
+        try:
+            from runtime.agents.registry import get_registry
+
+            chosen = get_registry().active
+        except Exception:
+            chosen = None
+    if chosen:
+        agent_context.set_active(chosen)
+    try:
+        return await call_next(request)
+    finally:
+        agent_context.set_active(previous)
+
+
 # P17.1 — Map QuotaExceeded to HTTP 402 (Payment Required). The
 # structured detail payload lets the UI render an upgrade CTA from one
 # well-typed error instead of regex-matching message strings. No-op in
@@ -2106,7 +2132,12 @@ def _active_runtime():
 
         return get_active_executor()
     except Exception as e:
-        logger.warning("per-agent executor resolve failed (%s); using boot executor", e)
+        from runtime.agent_context import get_active
+
+        logger.warning(
+            "per-agent executor resolve failed for %s (%s); using boot executor",
+            get_active(), e,
+        )
         return _state.get("cfg"), _state.get("executor")
 
 
@@ -2310,7 +2341,6 @@ async def list_router_rules() -> list[RouterRuleView]:
     """Synthesized rule list. v1 returns one row representing UniRoute."""
     from router.config_io import load_current_config_payload
     from router.errors import RouterConfigInvalidError, RouterConfigNotFoundError
-    from ledger.writer import read_lessons
 
     try:
         payload = load_current_config_payload()
@@ -3951,8 +3981,6 @@ def widget_message_endpoint(
     run the pipeline, return the response synchronously. No auth — the
     widget_id itself is the routing token; origin pinning is the gate."""
     from runtime.agents.channels import find_agent_by_channel, load
-    from runtime.agents.registry import activate as activate_agent
-    from runtime.agents.registry import get_registry
     from runtime.executor.tracing import write_trace
     from runtime.protocols import Message
 
@@ -4243,8 +4271,7 @@ def api_chat_endpoint(
     the agent, return the response synchronously. The token is the one
     minted by /agents/<id>/channels/api/connect."""
     from runtime.agents.channels import load, save
-    from runtime.agents.registry import activate as activate_agent
-    from runtime.agents.registry import get_agent, get_registry
+    from runtime.agents.registry import get_agent
     from runtime.executor.tracing import write_trace
     from runtime.protocols import Message
 
@@ -4309,10 +4336,9 @@ def internal_run_endpoint(
     Slack-side signature already verified the request came from Slack;
     if the TS gateway is compromised the rest of the system is too.
 
-    Activates the agent if needed, runs the pipeline, returns the result.
+    Serves the pipeline for the requested agent, returns the result.
     """
-    from runtime.agents.registry import activate as activate_agent
-    from runtime.agents.registry import get_agent, get_registry
+    from runtime.agents.registry import get_agent
     from runtime.executor.tracing import write_trace
     from runtime.protocols import Message
 
