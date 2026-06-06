@@ -2097,12 +2097,29 @@ async def update_route(payload: RouteUpdateRequest) -> RouteUpdateResponse:
     )
 
 
+def _active_runtime():
+    """(cfg, executor) for the agent pinned in the current context, via the
+    per-agent cache. Falls back to the boot executor if the cache can't
+    resolve (e.g. no agent dir yet)."""
+    try:
+        from runtime.executor.cache import get_active_executor
+
+        return get_active_executor()
+    except Exception as e:
+        logger.warning("per-agent executor resolve failed (%s); using boot executor", e)
+        return _state.get("cfg"), _state.get("executor")
+
+
 @app.post("/run", response_model=RunResponse)
 async def run(payload: RunRequest) -> RunResponse:
     import uuid
+    from runtime.agent_context import set_active
+    from runtime.agents.registry import get_registry
     from runtime.tenants import quota
 
-    executor: Optional[PipelineExecutor] = _state.get("executor")
+    # /run has no agent in the path → serve the registry's active agent.
+    set_active(get_registry().active)
+    _, executor = _active_runtime()
     if not executor:
         raise HTTPException(status_code=503, detail="agent not yet loaded")
 
@@ -3454,6 +3471,11 @@ def _reload_live_pipeline(agent_id: Optional[str] = None) -> None:
     executor = PipelineExecutor(pipeline)
     _state["cfg"] = cfg
     _state["executor"] = executor
+    # Drop the per-agent cached pipeline so the next request recompiles from
+    # the updated agents/<id>/ surface.
+    from runtime.executor.cache import invalidate as _invalidate_cache
+
+    _invalidate_cache(agent_id)
     if agent_id:
         from runtime.agent_context import set_active
         set_active(agent_id)
@@ -3942,15 +3964,14 @@ def widget_message_endpoint(
     if not _origin_matches(origin, list(cfg.get("allowed_domains", []))):
         raise HTTPException(status_code=403, detail="origin_not_allowed")
 
-    reg = get_registry()
-    if reg.active != agent_id:
-        try:
-            activate_agent(agent_id, on_activate=lambda m: _reload_live_pipeline(m.id))
-        except Exception as e:
-            logger.warning("widget message: failed to activate %s: %s", agent_id, e)
+    # Per-agent serving: pin this agent in the request context and serve its
+    # own compiled pipeline from the cache — no copy into a shared slot.
+    from runtime.agent_context import set_active
+
+    set_active(agent_id)
 
     history = [Message(role=m.role, content=m.content) for m in (payload.history or [])]
-    executor = _state["executor"]
+    _, executor = _active_runtime()
     _, exec_record = executor.run(payload.message, history=history)
     trace_id = write_trace(exec_record, channel="web")
     session = payload.session or f"web_{uuid.uuid4().hex[:12]}"
@@ -4255,16 +4276,14 @@ def api_chat_endpoint(
     cfg["last_used_at"] = now_iso
     save(agent_id, "api", cfg)
 
-    # Activate the agent if not already, so /run uses the right pipeline
-    reg = get_registry()
-    if reg.active != agent_id:
-        try:
-            activate_agent(agent_id, on_activate=lambda m: _reload_live_pipeline(m.id))
-        except Exception as e:
-            logger.warning("api chat: failed to activate %s: %s", agent_id, e)
+    # Per-agent serving: pin this agent in the request context; the cache
+    # compiles/serves its own pipeline.
+    from runtime.agent_context import set_active
+
+    set_active(agent_id)
 
     history = [Message(role=m.role, content=m.content) for m in (payload.history or [])]
-    executor = _state["executor"]
+    _, executor = _active_runtime()
     _, exec_record = executor.run(payload.request, history=history)
     trace_id = write_trace(exec_record, channel="api")
 
@@ -4300,15 +4319,14 @@ def internal_run_endpoint(
     if get_agent(agent_id) is None:
         raise HTTPException(status_code=404, detail=f"agent_not_found: {agent_id}")
 
-    reg = get_registry()
-    if reg.active != agent_id:
-        try:
-            activate_agent(agent_id, on_activate=lambda m: _reload_live_pipeline(m.id))
-        except Exception as e:
-            logger.warning("internal_run: failed to activate %s: %s", agent_id, e)
+    # Per-agent serving: pin this agent in the request context; the cache
+    # compiles/serves its own pipeline.
+    from runtime.agent_context import set_active
+
+    set_active(agent_id)
 
     history = [Message(role=m.role, content=m.content) for m in (payload.history or [])]
-    executor = _state["executor"]
+    _, executor = _active_runtime()
     _, exec_record = executor.run(payload.request, history=history)
     trace_id = write_trace(exec_record, channel=payload.channel or "internal")
     return ApiChatResponse(

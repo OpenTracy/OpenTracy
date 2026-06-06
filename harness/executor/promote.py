@@ -33,7 +33,7 @@ from harness.types import (
     kind_from_mutations,
 )
 from ledger.types import Lesson
-from ledger.versioning import LIVE_AGENT, bump_patch, read_version, snapshot_agent
+from ledger.versioning import bump_patch, read_version, resolve_live_dir, snapshot_agent
 from ledger.writer import (
     read_entries,
     read_lesson,
@@ -315,13 +315,13 @@ def build_lesson(
 def promote(
     outcome: LoopOutcome,
     *,
-    agent_dir: Path | str = LIVE_AGENT,
+    agent_dir: Optional[Path | str] = None,
 ) -> tuple[str, str]:
     """Promote `outcome.candidate` to live agent/. Returns (new_version, lesson_id)."""
     if not outcome.approved or outcome.candidate_id is None:
         raise ValueError("promote() requires an approved outcome with a candidate_id")
 
-    agent_dir = Path(agent_dir)
+    agent_dir = Path(agent_dir) if agent_dir is not None else resolve_live_dir()
 
     # 1. Snapshot current
     old_version, _ = snapshot_agent(agent_dir)
@@ -376,7 +376,7 @@ def promote(
 def promote_queued(
     lesson_id: str,
     *,
-    agent_dir: Path | str = LIVE_AGENT,
+    agent_dir: Optional[Path | str] = None,
     reviewer: Optional[str] = None,
 ) -> Lesson:
     """Finalize a previously queued review lesson.
@@ -397,7 +397,7 @@ def promote_queued(
     if not lesson.candidate_id:
         raise ValueError(f"lesson {lesson_id!r} carries no candidate_id; cannot promote")
 
-    agent_dir = Path(agent_dir)
+    agent_dir = Path(agent_dir) if agent_dir is not None else resolve_live_dir()
     cand_agent_dir = candidate_agent_path(lesson.candidate_id).parent
     if not cand_agent_dir.exists():
         raise FileNotFoundError(
@@ -460,7 +460,7 @@ def record_manual_change(
     summary: str,
     mutations_desc: list[str],
     voice: Optional[str] = None,
-    agent_dir: Path | str = LIVE_AGENT,
+    agent_dir: Optional[Path | str] = None,
 ) -> Lesson:
     """Apply a human-driven change to the agent surface and record it like a
     proposer-driven promotion.
@@ -479,7 +479,7 @@ def record_manual_change(
     `apply_edit` is invoked between the old-version snapshot and the
     version bump so the snapshot captures pre-edit state.
     """
-    agent_dir = Path(agent_dir)
+    agent_dir = Path(agent_dir) if agent_dir is not None else resolve_live_dir()
 
     old_version, _ = snapshot_agent(agent_dir)
 
@@ -682,7 +682,7 @@ def reject_queued(lesson_id: str, *, reason: Optional[str] = None) -> Lesson:
     )
 
 
-def requeue(lesson_id: str, *, agent_dir: Path | str = LIVE_AGENT) -> Lesson:
+def requeue(lesson_id: str, *, agent_dir: Optional[Path | str] = None) -> Lesson:
     """Undo an approve or reject — put the lesson back into the review queue.
 
     For human_rejected: flip status, write a fresh queued_review entry.
@@ -711,7 +711,7 @@ def requeue(lesson_id: str, *, agent_dir: Path | str = LIVE_AGENT) -> Lesson:
     entry = write_entry(
         kind="queued_review",
         candidate_id=lesson.candidate_id or None,
-        agent_version_before=read_version(Path(agent_dir)),
+        agent_version_before=read_version(Path(agent_dir) if agent_dir is not None else None),
         parent_entry_id=lesson.ledger_entry_id,
         summary=f"requeued lesson {lesson.id} (was {lesson.status})",
         payload={"lesson_id": lesson.id, "previous_status": lesson.status},

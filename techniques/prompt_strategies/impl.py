@@ -390,9 +390,21 @@ def _run_openai_loop(
 
 
 def _load_system_prompt(path: str) -> str:
-    """Resolve the prompt path against a few likely roots; fall back to default."""
-    candidates = [
-        Path(path),
+    """Resolve the prompt path against a few likely roots; fall back to default.
+
+    The active agent's own dir is checked first so each agent reads its own
+    prompt under per-agent serving; the legacy ``agent/`` slot is the fallback.
+    """
+    candidates: list[Path] = [Path(path)]
+    try:
+        from runtime.agents.registry import live_agent_dir
+
+        d = live_agent_dir()
+        if d is not None:
+            candidates += [d / "pipeline" / path, d / path]
+    except Exception:
+        pass
+    candidates += [
         Path("agent/pipeline") / path,
         Path("agent") / path,
         Path.cwd() / path,

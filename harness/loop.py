@@ -39,7 +39,7 @@ from harness.types import (
     Proposal,
     VerificationOutcome,
 )
-from ledger.versioning import LIVE_AGENT, read_version
+from ledger.versioning import read_version
 from ledger.writer import write_entry, write_lesson
 
 # A critic is named either bare ("scope") or with params (("eval_lift", {...})).
@@ -219,7 +219,7 @@ def run_loop(
     # so the UI Review queue can surface the candidate. The candidate's agent
     # already lives at experiments/candidates/<cand_id>/ — promote_queued()
     # reads it back when a human approves.
-    live_version = read_version(LIVE_AGENT)
+    live_version = read_version()
     for r in rounds:
         if r.decision != ApprovalDecision.QUEUE_HUMAN:
             continue
