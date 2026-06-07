@@ -30,7 +30,15 @@ def _write_agent(path, version):
 def loop_env(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("ledger.writer._LEDGER_ROOT", tmp_path / "ledger")
-    _write_agent(tmp_path / "agent", "v0.0.1")
+    monkeypatch.setattr("runtime.agents.registry._DEFAULT_ROOT", tmp_path / "agents")
+    # Bootstrap the catalog so resolve_live_dir() → agents/_default, then pin
+    # the minimal surface this loop test mutates (k: 5 → 8).
+    from runtime.agents.registry import ensure_bootstrapped
+
+    ensure_bootstrapped()
+    live = tmp_path / "agents" / "_default"
+    (live / "agent.yaml").write_text("agent:\n  version: v0.0.1\n")
+    (live / "pipeline" / "retrieve.yaml").write_text("k: 5\n")
     cand_dir = tmp_path / "experiments" / "candidates" / "cand-e2e" / "agent"
     _write_agent(cand_dir, "v0.0.1")
     return tmp_path
