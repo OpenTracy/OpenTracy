@@ -14,13 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ledger.writer import read_entries, read_lessons
-
-# Anchor paths to the project root, not CWD — the MCP server is sometimes
-# spawned with a different cwd (e.g. when Claude Code launches it as
-# subprocess), and relative-path resolution would silently return empty.
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-
-EPOCHS_DIR = _PROJECT_ROOT / "traces" / "distilled" / "epochs"
+from runtime.agent_paths import distilled_dir
 
 
 # ---------- tools ----------
@@ -82,7 +76,7 @@ def get_lesson(lesson_id: str) -> dict[str, Any]:
 
 def get_day_epoch(date: str) -> dict[str, Any]:
     """Read the distilled day epoch (e.g. '2026-05-07'). Distills on-demand if missing."""
-    path = EPOCHS_DIR / f"day_{date}.json"
+    path = distilled_dir("epochs") / f"day_{date}.json"
     if not path.exists():
         try:
             from harness.observability.distillation import distill_day
@@ -128,10 +122,11 @@ def list_predictions(verdict: str = "", limit: int = 50) -> list[dict[str, Any]]
 
 def list_available_epochs() -> dict[str, list[str]]:
     """List which days/versions have been distilled."""
-    if not EPOCHS_DIR.exists():
+    epochs = distilled_dir("epochs")
+    if not epochs.exists():
         return {"days": [], "versions": []}
-    days = sorted(p.stem.replace("day_", "") for p in EPOCHS_DIR.glob("day_*.json"))
-    versions = sorted(p.stem.replace("version_", "") for p in EPOCHS_DIR.glob("version_*.json"))
+    days = sorted(p.stem.replace("day_", "") for p in epochs.glob("day_*.json"))
+    versions = sorted(p.stem.replace("version_", "") for p in epochs.glob("version_*.json"))
     return {"days": days, "versions": versions}
 
 

@@ -10,8 +10,8 @@ Every per-agent artifact resolves the ACTIVE agent at call time (or an explicit
     dir: ``agents_root()/<agent>/...`` — which is already tenant-aware, so each
     agent's full surface stays together and isolated.
 
-Intentionally NOT here (shared by decision): ``evals/golden`` + ``evals/suites``
-(tenant test library), response caches, and stateless ML model pools.
+Not here because they are shared across a tenant's agents: ``evals/golden`` +
+``evals/suites`` (the test library), response caches, and stateless ML pools.
 
 This is the single home the formerly-global path constants delegate to. Resolve
 at CALL TIME — never cache these at import.
