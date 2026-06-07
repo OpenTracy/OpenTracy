@@ -1,4 +1,4 @@
-"""Create candidate directories by branching agent/ and applying mutations."""
+"""Create candidate directories by branching the active agent + applying mutations."""
 
 from __future__ import annotations
 
@@ -70,8 +70,8 @@ def create_candidate(
 
     ``baseline_dir`` defaults to the active agent (``agents/<id>/``) so a
     candidate is branched from the same surface ``promote`` will swap it back
-    over — never the stale single ``agent/`` slot. Returns the candidate
-    manifest; the candidate's agent.yaml is fully runnable on its own.
+    over. Returns the candidate manifest; the candidate's agent.yaml is fully
+    runnable on its own.
     """
     if not mutations:
         raise ValueError("at least one mutation required")

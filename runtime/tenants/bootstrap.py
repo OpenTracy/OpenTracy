@@ -20,10 +20,6 @@ Migration shape:
                                      traces     -> tenants/_default/traces
                                      corpora    -> tenants/_default/corpora
 
-The live ``agent/`` (singular) directory is NOT moved — it stays at the
-project root because the runtime executor mounts it directly and we
-defer per-tenant live-agent isolation to P16.2.
-
 Failure mode: best-effort. If any individual move raises, we log and
 continue with the rest of the migration so a partial install can be
 retried on next boot. The migration lock at ``tenants/.migration.lock``

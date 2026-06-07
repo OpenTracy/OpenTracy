@@ -169,7 +169,7 @@ def test_executor_uses_real_usage(monkeypatch):
     from runtime.compiler.loader import load_agent
     from runtime.executor.pipeline import PipelineExecutor
 
-    cfg = load_agent("agent/agent.yaml")
+    cfg = load_agent("templates/agent/agent.yaml")
     pipe = compile_agent(cfg)
     exe = PipelineExecutor(pipe)
     _, record = exe.run("test request")
@@ -192,7 +192,7 @@ def test_offline_pipeline_still_populates_cost(monkeypatch):
     from runtime.compiler.loader import load_agent
     from runtime.executor.pipeline import PipelineExecutor
 
-    cfg = load_agent("agent/agent.yaml")
+    cfg = load_agent("templates/agent/agent.yaml")
     pipe = compile_agent(cfg)
     exe = PipelineExecutor(pipe)
     _, record = exe.run("offline test request that is long enough to estimate")

@@ -37,13 +37,6 @@ uv.lock
 .env.production
 .env.*.local
 
-# Per-agent runtime artifacts (operator state, not source).
-# The agent/ codebase (README, agent.yaml, pipeline/, prompts/) stays
-# tracked; only the generated side-files are ignored.
-agent/secrets.env
-agent/onboarding.json
-agent/integrations/
-
 # Convenience symlink some installs create at the root pointing into
 # the active tenant's agents dir. Always operator-local.
 /agents

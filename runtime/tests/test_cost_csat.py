@@ -194,7 +194,7 @@ def test_execution_record_carries_cost_fields():
     from runtime.compiler.loader import load_agent
     from runtime.executor.pipeline import PipelineExecutor
 
-    cfg = load_agent("agent/agent.yaml")
+    cfg = load_agent("templates/agent/agent.yaml")
     pipeline = compile_agent(cfg)
     executor = PipelineExecutor(pipeline)
     _, record = executor.run("What is your refund policy?")

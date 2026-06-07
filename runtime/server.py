@@ -149,10 +149,9 @@ async def lifespan(app: FastAPI):
         _ensure_tenants_bootstrapped()
 
     # P2.0 — ensure multi-agent registry exists. On first run this
-    # migrates the legacy ``agent/`` dir to ``agents/_default/`` and
-    # writes ``agents/registry.json`` pointing at it. P2.1 also moves
-    # flat ledger/* and traces/* dirs into <root>/_default/<kind>/.
-    # Idempotent.
+    # seeds ``agents/_default/`` from the committed template and writes
+    # ``agents/registry.json`` pointing at it. P2.1 also moves flat
+    # ledger/* and traces/* dirs into <root>/_default/<kind>/. Idempotent.
     from runtime.agent_context import set_active as _set_active_agent
     from runtime.agents.registry import ensure_bootstrapped, get_registry
     ensure_bootstrapped()
@@ -3174,11 +3173,9 @@ def onboarding_state() -> OnboardingState:
 
 @app.post("/onboarding/complete", response_model=OnboardingState)
 def onboarding_complete(payload: OnboardingCompleteRequest) -> OnboardingState:
-    """Materialize the day-0 config. P2.0+ creates a NEW agent in the
-    registry (``agents/<id>/``) and activates it instead of overwriting
-    the legacy global ``agent/`` dir. Backwards-compat: also bumps
-    the legacy onboarding.json so the gate logic in the UI keeps
-    working without further changes."""
+    """Materialize the day-0 config. Creates a NEW agent in the registry
+    (``agents/<id>/``) and activates it. Also bumps the active agent's
+    onboarding.json so the gate logic in the UI keeps working."""
     from runtime.agents.registry import activate as activate_agent
     from runtime.agents.registry import create_agent, get_agent
     from runtime.store import onboarding_session as _v2_session
@@ -3200,8 +3197,8 @@ def onboarding_complete(payload: OnboardingCompleteRequest) -> OnboardingState:
             activate_agent(meta.id, on_activate=lambda m: _reload_live_pipeline(m.id))
     except Exception as e:
         logger.warning(
-            "agent registry create+activate failed (%s) — falling back to legacy "
-            "single-agent record_complete()", e,
+            "agent registry create+activate failed (%s) — proceeding with "
+            "record_complete() on the active agent", e,
         )
 
     # Keep the legacy state file in sync so /onboarding/state returns
@@ -3579,7 +3576,7 @@ def get_agent_endpoint(agent_id: str) -> AgentSummary:
 @app.post("/agents", response_model=AgentSummary, status_code=201)
 def create_agent_endpoint(payload: AgentCreateRequest) -> AgentSummary:
     """Create a new agent from the onboarding payload. If ``activate``
-    is true, swap the live ``agent/`` dir + recompile the pipeline."""
+    is true, flip the active pointer to it + recompile the pipeline."""
     from runtime.agents.registry import activate as activate_agent
     from runtime.agents.registry import create_agent, get_registry, list_agents
     from runtime.tenants import quota
@@ -4946,9 +4943,8 @@ def put_agent_secrets_endpoint(
 @app.patch("/agents/{agent_id}", response_model=AgentSummary)
 def update_agent_endpoint(agent_id: str, payload: AgentUpdateRequest) -> AgentSummary:
     """Mutate an agent's metadata. When ``model`` is provided, propagates
-    to the agent's ``pipeline/route.yaml`` so the next /run uses it. If
-    the agent is currently active, the change is also reflected in the
-    live ``agent/`` dir on the next activate."""
+    to the agent's ``pipeline/route.yaml`` and drops the cached pipeline so
+    the next /run uses it."""
     from runtime.agents.registry import get_registry, update_agent
     try:
         meta = update_agent(

@@ -1,4 +1,4 @@
-"""Agent registry — CRUD on ``agents/`` + the live ``agent/`` dir (P2.0).
+"""Agent registry — CRUD on the ``agents/<id>/`` catalog (P2.0).
 
 Operations
 ----------
@@ -133,7 +133,7 @@ def agents_root() -> Path:
     Public surface for sibling modules (``channels``, ``improvement``,
     ``mcp``) that previously read the ``_DEFAULT_ROOT`` constant
     directly. In multi-tenant mode this routes through the active
-    tenant; in OSS mode it returns the legacy ``agents/`` path.
+    tenant; in OSS mode it returns the top-level ``agents/`` path.
     """
     return _resolve_root(None)
 
@@ -143,8 +143,8 @@ def live_agent_dir(agent_id: Optional[str] = None) -> Optional[Path]:
 
     The catalog entry ``agents/<id>/`` IS the live agent — there is no
     separate global copy. ``agent_id=None`` resolves the registry's active
-    agent. Returns ``None`` when the agent has no dir on disk, so callers can
-    fall back to the legacy ``agent/`` slot during the transition.
+    agent. Returns ``None`` when the agent has no dir on disk (eg. before
+    bootstrap).
     """
     root = _resolve_root(None)
     aid = agent_id or _load_registry(root).active
@@ -261,10 +261,9 @@ def update_agent(
         meta.description = description
     if model is not None:
         meta.model = model
-        # P3.0 — propagate to the agent's route.yaml so /run uses it.
-        # If this agent is currently active, live ``agent/`` won't update
-        # until the operator hits /activate again — that's acceptable;
-        # the catalog copy is the source of truth.
+        # P3.0 — propagate to the agent's route.yaml so /run uses it. The
+        # catalog dir IS the live surface; the HTTP layer invalidates the
+        # compiled-pipeline cache so the change takes effect immediately.
         _set_route_yaml_model(rroot / agent_id, model)
     meta.updated_at = _now_iso(now_iso)
     _save_registry(rroot, registry)
