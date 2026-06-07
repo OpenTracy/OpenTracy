@@ -41,6 +41,24 @@ def set_active(agent_id: Optional[str]) -> None:
     _active_var.set(agent_id)
 
 
+def subprocess_env() -> dict[str, str]:
+    """``os.environ`` + the active agent/tenant ids, for spawning a subprocess
+    (the brain CLI + its MCP server) that must resolve the SAME agent/tenant.
+
+    The ContextVar is process-local and does NOT cross ``subprocess.run``; the
+    child recovers the binding via the env fallbacks in ``get_active()``.
+    """
+    env = dict(os.environ)
+    env[_ENV_VAR] = get_active()
+    try:
+        from runtime import tenant_context
+
+        env[tenant_context._ENV_VAR] = tenant_context.get_active()
+    except Exception:  # pragma: no cover — tenant context optional
+        pass
+    return env
+
+
 def get_active(default: str = _DEFAULT_AGENT_ID) -> str:
     """Resolve the current agent id. Order:
        1. context-local ``set_active`` value

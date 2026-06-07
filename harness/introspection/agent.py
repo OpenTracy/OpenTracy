@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from harness.introspection import lib
+from runtime import agent_context as _agent_context
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 MAX_ITERATIONS = 6
@@ -358,6 +359,9 @@ def _call_claude_code_cli(
             capture_output=True,
             text=True,
             timeout=90,
+            # Carry the active agent/tenant into the child + its MCP server so
+            # the brain's tool calls read/write the SAME agent, not _default.
+            env=_agent_context.subprocess_env(),
         )
     except subprocess.TimeoutExpired:
         return IntrospectResult(
