@@ -70,7 +70,7 @@ def goldens_dir(tmp_path: Path) -> Path:
 def datasets_dir(tmp_path: Path, monkeypatch) -> Path:
     d = tmp_path / "datasets"
     d.mkdir()
-    monkeypatch.setattr("router.data.dataset_io.DEFAULT_DATASETS_DIR", d)
+    monkeypatch.setattr("runtime.agent_paths.datasets_dir", lambda *a, **k: d)
     return d
 
 

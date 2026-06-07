@@ -34,19 +34,18 @@ from router.data.dataset import (
 from router.errors import DatasetInvalidError, DatasetNotFoundError
 
 
-DEFAULT_DATASETS_DIR = Path("datasets")
-
 _CURRENT_NAME = "current"
 _CURRENT_TXT = "current.txt"
 _STAGING_DIR = ".staging"
 
 
 def _vd(datasets_dir: Optional[Path]) -> Path:
-    """Resolve the datasets directory at call time so monkeypatching works."""
+    """Resolve the datasets directory at call time. Explicit arg wins (tests);
+    otherwise the ACTIVE agent's datasets dir."""
     if datasets_dir is not None:
         return datasets_dir
-    import router.data.dataset_io as _self
-    return _self.DEFAULT_DATASETS_DIR
+    from runtime.agent_paths import datasets_dir as _resolve
+    return _resolve()
 
 
 # --- Path helpers ---

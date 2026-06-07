@@ -20,10 +20,16 @@ import yaml
 
 
 def _live_agent_dir() -> Path:
-    """The active agent's catalog dir."""
+    """The active agent's catalog dir.
+
+    Resolves the request/context active agent (the same ContextVar the ledger
+    writer and the server config endpoints use), so versions, lessons, and
+    prompt/route edits all scope to one agent within a request.
+    """
+    from runtime.agent_context import get_active
     from runtime.agents.registry import live_agent_dir
 
-    d = live_agent_dir()
+    d = live_agent_dir(get_active())
     if d is None:
         raise RuntimeError("no active agent resolved — registry not bootstrapped")
     return d

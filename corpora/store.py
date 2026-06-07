@@ -34,26 +34,18 @@ import numpy as np
 
 logger = logging.getLogger("corpora.store")
 
-_DEFAULT_ROOT = Path("corpora") / "indexed"
 INDEX_FILENAME = "index.faiss"
 MANIFEST_FILENAME = "manifest.jsonl"
 VECTORS_FILENAME = "vectors.npy"  # numpy fallback path
 
 
 def _corpus_root(root: Optional[Path]) -> Path:
-    """Pick the effective root. Explicit ``root`` always wins (tests).
-
-    OSS mode → legacy ``corpora/indexed/`` at project root.
-    Infra mode (``OPENTRACY_MULTI_TENANT=1``) → ``tenants/<active>/corpora/indexed/``.
-    """
+    """Pick the effective corpus root. Explicit ``root`` always wins (tests);
+    otherwise the ACTIVE agent's index dir — each agent owns its KB."""
     if root is not None:
         return Path(root)
-    from runtime.tenants.feature import is_multi_tenant_enabled
-    if not is_multi_tenant_enabled():
-        return _DEFAULT_ROOT
-    from runtime.tenant_context import get_active as _get_tenant
-    from runtime.tenants.registry import get_tenant_dir
-    return get_tenant_dir(_get_tenant()) / "corpora" / "indexed"
+    from runtime.agent_paths import corpus_indexed_dir
+    return corpus_indexed_dir()
 
 
 @dataclass
@@ -187,7 +179,7 @@ def save_index(
     """Persist a freshly-built index. Writes index.faiss when faiss is
     available; otherwise falls back to vectors.npy. Always writes the
     manifest. Returns the root directory."""
-    root = Path(root) if root is not None else _DEFAULT_ROOT
+    root = _corpus_root(root)
     root.mkdir(parents=True, exist_ok=True)
 
     vectors = _normalize(vectors.astype(np.float32, copy=False))

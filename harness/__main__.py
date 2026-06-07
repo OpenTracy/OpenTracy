@@ -161,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_sweep.add_argument(
         "--policy-mode", choices=["auto", "review", "off"],
-        help="override policies/auto_approve.yaml mode for this run",
+        help="override the agent's policy.yaml mode for this run",
     )
     p_sweep.add_argument(
         "--policy-min-lift", type=float, default=0.0,

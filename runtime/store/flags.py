@@ -29,8 +29,8 @@ _FLAGS_ROOT = _DEFAULT_FLAGS_ROOT  # back-compat alias for test overrides
 
 
 def _flags_root_for(agent_id: Optional[str] = None) -> Path:
-    from runtime.agent_context import get_active
-    return Path("traces") / (agent_id or get_active()) / "flagged"
+    from runtime.agent_paths import flagged_dir
+    return flagged_dir(agent_id)
 
 
 def _resolve_root(root: Optional[Path], agent_id: Optional[str] = None) -> Path:

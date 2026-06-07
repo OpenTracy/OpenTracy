@@ -32,8 +32,8 @@ _FEEDBACK_ROOT = _DEFAULT_FEEDBACK_ROOT
 
 
 def _feedback_root_for(agent_id: Optional[str] = None) -> Path:
-    from runtime.agent_context import get_active
-    return Path("traces") / (agent_id or get_active()) / "feedback"
+    from runtime.agent_paths import feedback_dir
+    return feedback_dir(agent_id)
 
 
 def _resolve_root(root: Optional[Path], agent_id: Optional[str] = None) -> Path:

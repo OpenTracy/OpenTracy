@@ -175,7 +175,9 @@ export const AgentSheet = ({
     setModel(next);  // optimistic
     setSavingModel(true);
     try {
-      await updateAgent(activeAgent.id, { model: next });
+      // Refresh activeAgent from the response so the header pill (and any
+      // other activeAgent.model reader) reflects the change immediately.
+      setActiveAgent(await updateAgent(activeAgent.id, { model: next }));
     } catch (e) {
       // Revert on failure so the UI doesn't lie about saved state.
       setModel(prev);

@@ -34,7 +34,6 @@ import yaml
 
 from router.data.dataset import DatasetMetadata, DatasetSample
 from router.data.dataset_io import (
-    DEFAULT_DATASETS_DIR,
     get_current_version,
     now_iso,
     save_dataset,
@@ -216,8 +215,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument(
         "--datasets-dir",
-        default=str(DEFAULT_DATASETS_DIR),
-        help=f"Target datasets directory (default: {DEFAULT_DATASETS_DIR}).",
+        default=None,
+        help="Target datasets directory (default: the active agent's datasets dir).",
     )
     parser.add_argument(
         "--embedder-model",
@@ -247,7 +246,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
 
     goldens_dir = Path(args.goldens_dir)
-    datasets_dir = Path(args.datasets_dir)
+    if args.datasets_dir:
+        datasets_dir = Path(args.datasets_dir)
+    else:
+        from runtime.agent_paths import datasets_dir as _resolve
+        datasets_dir = _resolve()
     name = args.name
 
     logger.info("loading goldens from %s", goldens_dir)

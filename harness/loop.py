@@ -195,7 +195,7 @@ def run_loop(
 
     Steps:
       1. propose_and_score (Proposal → critics → branch → score → critics)
-      2. For each outcome, ask the approver (mode in policies/auto_approve.yaml)
+      2. For each outcome, ask the approver (mode in the agent's policy.yaml)
       3. If decision is AUTO_APPROVE *and* `auto_promote=True`, promote according
          to `promote_strategy`:
            - "best": only the single highest-Δoverall outcome promotes

@@ -21,7 +21,6 @@ from .base import build_sample, embed_list, prompt_hash
 
 
 SOURCE_LABEL = "failed lookups"
-_DEFAULT_TRACES_RAW = Path("traces") / "raw"
 
 
 def iter_candidates(
@@ -39,8 +38,10 @@ def iter_candidates(
     target dataset's current sample IDs). Also dedups within the current
     call so repeated prompts in the trace stream only yield once.
     """
+    from runtime.agent_paths import raw_traces_dir
+
     seen = set(existing or ())
-    root = traces_root or _DEFAULT_TRACES_RAW
+    root = traces_root if traces_root is not None else raw_traces_dir()
     yielded = 0
 
     for row in _iter_raw_rows(root, since_iso, until_iso):

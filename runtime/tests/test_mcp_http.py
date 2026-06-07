@@ -26,6 +26,7 @@ def client_with_tenants(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("OPENTRACY_MULTI_TENANT", "1")
+    monkeypatch.chdir(tmp_path)  # isolate cwd: the multi-tenant lifespan migration runs against cwd
     monkeypatch.setattr(
         "runtime.tenants.registry._DEFAULT_ROOT", tmp_path / "tenants"
     )

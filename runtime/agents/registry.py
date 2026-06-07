@@ -61,7 +61,7 @@ _INHERITED_STATE_DIRS = (
     "integrations", "workspace", "router", "datasets", "corpora",
     "evals", "experiments",
 )
-_TEMPLATE_RESET_FILES = ("mcp.json", "improvement.yaml")
+_TEMPLATE_RESET_FILES = ("mcp.json", "improvement.yaml", "policy.yaml")
 
 
 # ---------------------------------------------------------------------------

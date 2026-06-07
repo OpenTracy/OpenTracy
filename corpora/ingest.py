@@ -30,7 +30,6 @@ import numpy as np
 logger = logging.getLogger("corpora.ingest")
 
 _TEXT_EXTS = {".md", ".txt"}
-_DEFAULT_INPUT = Path("corpora") / "ingested"
 
 
 @dataclass
@@ -168,20 +167,25 @@ def _cli_main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "path",
         nargs="?",
-        default=str(_DEFAULT_INPUT),
-        help=f"Path to a file or directory (default: {_DEFAULT_INPUT})",
+        default=None,
+        help="Path to a file or directory (default: the active agent's corpora/ingested)",
     )
     parser.add_argument("--chunk-size", type=int, default=512)
     parser.add_argument("--overlap", type=int, default=50)
     parser.add_argument(
         "--root",
         default=None,
-        help="Where to write the index (default: corpora/indexed/)",
+        help="Where to write the index (default: the active agent's corpora/indexed)",
     )
     args = parser.parse_args(argv)
 
+    if args.path:
+        path = Path(args.path)
+    else:
+        from runtime.agent_paths import corpus_ingested_dir
+        path = corpus_ingested_dir()
     summary = ingest(
-        Path(args.path),
+        path,
         chunk_size=args.chunk_size,
         overlap=args.overlap,
         root=Path(args.root) if args.root else None,

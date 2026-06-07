@@ -832,7 +832,7 @@ class PolicyUpdateRequest(BaseModel):
 
 @app.put("/policy", response_model=PolicyView)
 async def update_policy(payload: PolicyUpdateRequest) -> PolicyView:
-    """Persist policy changes to policies/auto_approve.yaml. Validates every
+    """Persist policy changes to the active agent's policy.yaml. Validates every
     mode field (global + each per-kind override) so the UI can't write
     something the approver doesn't understand."""
     from harness.approver.policy import AutoRollback, Policy

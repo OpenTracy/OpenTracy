@@ -21,7 +21,7 @@ from router.data.dataset_registry import (
 def tmp_datasets(tmp_path: Path, monkeypatch):
     d = tmp_path / "datasets"
     d.mkdir()
-    monkeypatch.setattr("router.data.dataset_io.DEFAULT_DATASETS_DIR", d)
+    monkeypatch.setattr("runtime.agent_paths.datasets_dir", lambda *a, **k: d)
     return d
 
 

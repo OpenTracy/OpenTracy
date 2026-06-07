@@ -29,7 +29,6 @@ from .base import build_sample, embed_list, prompt_hash
 
 
 SOURCE_LABEL = "language router"
-_DEFAULT_TRACES_RAW = Path("traces") / "raw"
 
 # Threshold tuned by inspection: PT/ES sentences typically carry one
 # accent per 20+ letters (~4–5%). 3% catches them while still rejecting
@@ -48,8 +47,10 @@ def iter_candidates(
     traces_root: Optional[Path] = None,
     limit: Optional[int] = None,
 ) -> Iterator[DatasetSample]:
+    from runtime.agent_paths import raw_traces_dir
+
     seen = set(existing or ())
-    root = traces_root or _DEFAULT_TRACES_RAW
+    root = traces_root if traces_root is not None else raw_traces_dir()
     yielded = 0
 
     for row in _iter_raw_rows(root, since_iso, until_iso):

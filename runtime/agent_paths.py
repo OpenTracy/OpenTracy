@@ -41,6 +41,18 @@ def _traces_root() -> Path:
     return get_tenant_dir(_get_tenant()) / "traces"
 
 
+def _ledger_root() -> Path:
+    """Tenant-aware ledger root: ``ledger/`` (OSS) or ``tenants/<t>/ledger/``."""
+    from runtime.tenants.feature import is_multi_tenant_enabled
+
+    if not is_multi_tenant_enabled():
+        return Path("ledger")
+    from runtime.tenant_context import get_active as _get_tenant
+    from runtime.tenants.registry import get_tenant_dir
+
+    return get_tenant_dir(_get_tenant()) / "ledger"
+
+
 def agent_dir(agent_id: Optional[str] = None) -> Path:
     """The agent's catalog dir (tenant-aware): ``agents_root()/<agent>``."""
     from runtime.agents.registry import agents_root
@@ -57,6 +69,18 @@ def raw_traces_dir(agent_id: Optional[str] = None) -> Path:
 
 def pinned_traces_dir(agent_id: Optional[str] = None) -> Path:
     return _traces_root() / _active(agent_id) / "pinned"
+
+
+def feedback_dir(agent_id: Optional[str] = None) -> Path:
+    return _traces_root() / _active(agent_id) / "feedback"
+
+
+def flagged_dir(agent_id: Optional[str] = None) -> Path:
+    return _traces_root() / _active(agent_id) / "flagged"
+
+
+def notifications_dir(agent_id: Optional[str] = None) -> Path:
+    return _ledger_root() / _active(agent_id) / "notifications"
 
 
 def distilled_dir(kind: str = "", agent_id: Optional[str] = None) -> Path:

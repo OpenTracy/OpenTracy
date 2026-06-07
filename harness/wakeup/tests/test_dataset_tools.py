@@ -1,7 +1,7 @@
 """Tests for the P15.4.5 dataset MCP tools + wakeup integration.
 
 We don't hit the live brain or the live registry — we patch:
-  - DEFAULT_DATASETS_DIR (storage)
+  - agent_paths.datasets_dir (storage)
   - Policy.from_yaml (gating)
   - DatasetProposer.propose (so we can drive each branch)
   - ledger writers
@@ -25,7 +25,7 @@ import pytest
 def tmp_datasets(tmp_path: Path, monkeypatch):
     d = tmp_path / "datasets"
     d.mkdir()
-    monkeypatch.setattr("router.data.dataset_io.DEFAULT_DATASETS_DIR", d)
+    monkeypatch.setattr("runtime.agent_paths.datasets_dir", lambda *a, **k: d)
     return d
 
 

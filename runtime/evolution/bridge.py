@@ -384,9 +384,8 @@ def _decide_status_via_policy(
     if not has_edits:
         return _PolicyDecision("auto_promoted")
     try:
-        from runtime.server import _policy_path
         from harness.approver import Policy
-        policy = Policy.from_yaml(_policy_path())
+        policy = Policy.from_yaml()  # active agent's policy.yaml
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning("bridge: policy load failed (%s) — defaulting to review", exc)
         return _PolicyDecision("awaiting_review")
