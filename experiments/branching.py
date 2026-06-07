@@ -16,7 +16,6 @@ from experiments.types import CandidateManifest, Mutation
 from runtime.compiler.loader import load_agent
 
 CANDIDATES_DIR = Path("experiments/candidates")
-BASELINE_AGENT_DIR = Path("agent")
 
 
 def _new_candidate_id() -> str:

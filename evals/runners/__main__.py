@@ -1,7 +1,7 @@
 """CLI: `uv run python -m evals.runners <suite>`.
 
-Runs a suite against the current agent.yaml, prints a summary, and writes
-the full report to evals/reports/.
+Runs a suite against the active agent's agent.yaml, prints a summary, and
+writes the full report to evals/reports/.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="evals.runners")
     parser.add_argument("suite", help="Path to a suite YAML (e.g. evals/suites/smoke_v0.yaml)")
     parser.add_argument(
-        "--agent", default="agent/agent.yaml", help="Path to agent.yaml (default: agent/agent.yaml)"
+        "--agent", default=None, help="Path to agent.yaml (default: the active agent)"
     )
     parser.add_argument(
         "--no-write", action="store_true", help="Skip writing the report to disk"

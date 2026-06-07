@@ -3,8 +3,7 @@
 When a candidate is promoted to live, the prior agent tree is snapshotted into
 ``ledger/<agent>/versions/<version_id>/agent/``. Rollback copies that snapshot
 back over the live agent dir. Both the live agent dir and the versions dir are
-resolved **per active agent at call time** (legacy ``agent/`` /
-``ledger/versions`` are kept as fallbacks), so each agent has its own version
+resolved **per active agent at call time**, so each agent has its own version
 lineage and a promotion for agent A never collides with agent B.
 
 Snapshots are content-addressed by the version string in agent.yaml. We trust
@@ -19,37 +18,20 @@ from typing import Optional
 
 import yaml
 
-# Legacy single-slot fallbacks (pre per-agent). Still honoured for reads so
-# snapshots taken before the migration remain restorable.
-LIVE_AGENT = Path("agent")
-VERSIONS_DIR = Path("ledger/versions")
-
 
 def _live_agent_dir() -> Path:
-    """The active agent's catalog dir, or the legacy ``agent/`` slot."""
-    try:
-        from runtime.agents.registry import live_agent_dir
+    """The active agent's catalog dir."""
+    from runtime.agents.registry import live_agent_dir
 
-        d = live_agent_dir()
-        if d is not None:
-            return d
-    except Exception:
-        pass
-    return LIVE_AGENT
+    d = live_agent_dir()
+    if d is None:
+        raise RuntimeError("no active agent resolved — registry not bootstrapped")
+    return d
 
 
 def _versions_dir() -> Path:
-    """``ledger/<agent>/versions`` for the active agent; legacy global dir
-    when no agent resolves."""
-    try:
-        from runtime.agents.registry import live_agent_dir
-
-        d = live_agent_dir()
-        if d is not None:
-            return Path("ledger") / d.name / "versions"
-    except Exception:
-        pass
-    return VERSIONS_DIR
+    """``ledger/<agent>/versions`` for the active agent."""
+    return Path("ledger") / _live_agent_dir().name / "versions"
 
 
 def resolve_live_dir() -> Path:
@@ -101,10 +83,6 @@ def snapshot_path(version: str, versions_dir: Optional[Path | str] = None) -> Pa
     return base / version / "agent"
 
 
-def _legacy_snapshot_path(version: str) -> Path:
-    return VERSIONS_DIR / version / "agent"
-
-
 def snapshot_agent(
     agent_dir: Optional[Path | str] = None,
     versions_dir: Optional[Path | str] = None,
@@ -124,19 +102,12 @@ def snapshot_agent(
 
 
 def list_snapshots(versions_dir: Optional[Path | str] = None) -> list[str]:
-    if versions_dir is not None:
-        roots = [Path(versions_dir)]
-    else:
-        # Per-agent versions plus the legacy global dir, so pre-migration
-        # snapshots stay listed/restorable.
-        roots = [_versions_dir(), VERSIONS_DIR]
-    out: set[str] = set()
-    for root in roots:
-        if root.exists():
-            out.update(
-                d.name for d in root.iterdir() if (d / "agent" / "agent.yaml").exists()
-            )
-    return sorted(out)
+    root = Path(versions_dir) if versions_dir is not None else _versions_dir()
+    if not root.exists():
+        return []
+    return sorted(
+        d.name for d in root.iterdir() if (d / "agent" / "agent.yaml").exists()
+    )
 
 
 def restore_version(
@@ -147,10 +118,6 @@ def restore_version(
     """Replace the live agent dir with the snapshot for `version`."""
     base = Path(agent_dir) if agent_dir is not None else _live_agent_dir()
     snap = snapshot_path(version, versions_dir)
-    if not snap.exists() and versions_dir is None:
-        legacy = _legacy_snapshot_path(version)
-        if legacy.exists():
-            snap = legacy
     if not snap.exists():
         raise FileNotFoundError(f"no snapshot for version {version!r}: {snap}")
 

@@ -22,7 +22,6 @@ from evals.runners.runner import (
 from experiments.branching import candidate_agent_path, list_candidates
 from experiments.types import CandidateManifest
 
-BASELINE_AGENT = Path("agent/agent.yaml")
 RESULTS_DIR = Path("experiments/results")
 EVAL_REPORTS_DIR = Path("evals/reports")
 

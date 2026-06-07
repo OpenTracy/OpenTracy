@@ -12,13 +12,12 @@ Operations
     the committed template (or an explicit ``seed_from`` agent), stripped
     of inherited per-agent state, then the operator's
     prompt/model/channels (from onboarding) are applied.
-  - ``activate(id)`` — copy ``agents/<id>/*`` → ``agent/*`` and update
-    the registry's ``active`` pointer. Triggers ``on_activate`` hook so
-    the runtime can recompile its pipeline.
+  - ``activate(id)`` — flip the registry's ``active`` pointer to
+    ``agents/<id>/`` (the catalog entry IS the live surface; nothing is
+    copied). Triggers ``on_activate`` so the runtime can recompile.
   - ``delete_agent(id)`` — soft delete (rename to ``_deleted/<id>``)
-    plus registry mutation. Never touches the live ``agent/`` dir; if
-    the active agent is deleted, the caller decides what to activate
-    next (UI surface).
+    plus registry mutation. If the active agent is deleted, the caller
+    decides what to activate next (UI surface).
 
 Concurrency: FastAPI single-process, no real concurrency between
 requests. A simple file write + rename is enough — no locking primitives.
@@ -42,7 +41,6 @@ logger = logging.getLogger("runtime.agents.registry")
 
 
 _DEFAULT_ROOT = Path("agents")
-_LIVE_AGENT_DIR = Path("agent")           # the running agent
 _REGISTRY_FILE = "registry.json"
 _DELETED_BUCKET = "_deleted"
 _DEFAULT_ID = "_default"
@@ -277,36 +275,24 @@ def activate(
     agent_id: str,
     *,
     root: Optional[Path] = None,
-    live_dir: Optional[Path] = None,
     on_activate: Optional[Callable[[AgentMetadata], None]] = None,
 ) -> AgentMetadata:
     """Make ``agents/<id>/`` the live agent.
 
-    Copies the catalog entry into ``agent/`` (the runtime reads from
-    there). Updates ``registry.active``. The optional ``on_activate``
-    hook fires after the copy — the server uses it to recompile its
-    pipeline.
+    The catalog entry IS the live surface — activation just flips
+    ``registry.active``; nothing is copied. The optional ``on_activate``
+    hook fires afterwards — the server uses it to recompile its pipeline
+    and invalidate the per-agent cache.
     """
     rroot = _resolve_root(root)
-    live = Path(live_dir) if live_dir is not None else _LIVE_AGENT_DIR
     registry = _load_registry(rroot)
     meta = registry.get(agent_id)
     if meta is None:
         raise KeyError(agent_id)
 
-    source = rroot / agent_id
-    if not source.is_dir():
+    if not (rroot / agent_id).is_dir():
         raise FileNotFoundError(f"agents/{agent_id}/ missing on disk")
 
-    # Snapshot current live agent back into its catalog entry so any
-    # mid-flight prompt/route edits aren't lost on switch.
-    prev_active = registry.active
-    if prev_active and prev_active != agent_id and live.is_dir():
-        prev_dir = rroot / prev_active
-        if prev_dir.is_dir() or registry.get(prev_active) is not None:
-            _copy_tree(live, prev_dir)
-
-    _replace_tree(source, live)
     registry.active = agent_id
     _save_registry(rroot, registry)
 
@@ -517,26 +503,6 @@ def _copy_tree(src: Path, dst: Path) -> None:
         shutil.rmtree(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src, dst, symlinks=False)
-
-
-def _replace_tree(src: Path, dst: Path) -> None:
-    """Atomic-ish replace: copy src to a temp dir, then move into place.
-
-    Falls back to direct copy if the temp move would cross devices.
-    """
-    if not src.is_dir():
-        raise FileNotFoundError(src)
-    parent = dst.parent
-    parent.mkdir(parents=True, exist_ok=True)
-    staging = parent / f".{dst.name}.staging-{secrets.token_hex(3)}"
-    try:
-        shutil.copytree(src, staging, symlinks=False)
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.move(str(staging), str(dst))
-    finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
 
 
 def _baseline_seed_dir(tenant_agents_root: Path) -> Optional[Path]:

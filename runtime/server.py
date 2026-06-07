@@ -161,12 +161,13 @@ async def lifespan(app: FastAPI):
         _set_active_agent(reg.active)
         logger.info("active agent: %s", reg.active)
 
-    # Boot the fallback executor from the ACTIVE agent's catalog dir, not the
-    # legacy agent/ slot — the slot may be stale/empty under per-agent serving.
+    # Boot the fallback executor from the ACTIVE agent's catalog dir.
     from runtime.agents.registry import live_agent_dir as _live_agent_dir
 
     _boot_dir = _live_agent_dir(reg.active)
-    cfg = load_agent(str(_boot_dir / "agent.yaml") if _boot_dir else "agent/agent.yaml")
+    if _boot_dir is None:
+        raise RuntimeError(f"active agent {reg.active!r} has no catalog dir after bootstrap")
+    cfg = load_agent(str(_boot_dir / "agent.yaml"))
     pipeline = compile_agent(cfg)
     executor = PipelineExecutor(pipeline)
     _state["cfg"] = cfg
@@ -1563,7 +1564,7 @@ async def run_suite_endpoint(name: str) -> ReportSummary:
     from evals.runners.runner import run_suite
 
     try:
-        report = run_suite(suite_path, agent_path=_AGENT_DIR / "agent.yaml")
+        report = run_suite(suite_path, agent_path=_agent_dir() / "agent.yaml")
     except Exception as e:  # surface load / compile / score errors verbatim
         raise HTTPException(status_code=500, detail=f"run failed: {e}") from e
 
@@ -1588,7 +1589,7 @@ async def run_all_suites_endpoint() -> dict[str, Any]:
     errors: list[dict[str, str]] = []
     for sp in sorted(suites_dir.glob("*.yaml")):
         try:
-            report = run_suite(sp, agent_path=_AGENT_DIR / "agent.yaml")
+            report = run_suite(sp, agent_path=_agent_dir() / "agent.yaml")
         except Exception as e:
             errors.append({"suite": sp.stem, "error": str(e)})
             continue
@@ -1875,8 +1876,20 @@ class AgentConfigView(BaseModel):
     keys: list[AgentKeyStatus]
 
 
-_PROJECT_ROOT_AGENT = Path(__file__).resolve().parent.parent
-_AGENT_DIR = _PROJECT_ROOT_AGENT / "agent"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _agent_dir() -> Path:
+    """The request's active agent catalog dir (agents/<id>/), so the UI's
+    config endpoints (prompt, route/model, eval) read/write the SAME surface
+    the runtime serves."""
+    from runtime.agent_context import get_active
+    from runtime.agents.registry import live_agent_dir
+
+    d = live_agent_dir(get_active())
+    if d is None:
+        raise HTTPException(status_code=503, detail="no active agent resolved")
+    return d
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -1889,10 +1902,10 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 
 def _resolve_prompt_path() -> Path:
-    """Read generate.yaml's prompt knob, resolve relative to agent/."""
-    gen = _read_yaml(_AGENT_DIR / "pipeline" / "generate.yaml")
+    """Read generate.yaml's prompt knob, resolve relative to the agent dir."""
+    gen = _read_yaml(_agent_dir() / "pipeline" / "generate.yaml")
     rel = (gen.get("knobs") or {}).get("prompt", "../prompts/system.md")
-    return (_AGENT_DIR / "pipeline" / rel).resolve()
+    return (_agent_dir() / "pipeline" / rel).resolve()
 
 
 def _mask_key(value: str) -> str:
@@ -1916,7 +1929,7 @@ async def get_agent_config() -> AgentConfigView:
         with prompt_path.open() as f:
             prompt_content = f.read()
 
-    route = _read_yaml(_AGENT_DIR / "pipeline" / "route.yaml")
+    route = _read_yaml(_agent_dir() / "pipeline" / "route.yaml")
     knobs = route.get("knobs") or {}
     models = AgentModelsView(
         small=knobs.get("small"),
@@ -1940,7 +1953,7 @@ async def get_agent_config() -> AgentConfigView:
         cc_detail = "no Anthropic key, no claude CLI"
 
     mcp_server_path = (
-        _PROJECT_ROOT_AGENT / "harness" / "introspection" / "mcp_server.py"
+        _PROJECT_ROOT / "harness" / "introspection" / "mcp_server.py"
     )
 
     integrations = [
@@ -1985,7 +1998,7 @@ async def get_agent_config() -> AgentConfigView:
         version=cfg.version,
         description=cfg.description,
         system_prompt=AgentPromptView(
-            path=str(prompt_path.relative_to(_PROJECT_ROOT_AGENT)),
+            path=str(prompt_path.relative_to(_PROJECT_ROOT)),
             content=prompt_content,
         ),
         models=models,
@@ -2021,10 +2034,10 @@ async def update_prompt(payload: PromptUpdateRequest) -> PromptUpdateResponse:
     from harness.executor.promote import record_manual_change
 
     prompt_path = _resolve_prompt_path()
-    if not str(prompt_path).startswith(str(_AGENT_DIR.resolve())):
-        raise HTTPException(status_code=400, detail="resolved prompt path escapes agent/")
+    if not str(prompt_path).startswith(str(_agent_dir().resolve())):
+        raise HTTPException(status_code=400, detail="resolved prompt path escapes the agent dir")
 
-    rel_path = prompt_path.relative_to(_PROJECT_ROOT_AGENT)
+    rel_path = prompt_path.relative_to(_PROJECT_ROOT)
 
     def _write_prompt() -> None:
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2066,7 +2079,7 @@ async def update_route(payload: RouteUpdateRequest) -> RouteUpdateResponse:
 
     from harness.executor.promote import record_manual_change
 
-    route_path = _AGENT_DIR / "pipeline" / "route.yaml"
+    route_path = _agent_dir() / "pipeline" / "route.yaml"
     if not route_path.exists():
         raise HTTPException(status_code=404, detail="route.yaml missing")
 
@@ -3503,7 +3516,9 @@ def _reload_live_pipeline(agent_id: Optional[str] = None) -> None:
     from runtime.agents.registry import live_agent_dir as _live_agent_dir
 
     _dir = _live_agent_dir(agent_id)
-    cfg = load_agent(str(_dir / "agent.yaml") if _dir else "agent/agent.yaml")
+    if _dir is None:
+        raise RuntimeError(f"agent {agent_id!r} has no catalog dir")
+    cfg = load_agent(str(_dir / "agent.yaml"))
     pipeline = compile_agent(cfg)
     executor = PipelineExecutor(pipeline)
     _state["cfg"] = cfg
@@ -4921,6 +4936,13 @@ def update_agent_endpoint(agent_id: str, payload: AgentUpdateRequest) -> AgentSu
         )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"agent_not_found: {agent_id}")
+    # The model write changed agents/<id>/route.yaml — drop the cached compiled
+    # pipeline so the next request recompiles with it (otherwise the UI shows
+    # the new model while the runtime keeps serving the old one).
+    if payload.model is not None:
+        from runtime.executor.cache import invalidate as _invalidate_cache
+
+        _invalidate_cache(agent_id)
     return _summarize(meta, active_id=get_registry().active)
 
 

@@ -41,12 +41,6 @@ def client(tmp_path, monkeypatch):
         "runtime.agents.registry._DEFAULT_ROOT", tmp_path / "agents-legacy"
     )
     monkeypatch.setattr(
-        "runtime.agents.registry._LIVE_AGENT_DIR", tmp_path / "agent"
-    )
-    (tmp_path / "agent" / "prompts").mkdir(parents=True)
-    (tmp_path / "agent" / "agent.yaml").write_text("agent:\n  version: v0\n")
-    (tmp_path / "agent" / "prompts" / "system.md").write_text("seed")
-    monkeypatch.setattr(
         "runtime.tenants.bootstrap.migrate_legacy_to_default",
         lambda *a, **k: False,
     )

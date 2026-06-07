@@ -393,7 +393,7 @@ def _load_system_prompt(path: str) -> str:
     """Resolve the prompt path against a few likely roots; fall back to default.
 
     The active agent's own dir is checked first so each agent reads its own
-    prompt under per-agent serving; the legacy ``agent/`` slot is the fallback.
+    prompt under per-agent serving.
     """
     candidates: list[Path] = []
     try:
@@ -410,8 +410,6 @@ def _load_system_prompt(path: str) -> str:
         pass
     candidates += [
         Path(path),
-        Path("agent/pipeline") / path,
-        Path("agent") / path,
         Path.cwd() / path,
     ]
     for p in candidates:

@@ -159,7 +159,9 @@ def test_get_agent_missing_returns_none(workspace):
 # ---------------------------------------------------------------------------
 
 
-def test_activate_swaps_live_dir_and_updates_active(workspace):
+def test_activate_flips_active_and_fires_hook(workspace):
+    """Activation only flips the registry pointer + fires the hook — the
+    catalog entry is the live surface, nothing is copied."""
     ensure_bootstrapped(root=workspace["root"], live_dir=workspace["live"])
     create_agent(
         {"name": "new-agent", "prompt": "New prompt body."},
@@ -170,41 +172,21 @@ def test_activate_swaps_live_dir_and_updates_active(workspace):
     meta = activate(
         "new-agent",
         root=workspace["root"],
-        live_dir=workspace["live"],
         on_activate=lambda m: hook_called.append(m.id),
     )
 
     assert meta.id == "new-agent"
     assert get_active(root=workspace["root"]).id == "new-agent"
     assert hook_called == ["new-agent"]
-    # The live agent dir now has the new prompt
-    body = (workspace["live"] / "prompts" / "system.md").read_text()
+    # The new agent's own catalog dir still holds its prompt.
+    body = (workspace["root"] / "new-agent" / "prompts" / "system.md").read_text()
     assert "New prompt body" in body
 
 
 def test_activate_unknown_agent_raises(workspace):
     ensure_bootstrapped(root=workspace["root"], live_dir=workspace["live"])
     with pytest.raises(KeyError):
-        activate("nonexistent", root=workspace["root"], live_dir=workspace["live"])
-
-
-def test_activate_preserves_live_state_into_previous_active(workspace):
-    """Switching from A to B snapshots A's live state back into agents/A/
-    so unsaved edits aren't lost."""
-    ensure_bootstrapped(root=workspace["root"], live_dir=workspace["live"])
-    create_agent({"name": "b", "prompt": "B prompt"}, root=workspace["root"])
-
-    # Operator edits the live prompt while _default is active
-    (workspace["live"] / "prompts" / "system.md").write_text("Edited live prompt.")
-
-    # Switch to b
-    activate("b", root=workspace["root"], live_dir=workspace["live"])
-
-    # _default's saved state should now contain the edit
-    saved = (workspace["root"] / "_default" / "prompts" / "system.md").read_text()
-    assert "Edited live prompt" in saved
-    # And the live dir now has b's prompt
-    assert "B prompt" in (workspace["live"] / "prompts" / "system.md").read_text()
+        activate("nonexistent", root=workspace["root"])
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +215,7 @@ def test_cannot_delete_default(workspace):
 def test_cannot_delete_active(workspace):
     ensure_bootstrapped(root=workspace["root"], live_dir=workspace["live"])
     create_agent({"name": "x", "prompt": "y"}, root=workspace["root"])
-    activate("x", root=workspace["root"], live_dir=workspace["live"])
+    activate("x", root=workspace["root"])
     with pytest.raises(ValueError):
         delete_agent("x", root=workspace["root"])
 
