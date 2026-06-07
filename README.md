@@ -9,7 +9,8 @@ approval before they go live.
 
 ## What it gives you
 
-- A trainable agent surface at `agent/` — one YAML + a handful of Python files.
+- A trainable agent surface per agent at `agents/<id>/` (seeded from the
+  committed `templates/agent/` template) — one YAML + a handful of Python files.
   Mutated by Claude Code (driven by the harness) in response to evidence from
   real traces.
 - An **autonomous engineering loop** modeled on Lin et al.'s AHE algorithm
@@ -19,7 +20,7 @@ approval before they go live.
   ROLLBACK_AND_PIVOT verdict over per-golden fix/regression sets, plus
   regression-aware critics, optional k≥2 rollouts for pass@1 stability, and an
   LLM-vs-tool performance audit.
-- A typed runtime that compiles `agent/` into an executable pipeline and serves
+- A typed runtime that compiles each agent (`agents/<id>/`) into an executable pipeline and serves
   requests over HTTP, MCP, **Slack** (Socket Mode — no public URL needed), an
   **opt-in WhatsApp** channel (see [docs/channels/whatsapp.md](docs/channels/whatsapp.md)),
   and an embeddable web widget. Every trace records the channel it came from.
@@ -96,9 +97,10 @@ login, no signup. OSS runs single-tenant on localhost by design.
 
 | Directory | Role |
 |---|---|
-| `agent/` | The trainable surface. YAML + Python. Mutated by the harness. |
+| `templates/agent/` | The committed agent template — seeds the default agent and every new agent. |
+| `agents/<id>/` | Runtime catalog; the sole live trainable surface. Mutated by the harness. (Operator-generated, gitignored.) |
 | `techniques/` | Catalog of layer types (RAG, reranking, routing). Read-only. |
-| `runtime/` | Compiles `agent/` into a pipeline and serves requests. |
+| `runtime/` | Compiles the active agent (`agents/<id>/`) into a pipeline and serves requests. |
 | `evals/` | The loss function. Goldens, suites, runners, attribution. |
 | `experiments/` | Candidate configs + results. The training workspace. |
 | `harness/` | The optimizer: proposer, critics, approver, executor, rollback. |
@@ -118,12 +120,14 @@ traces/  →  evals/  →  harness/proposer/  →  harness/critics/
                               ↓
                      harness/synthesizer/  ↔  experiments/candidates/
                               ↓                     (iterate)
-                     harness/approver/   →   agent/ (live)   →   traces/
+                     harness/approver/  →  agents/<id>/ (live)  →  traces/
 ```
 
-The harness mutates `agent/`, appends to `traces/` and `ledger/` via API, and
-ingests into `corpora/`. Everything else is framework. See
-`config/claude_code.yaml` for the authoritative allowlist.
+The harness mutates the active agent (`agents/<id>/`), appends to `traces/` and
+`ledger/` via API, and ingests into `corpora/`. Everything else is framework.
+See `config/claude_code.yaml` for the authoritative allowlist. The committed
+`templates/agent/` template, how agents are seeded + stripped, and the per-agent
+catalog model are documented in [docs/agents.md](docs/agents.md).
 
 Languages: Python (`harness/`, `runtime/`, `evals/`, `ml/`, `techniques/`),
 TypeScript (`backend/`, `ui/`).
