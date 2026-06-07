@@ -555,6 +555,7 @@ async def approve_lesson(
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    _invalidate_active_cache()
     return _lesson_to_summary(lesson)
 
 
@@ -696,6 +697,7 @@ async def rollback_version(version: str, payload: Optional[RollbackRequest] = No
 
     reason = (payload.reason if payload else None) or "ui rollback"
     rollback_to(version, reason=reason)
+    _invalidate_active_cache()
     return RollbackResponse(version=version, previous_version=previous, rolled_back=True)
 
 
@@ -1892,6 +1894,24 @@ def _agent_dir() -> Path:
     return d
 
 
+def _invalidate_active_cache() -> None:
+    """Drop the active agent's compiled-pipeline cache so the next request
+    serves the just-mutated surface (prompt/route edit, promote, rollback)."""
+    from runtime.agent_context import get_active
+    from runtime.executor.cache import invalidate as _invalidate_cache
+
+    _invalidate_cache(get_active())
+
+
+def _display_path(p: Path) -> str:
+    """Human-readable path for the UI — relative to the project root when the
+    file lives under it, otherwise the absolute path."""
+    try:
+        return str(p.relative_to(_PROJECT_ROOT))
+    except ValueError:
+        return str(p)
+
+
 def _read_yaml(path: Path) -> dict[str, Any]:
     import yaml
 
@@ -1998,7 +2018,7 @@ async def get_agent_config() -> AgentConfigView:
         version=cfg.version,
         description=cfg.description,
         system_prompt=AgentPromptView(
-            path=str(prompt_path.relative_to(_PROJECT_ROOT)),
+            path=_display_path(prompt_path),
             content=prompt_content,
         ),
         models=models,
@@ -2037,7 +2057,7 @@ async def update_prompt(payload: PromptUpdateRequest) -> PromptUpdateResponse:
     if not str(prompt_path).startswith(str(_agent_dir().resolve())):
         raise HTTPException(status_code=400, detail="resolved prompt path escapes the agent dir")
 
-    rel_path = prompt_path.relative_to(_PROJECT_ROOT)
+    rel_path = _display_path(prompt_path)
 
     def _write_prompt() -> None:
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2051,6 +2071,7 @@ async def update_prompt(payload: PromptUpdateRequest) -> PromptUpdateResponse:
         mutations_desc=[f"{rel_path} (manual)"],
         voice="I updated my system prompt directly.",
     )
+    _invalidate_active_cache()
 
     return PromptUpdateResponse(
         path=str(rel_path),
@@ -2126,6 +2147,8 @@ async def update_route(payload: RouteUpdateRequest) -> RouteUpdateResponse:
         mutations_desc=changes,  # populated by _write_route
         voice="I changed how I route requests between models.",
     )
+
+    _invalidate_active_cache()
 
     # Re-read route to return current state
     with route_path.open() as f:
