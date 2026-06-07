@@ -13,23 +13,13 @@ import pytest
 def client(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
+    # Isolate the agents catalog; _default is bootstrapped from the template.
     monkeypatch.setattr("runtime.agents.registry._DEFAULT_ROOT", tmp_path / "agents")
-    monkeypatch.setattr("runtime.agents.registry._LIVE_AGENT_DIR", tmp_path / "agent")
 
-    (tmp_path / "agent" / "prompts").mkdir(parents=True)
-    (tmp_path / "agent" / "agent.yaml").write_text("agent:\n  version: v0.0.1\n")
-    (tmp_path / "agent" / "prompts" / "system.md").write_text("seed")
-    (tmp_path / "agent" / "pipeline").mkdir()
-    (tmp_path / "agent" / "pipeline" / "route.yaml").write_text(
-        "stage: route\nknobs:\n  small: claude-haiku-4-5\n"
-    )
-
-    monkeypatch.setattr("runtime.server._reload_live_pipeline", lambda agent_id=None: None)
-
-    # Stub the pipeline so /api/<id>/chat doesn't try to call the real
-    # generate stage (which would hit Anthropic).
+    # Stub the per-agent serving seam so /api/<id>/chat doesn't compile the
+    # real pipeline + hit Anthropic. Both channel handlers resolve their
+    # executor through runtime.server._active_runtime.
     class _StubCfg: version = "v0.0.1"
-    class _StubPipeline: stages = []
     class _StubRecord:
         response = "stub answer"
         duration_ms = 1.0
@@ -41,9 +31,9 @@ def client(tmp_path, monkeypatch):
     class _StubExecutor:
         def run(self, request, history=None):
             return None, _StubRecord()
-    monkeypatch.setattr("runtime.server.load_agent", lambda _p: _StubCfg())
-    monkeypatch.setattr("runtime.server.compile_agent", lambda _cfg: _StubPipeline())
-    monkeypatch.setattr("runtime.server.PipelineExecutor", lambda _p: _StubExecutor())
+    monkeypatch.setattr(
+        "runtime.server._active_runtime", lambda: (_StubCfg(), _StubExecutor())
+    )
     monkeypatch.setattr("runtime.executor.tracing.write_trace", lambda rec, **kw: "stub-trace-id")
 
     from runtime.server import app
