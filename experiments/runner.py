@@ -22,8 +22,6 @@ from evals.runners.runner import (
 from experiments.branching import candidate_agent_path, list_candidates
 from experiments.types import CandidateManifest
 
-RESULTS_DIR = Path("experiments/results")
-EVAL_REPORTS_DIR = Path("evals/reports")
 
 
 @dataclass
@@ -136,7 +134,7 @@ def run_candidate(
     candidate_id: str,
     suite_path: Path | str,
     baseline_agent: Optional[Path | str] = None,
-    results_dir: Path | str = RESULTS_DIR,
+    results_dir: Optional[Path | str] = None,
     write_result: bool = True,
     n_rollouts: int = 1,
 ) -> CandidateResult:
@@ -193,14 +191,20 @@ def run_candidate(
     )
 
     if write_result:
+        if results_dir is None:
+            from runtime.agent_paths import experiments_results_dir
+            results_dir = experiments_results_dir()
         _append_result(result, results_dir)
 
     return result
 
 
 def _persist_candidate_report(
-    candidate_id: str, report: Any, reports_dir: Path | str = EVAL_REPORTS_DIR
+    candidate_id: str, report: Any, reports_dir: Optional[Path | str] = None
 ) -> Path:
+    if reports_dir is None:
+        from runtime.agent_paths import evals_reports_dir
+        reports_dir = evals_reports_dir()
     out_dir = Path(reports_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"cand_{candidate_id}.json"

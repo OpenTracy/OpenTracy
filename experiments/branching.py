@@ -15,7 +15,12 @@ import yaml
 from experiments.types import CandidateManifest, Mutation
 from runtime.compiler.loader import load_agent
 
-CANDIDATES_DIR = Path("experiments/candidates")
+
+def _candidates_dir(candidates_dir: Optional[Path | str]) -> Path:
+    if candidates_dir is not None:
+        return Path(candidates_dir)
+    from runtime.agent_paths import candidates_dir as _resolve
+    return _resolve()
 
 
 def _new_candidate_id() -> str:
@@ -63,7 +68,7 @@ def create_candidate(
     mutations: list[Mutation],
     description: Optional[str] = None,
     baseline_dir: Optional[Path | str] = None,
-    candidates_dir: Path | str = CANDIDATES_DIR,
+    candidates_dir: Optional[Path | str] = None,
 ) -> CandidateManifest:
     """Branch the active agent's surface into a new candidate dir and apply
     mutations.
@@ -81,7 +86,7 @@ def create_candidate(
 
         baseline_dir = resolve_live_dir()
     baseline_dir = Path(baseline_dir)
-    candidates_dir = Path(candidates_dir)
+    candidates_dir = _candidates_dir(candidates_dir)
     candidates_dir.mkdir(parents=True, exist_ok=True)
 
     cid = _new_candidate_id()
@@ -112,14 +117,14 @@ def create_candidate(
     return manifest
 
 
-def candidate_agent_path(candidate_id: str, candidates_dir: Path | str = CANDIDATES_DIR) -> Path:
+def candidate_agent_path(candidate_id: str, candidates_dir: Optional[Path | str] = None) -> Path:
     """Path to a candidate's agent.yaml — feed this to run_suite."""
-    return Path(candidates_dir) / candidate_id / "agent" / "agent.yaml"
+    return _candidates_dir(candidates_dir) / candidate_id / "agent" / "agent.yaml"
 
 
-def list_candidates(candidates_dir: Path | str = CANDIDATES_DIR) -> list[CandidateManifest]:
+def list_candidates(candidates_dir: Optional[Path | str] = None) -> list[CandidateManifest]:
     """Return all candidate manifests, oldest first."""
-    root = Path(candidates_dir)
+    root = _candidates_dir(candidates_dir)
     if not root.exists():
         return []
     out: list[CandidateManifest] = []

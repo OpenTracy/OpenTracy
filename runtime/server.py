@@ -397,14 +397,8 @@ def _lesson_trace_count(candidate_id: Optional[str]) -> Optional[int]:
     if not candidate_id:
         return None
     import json
-    from pathlib import Path
 
-    report_path = (
-        Path(__file__).resolve().parent.parent
-        / "evals"
-        / "reports"
-        / f"cand_{candidate_id}.json"
-    )
+    report_path = _reports_dir() / f"cand_{candidate_id}.json"
     if not report_path.exists():
         return None
     try:
@@ -626,8 +620,7 @@ async def get_lesson_traces(lesson_id: str) -> LessonTracesResponse:
         raise HTTPException(status_code=404, detail=f"unknown lesson {lesson_id!r}")
 
     cand_id = lesson.candidate_id or ""
-    project_root = Path(__file__).resolve().parent.parent
-    report_path = project_root / "evals" / "reports" / f"cand_{cand_id}.json"
+    report_path = _reports_dir() / f"cand_{cand_id}.json"
 
     if not cand_id or not report_path.exists():
         return LessonTracesResponse(
@@ -1382,8 +1375,15 @@ class ReportDetail(ReportSummary):
     per_rubric: dict[str, Any] = {}
 
 
-_EVALS_DIR = Path(__file__).resolve().parent.parent / "evals"
+_EVALS_DIR = Path(__file__).resolve().parent.parent / "evals"  # shared: suites + golden
 _REPORT_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
+def _reports_dir() -> Path:
+    """The active agent's eval-reports dir — reports are per-agent outputs."""
+    from runtime.agent_paths import evals_reports_dir
+
+    return evals_reports_dir()
 
 
 def _safe_yaml_load(path: Path) -> dict[str, Any]:
@@ -1409,7 +1409,7 @@ def _load_golden(golden_id: str) -> Optional[GoldenView]:
 
 
 def _list_report_files() -> list[Path]:
-    reports_dir = _EVALS_DIR / "reports"
+    reports_dir = _reports_dir()
     if not reports_dir.exists():
         return []
     return sorted(reports_dir.glob("*.json"))
@@ -1570,7 +1570,7 @@ async def run_suite_endpoint(name: str) -> ReportSummary:
         raise HTTPException(status_code=500, detail=f"run failed: {e}") from e
 
     report_id = f"{report.suite}_{_ts_safe(report.started_at)}"
-    path = _EVALS_DIR / "reports" / f"{report_id}.json"
+    path = _reports_dir() / f"{report_id}.json"
     meta = _load_report_meta(path)
     if meta is None:
         raise HTTPException(status_code=500, detail="report written but not readable")
@@ -1595,7 +1595,7 @@ async def run_all_suites_endpoint() -> dict[str, Any]:
             errors.append({"suite": sp.stem, "error": str(e)})
             continue
         report_id = f"{report.suite}_{_ts_safe(report.started_at)}"
-        meta = _load_report_meta(_EVALS_DIR / "reports" / f"{report_id}.json")
+        meta = _load_report_meta(_reports_dir() / f"{report_id}.json")
         if meta is not None:
             reports.append(meta)
     return {
@@ -1628,7 +1628,7 @@ async def list_reports(
 async def get_report(report_id: str) -> ReportDetail:
     if not _REPORT_ID_RE.match(report_id):
         raise HTTPException(status_code=400, detail=f"invalid report_id {report_id!r}")
-    path = _EVALS_DIR / "reports" / f"{report_id}.json"
+    path = _reports_dir() / f"{report_id}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"unknown report {report_id!r}")
     with path.open() as f:

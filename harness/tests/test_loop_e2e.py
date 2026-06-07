@@ -39,7 +39,8 @@ def loop_env(tmp_path, monkeypatch):
     live = tmp_path / "agents" / "_default"
     (live / "agent.yaml").write_text("agent:\n  version: v0.0.1\n")
     (live / "pipeline" / "retrieve.yaml").write_text("k: 5\n")
-    cand_dir = tmp_path / "experiments" / "candidates" / "cand-e2e" / "agent"
+    # Candidates are per-agent now: agents/_default/experiments/candidates.
+    cand_dir = live / "experiments" / "candidates" / "cand-e2e" / "agent"
     _write_agent(cand_dir, "v0.0.1")
     return tmp_path
 

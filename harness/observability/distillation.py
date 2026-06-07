@@ -26,9 +26,7 @@ from harness.observability.types import (
     TopEvent,
 )
 from ledger.writer import read_entries, read_lessons
-from runtime.agent_paths import distilled_dir
-
-RESULTS_GLOB = Path("experiments/results")
+from runtime.agent_paths import distilled_dir, experiments_results_dir
 
 
 # ---------- helpers ----------
@@ -49,8 +47,10 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _all_results() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for p in sorted(RESULTS_GLOB.glob("*.jsonl")):
-        out.extend(_read_jsonl(p))
+    results_dir = experiments_results_dir()
+    if results_dir.exists():
+        for p in sorted(results_dir.glob("*.jsonl")):
+            out.extend(_read_jsonl(p))
     return out
 
 

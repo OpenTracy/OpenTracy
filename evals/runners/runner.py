@@ -24,18 +24,16 @@ from runtime.executor.pipeline import PipelineExecutor
 from runtime.executor.tracing import write_trace
 from runtime.protocols import Message
 
-DEFAULT_REPORTS_DIR = Path("evals/reports")
-
-
 def run_suite(
     suite_path: Path | str,
     agent_path: Optional[Path | str] = None,
-    reports_dir: Path | str = DEFAULT_REPORTS_DIR,
+    reports_dir: Optional[Path | str] = None,
     write_report: bool = True,
 ) -> Report:
     """Load suite + agent, run all goldens, score, optionally write the report.
 
-    ``agent_path`` defaults to the active agent's agent.yaml."""
+    ``agent_path`` and ``reports_dir`` default to the active agent's agent.yaml
+    and per-agent reports dir."""
     suite = load_suite(suite_path)
     goldens = resolve_goldens(suite)
     rubrics = [make_rubric(spec) for spec in suite.rubrics]
@@ -101,6 +99,9 @@ def run_suite(
     )
 
     if write_report:
+        if reports_dir is None:
+            from runtime.agent_paths import evals_reports_dir
+            reports_dir = evals_reports_dir()
         _write_report(report, reports_dir)
 
     return report
