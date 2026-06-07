@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 from harness.critics.base import Critic, CriticStage, register_critic
 from harness.types import CriticContext, CriticVerdict

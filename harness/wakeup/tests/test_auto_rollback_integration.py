@@ -6,7 +6,6 @@ Lesson + notifications, and short-circuits with action='rolled_back'.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -132,7 +131,7 @@ def test_wakeup_executes_rollback_when_watcher_fires(
     # Notifications written for each channel
     notifs = list(tmp_notifications.glob("*.jsonl"))
     assert len(notifs) == 1
-    rows = [json.loads(l) for l in notifs[0].read_text().strip().split("\n")]
+    rows = [json.loads(line) for line in notifs[0].read_text().strip().split("\n")]
     assert {r["channel"] for r in rows} == {"email", "log"}
     assert all(r["lesson_id"] == outcome.lesson_id for r in rows)
 

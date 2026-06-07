@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from harness.proposer.dataset.coverage import cluster_gaps
 from router.core.clustering import KMeansClusterAssigner

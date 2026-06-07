@@ -61,7 +61,6 @@ def run_wakeup(
 ) -> WakeupOutcome:
     """Compose prompt with current health, call Claude Code, persist outcome."""
     from harness.wakeup.prompt import WAKEUP_PROMPT
-    from ledger.writer import write_decision
     from router.feedback.health import compute_router_health
 
     health = compute_router_health(embedder=embedder)
@@ -207,6 +206,8 @@ def _maybe_auto_rollback(health_snapshot: dict[str, Any]) -> Optional[WakeupOutc
                 "csat_after": decision.after.csat,
                 "resolution_before": decision.before.resolution_rate,
                 "resolution_after": decision.after.resolution_rate,
+                "foreseen": decision.foreseen,
+                "manifest_verdict": decision.suspect_manifest_verdict,
             },
         )
     except Exception as e:
@@ -312,6 +313,26 @@ _TARGET_BY_TOOL = {
     "propose_dataset_curation": "dataset",
 }
 
+_ROUTER_HINTS = ("router", "reroute", "routing", "retrain")
+_DATASET_HINTS = ("dataset", "curation", "curate", "corpus", "mining")
+
+
+def _infer_target_from_text(text: str) -> str:
+    """Classify a proposal as router vs dataset from free response text.
+
+    The claude_code_cli transport returns no structured tool_calls, so when a
+    lesson_id surfaces only in prose the target is inferred from keyword
+    presence. Ambiguous or absent hints fall back to ``"router"`` (the
+    longest-standing proposer tool), never ``"unknown"`` — no consumer handles
+    that.
+    """
+    low = text.lower()
+    router_hit = any(h in low for h in _ROUTER_HINTS)
+    dataset_hit = any(h in low for h in _DATASET_HINTS)
+    if dataset_hit and not router_hit:
+        return "dataset"
+    return "router"
+
 
 def _extract_proposed_lesson(result: Any) -> Optional[tuple[str, str]]:
     """Look at the introspect result for evidence that the model called
@@ -321,9 +342,8 @@ def _extract_proposed_lesson(result: Any) -> Optional[tuple[str, str]]:
 
     Two channels:
     1. ``result.tool_calls`` — preferred. Maps the tool name to a target.
-    2. ``result.response`` text — fallback regex for the lesson_id; we
-       can't distinguish target here, so default to ``"router"`` for
-       backwards-compatibility (P15.3.9 only had the router tool).
+    2. ``result.response`` text — fallback regex for the lesson_id; the target
+       is inferred from the text (the CLI transport exposes no tool_calls).
     """
     tool_calls = getattr(result, "tool_calls", None) or []
     for call in tool_calls:
@@ -332,15 +352,16 @@ def _extract_proposed_lesson(result: Any) -> Optional[tuple[str, str]]:
         if target is None:
             continue
         preview = getattr(call, "output_preview", "") or ""
-        m = re.search(r'"lesson_id"\s*:\s*"(L-[\w\-]+)"', preview)
+        # Match both JSON ("lesson_id": "...") and Python repr ('lesson_id': '...'),
+        # since the preview is str(output) of whatever the tool returned.
+        m = re.search(r"['\"]lesson_id['\"]\s*:\s*['\"](L-[\w\-]+)['\"]", preview)
         if m:
             return target, m.group(1)
 
     text = getattr(result, "response", "") or ""
     m = re.search(r"L-\d{8}-\d{6}-[a-f0-9]+", text)
     if m:
-        # Fallback — target unknown. Default to router for back-compat.
-        return "router", m.group(0)
+        return _infer_target_from_text(text), m.group(0)
     return None
 
 

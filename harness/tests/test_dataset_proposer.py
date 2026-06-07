@@ -91,7 +91,7 @@ def test_propose_yields_dataset_kind_proposal(tmp_datasets, tmp_path, monkeypatc
     assert proposal.metadata["added"] == 3
 
 
-def test_propose_attaches_prediction(tmp_datasets, tmp_path, monkeypatch):
+def test_propose_carries_gap_metadata_and_no_prediction(tmp_datasets, tmp_path, monkeypatch):
     raw_dir = tmp_path / "raw"
     _seed_failed_lookup_traces(raw_dir, n=2)
     monkeypatch.setattr(
@@ -103,9 +103,12 @@ def test_propose_attaches_prediction(tmp_datasets, tmp_path, monkeypatch):
     proposer = DatasetProposer(embedder=_MockEmbedder())
     proposal = proposer.propose("rag-gaps")
 
-    assert proposal.prediction is not None
-    assert proposal.prediction.rubric == "coverage_gap_score"
-    assert "rag-gaps" in proposal.prediction.rationale
+    # coverage_gap_score is not a suite rubric, so no falsifiable Prediction is
+    # attached; the gap signal rides in metadata for promote-time verification.
+    assert proposal.prediction is None
+    assert "gap_score_before" in proposal.metadata
+    assert "gap_score_after" in proposal.metadata
+    assert "rag-gaps" in proposal.metadata["rationale"]
 
 
 def test_propose_with_assigner_computes_gap_scores(tmp_datasets, tmp_path, monkeypatch):

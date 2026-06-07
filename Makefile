@@ -19,7 +19,7 @@
     install install-dev \
     runtime backend ui \
     up down \
-    test build
+    test typecheck build
 
 RUNTIME_PORT := $(or $(shell sed -nE 's/^OPENTRACY_RUNTIME_PORT=([0-9]+).*/\1/p' .env 2>/dev/null | tail -1),8001)
 BACKEND_PORT := $(or $(shell sed -nE 's/^OPENTRACY_BACKEND_PORT=([0-9]+).*/\1/p' .env 2>/dev/null | tail -1),8002)
@@ -65,6 +65,7 @@ help:
 	@echo "  down          Stop all services"
 	@echo ""
 	@echo "  test          Run the Python test suite"
+	@echo "  typecheck     Type-check the harness with mypy"
 	@echo "  build         Typecheck and build backend + UI"
 	@echo ""
 	@echo "Optional:"
@@ -115,6 +116,9 @@ down:
 
 test:
 	uv run --extra dev --extra rag pytest runtime techniques
+
+typecheck:
+	uv run --extra dev --extra rag mypy harness experiments evals
 
 build:
 	cd $(BACKEND_DIR) && npm run typecheck

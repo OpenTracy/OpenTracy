@@ -14,10 +14,11 @@ approval before they go live.
   real traces.
 - An **autonomous engineering loop** modeled on Lin et al.'s AHE algorithm
   (arxiv 2604.25850). The harness proposes candidate edits, critiques them,
-  runs evals, and applies the winners as file-level patches with cheap rollback.
-  Each edit is a falsifiable change with a per-change KEEP / IMPROVE /
-  ROLLBACK_AND_PIVOT verdict, inline semantic verification of rollout responses,
-  optional best-of-N exploration, and a long-term memory tier.
+  runs evals, and applies the winners — with per-file rollback. An edit can
+  carry a falsifiable prediction graded by a per-change KEEP / IMPROVE /
+  ROLLBACK_AND_PIVOT verdict over per-golden fix/regression sets, plus
+  regression-aware critics, optional k≥2 rollouts for pass@1 stability, and an
+  LLM-vs-tool performance audit.
 - A typed runtime that compiles `agent/` into an executable pipeline and serves
   requests over HTTP, MCP, **Slack** (Socket Mode — no public URL needed), an
   **opt-in WhatsApp** channel (see [docs/channels/whatsapp.md](docs/channels/whatsapp.md)),

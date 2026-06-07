@@ -270,8 +270,8 @@ def test_propose_queued_when_policy_review(monkeypatch, tmp_datasets, tmp_ledger
     # Queued lesson exists with status=awaiting_review
     lessons = [json.loads(p.read_text())
                for p in (tmp_ledger / "lessons").glob("*.json")]
-    assert any(l.get("status") == "awaiting_review" and l.get("kind") == "dataset"
-               for l in lessons)
+    assert any(le.get("status") == "awaiting_review" and le.get("kind") == "dataset"
+               for le in lessons)
 
 
 def test_propose_rejected_when_critic_blocks(

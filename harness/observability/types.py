@@ -54,11 +54,12 @@ class DistilledSession:
 
     # Predictions (P7.4-7.5)
     prediction: Optional[dict[str, Any]] = None      # {rubric, expected_delta, rationale}
-    actual: Optional[dict[str, Any]] = None          # {rubric, actual_delta}
+    actual: Optional[dict[str, Any]] = None          # {"rubric": {...}} and/or {"manifest": {...}}
     prediction_verified: Optional[bool] = None       # null if no prediction
 
     # Aggregate signals
     aggregate: Optional[SessionAggregate] = None
+    performance: Optional[dict[str, Any]] = None     # {llm_ms, tool_ms, bottleneck, …}
     overall_score: Optional[float] = None
     pass_rate: Optional[float] = None
     delta_overall: Optional[float] = None

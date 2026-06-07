@@ -15,8 +15,10 @@ Two entry points:
 
 from __future__ import annotations
 
+import os
 import secrets
 import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -24,31 +26,133 @@ from typing import Any, Optional
 import yaml
 
 from experiments.branching import candidate_agent_path
-from harness.types import LoopOutcome, VerificationOutcome, kind_from_mutations
+from harness.types import (
+    LoopOutcome,
+    Prediction,
+    VerificationOutcome,
+    kind_from_mutations,
+)
 from ledger.types import Lesson
-from ledger.versioning import LIVE_AGENT, read_version, snapshot_agent
-from ledger.writer import read_lesson, update_lesson, write_entry, write_lesson
+from ledger.versioning import LIVE_AGENT, bump_patch, read_version, snapshot_agent
+from ledger.writer import (
+    read_entries,
+    read_lesson,
+    update_lesson,
+    write_entry,
+    write_lesson,
+)
 
 
-def _bump_patch(version: str) -> str:
-    """v0.0.1 → v0.0.2 (or 0.0.1 → 0.0.2 if no `v` prefix)."""
-    has_v = version.startswith("v")
-    core = version[1:] if has_v else version
-    parts = core.split(".")
-    if not parts[-1].isdigit():
-        # fallback: append .1
-        parts.append("1")
-    else:
-        parts[-1] = str(int(parts[-1]) + 1)
-    return ("v" if has_v else "") + ".".join(parts)
+def _manifest_verdict_dict(mv: Any) -> dict[str, Any]:
+    """Serialize a ManifestVerdict for the ledger payload."""
+    return {
+        "verdict": getattr(mv.verdict, "value", mv.verdict),
+        "fix_precision": mv.fix_precision,
+        "fix_recall": mv.fix_recall,
+        "regression_precision": mv.regression_precision,
+        "regression_recall": mv.regression_recall,
+        "realized_fixes": mv.realized_fixes,
+        "realized_regressions": mv.realized_regressions,
+        "unpredicted_regressions": mv.unpredicted_regressions,
+        "net_fixes": mv.net_fixes,
+    }
+
+
+def _now_iso() -> str:
+    """Second-precision UTC ISO with a trailing Z — the promoted_at format."""
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _new_lesson_id() -> str:
+    return f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
+
+
+def _prediction_dict(pred: Any) -> dict[str, Any]:
+    return {
+        "rubric": pred.rubric,
+        "expected_delta": pred.expected_delta,
+        "rationale": pred.rationale,
+        "confidence": pred.confidence,
+    }
+
+
+def _verification_dict(v: Any) -> dict[str, Any]:
+    return {
+        "rubric": v.rubric,
+        "expected_delta": v.expected_delta,
+        "actual_delta": v.actual_delta,
+        "direction_correct": v.direction_correct,
+        "magnitude_met": v.magnitude_met,
+        "verdict": v.verdict,
+    }
+
+
+def _verdicts_list(verdicts: Any) -> list[dict[str, Any]]:
+    return [
+        {"critic": v.critic, "approved": v.approved, "reason": v.reason}
+        for v in verdicts
+    ]
+
+
+_bump_patch = bump_patch  # shared primitive; see ledger.versioning
 
 
 def _set_version(agent_yaml: Path, new_version: str) -> None:
     with agent_yaml.open() as f:
         doc = yaml.safe_load(f)
+    if not isinstance(doc, dict) or not isinstance(doc.get("agent"), dict):
+        raise ValueError(
+            f"agent.yaml at {agent_yaml} missing top-level 'agent:' mapping; "
+            "cannot set version"
+        )
     doc["agent"]["version"] = new_version
     with agent_yaml.open("w") as f:
         yaml.safe_dump(doc, f, sort_keys=False)
+
+
+def _validate_candidate_agent(cand_agent_dir: Path) -> None:
+    """Fail fast before touching the live tree: the candidate must have a
+    well-formed agent.yaml with an `agent:` mapping."""
+    cfg = cand_agent_dir / "agent.yaml"
+    if not cfg.exists():
+        raise ValueError(f"candidate {cand_agent_dir} has no agent.yaml")
+    with cfg.open() as f:
+        doc = yaml.safe_load(f)
+    if not isinstance(doc, dict) or not isinstance(doc.get("agent"), dict):
+        raise ValueError(
+            f"candidate agent.yaml at {cfg} missing top-level 'agent:' mapping"
+        )
+
+
+def _atomic_swap_agent(
+    cand_agent_dir: Path, agent_dir: Path, new_version: str
+) -> None:
+    """Build the new tree in a sibling temp dir, bump its version there, then
+    os.replace it over the live agent_dir. The live tree stays intact until the
+    swap, so a mid-copy failure can never leave a half-written live surface.
+    """
+    parent = agent_dir.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{agent_dir.name}.new-", dir=parent))
+    backup = parent / f".{agent_dir.name}.old-{secrets.token_hex(4)}"
+    try:
+        new_tree = staging / agent_dir.name
+        shutil.copytree(cand_agent_dir, new_tree)
+        _set_version(new_tree / "agent.yaml", new_version)
+        if agent_dir.exists():
+            os.replace(agent_dir, backup)
+        os.replace(new_tree, agent_dir)
+    except Exception:
+        if backup.exists() and not agent_dir.exists():
+            os.replace(backup, agent_dir)
+        raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(backup, ignore_errors=True)
 
 
 _kind_from_mutations = kind_from_mutations  # kept for callers below
@@ -180,9 +284,7 @@ def build_lesson(
     """
     mutations = [m.describe() for m in outcome.proposal.mutations]
     kind = _kind_from_mutations(mutations)
-    lesson_id = (
-        f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
-    )
+    lesson_id = _new_lesson_id()
     delta = outcome.candidate_result.delta if outcome.candidate_result else {}
     delta_overall = delta.get("overall_score", 0.0) if delta else 0.0
 
@@ -224,15 +326,12 @@ def promote(
     # 1. Snapshot current
     old_version, _ = snapshot_agent(agent_dir)
 
-    # 2. Replace live with candidate
+    # 2. Validate candidate, then atomically swap it over live (version bumped
+    #    in the staged tree so a mid-copy failure can't destroy live agent/).
     cand_agent_dir = candidate_agent_path(outcome.candidate_id).parent
-    if agent_dir.exists():
-        shutil.rmtree(agent_dir)
-    shutil.copytree(cand_agent_dir, agent_dir)
-
-    # 3. Bump version
+    _validate_candidate_agent(cand_agent_dir)
     new_version = _bump_patch(old_version)
-    _set_version(agent_dir / "agent.yaml", new_version)
+    _atomic_swap_agent(cand_agent_dir, agent_dir, new_version)
 
     # 4. Ledger entry
     delta = outcome.candidate_result.delta if outcome.candidate_result else {}
@@ -241,28 +340,15 @@ def promote(
     payload: dict = {
         "mutations": [m.describe() for m in outcome.proposal.mutations],
         "delta": delta,
-        "verdicts": [
-            {"critic": v.critic, "approved": v.approved, "reason": v.reason}
-            for v in outcome.verdicts
-        ],
+        "verdicts": _verdicts_list(outcome.verdicts),
     }
     # AHE pillar 3 — record prediction + verification when present
     if outcome.proposal.prediction is not None:
-        payload["prediction"] = {
-            "rubric": outcome.proposal.prediction.rubric,
-            "expected_delta": outcome.proposal.prediction.expected_delta,
-            "rationale": outcome.proposal.prediction.rationale,
-            "confidence": outcome.proposal.prediction.confidence,
-        }
+        payload["prediction"] = _prediction_dict(outcome.proposal.prediction)
     if outcome.verification is not None:
-        payload["verification"] = {
-            "rubric": outcome.verification.rubric,
-            "expected_delta": outcome.verification.expected_delta,
-            "actual_delta": outcome.verification.actual_delta,
-            "direction_correct": outcome.verification.direction_correct,
-            "magnitude_met": outcome.verification.magnitude_met,
-            "verdict": outcome.verification.verdict,
-        }
+        payload["verification"] = _verification_dict(outcome.verification)
+    if outcome.manifest_verdict is not None:
+        payload["manifest_verdict"] = _manifest_verdict_dict(outcome.manifest_verdict)
 
     entry = write_entry(
         kind="promote",
@@ -280,9 +366,7 @@ def promote(
         parent_version=old_version,
         new_version=new_version,
         entry_id=entry.entry_id,
-        promoted_at=datetime.now(timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z"),
+        promoted_at=_now_iso(),
     )
     write_lesson(lesson)
 
@@ -322,16 +406,11 @@ def promote_queued(
 
     old_version, _ = snapshot_agent(agent_dir)
 
-    if agent_dir.exists():
-        shutil.rmtree(agent_dir)
-    shutil.copytree(cand_agent_dir, agent_dir)
-
+    _validate_candidate_agent(cand_agent_dir)
     new_version = _bump_patch(old_version)
-    _set_version(agent_dir / "agent.yaml", new_version)
+    _atomic_swap_agent(cand_agent_dir, agent_dir, new_version)
 
-    promoted_at = (
-        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    )
+    promoted_at = _now_iso()
 
     payload: dict[str, Any] = {
         "mutations": lesson.mutations,
@@ -341,6 +420,19 @@ def promote_queued(
     }
     if reviewer:
         payload["reviewer"] = reviewer
+
+    # Carry the decision-observability data (AHE pillar 3) forward from the
+    # queued_review entry so a human-approved promotion records the same
+    # prediction/manifest_verdict/verdicts as the auto path. `verification` is
+    # legitimately absent here — none is computed on the queued path.
+    if lesson.ledger_entry_id:
+        for e in read_entries():
+            if e.entry_id == lesson.ledger_entry_id:
+                queued = e.payload or {}
+                for key in ("verdicts", "prediction", "manifest_verdict"):
+                    if key in queued:
+                        payload[key] = queued[key]
+                break
 
     entry = write_entry(
         kind="promote",
@@ -396,9 +488,7 @@ def record_manual_change(
     new_version = _bump_patch(old_version)
     _set_version(agent_dir / "agent.yaml", new_version)
 
-    promoted_at = (
-        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    )
+    promoted_at = _now_iso()
 
     entry = write_entry(
         kind="promote",
@@ -412,9 +502,7 @@ def record_manual_change(
         },
     )
 
-    lesson_id = (
-        f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
-    )
+    lesson_id = _new_lesson_id()
     lesson = Lesson(
         id=lesson_id,
         version=new_version,
@@ -459,13 +547,17 @@ def record_manual_router_change(
     proposal_source="human")``, rolling back via the standard
     ``/v1/versions/{v}/rollback`` machinery.
     """
-    json_path, _ = apply_router_candidate(new_payload, versions_dir=versions_dir)
-    new_version = int(new_payload["version"])
+    # Validate the version before applying, so a malformed payload can't flip
+    # the live pointer and then crash mid-record.
+    try:
+        new_version = int(new_payload["version"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"router_config payload has no valid integer 'version': {exc}")
     parent_version = max(0, new_version - 1)
 
-    promoted_at = (
-        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    )
+    json_path, _ = apply_router_candidate(new_payload, versions_dir=versions_dir)
+
+    promoted_at = _now_iso()
 
     mutations_desc = [f"versions/router_config_v{new_version}.json"]
     entry = write_entry(
@@ -479,9 +571,7 @@ def record_manual_router_change(
         },
     )
 
-    lesson_id = (
-        f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
-    )
+    lesson_id = _new_lesson_id()
     lesson = Lesson(
         id=lesson_id,
         version=str(new_version),
@@ -531,9 +621,7 @@ def record_manual_dataset_change(
     apply_edit()
     parent_version = max(0, new_version - 1)
 
-    promoted_at = (
-        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    )
+    promoted_at = _now_iso()
 
     mutations_desc = [f"datasets/{name}/v{new_version}.json"]
     entry = write_entry(
@@ -547,9 +635,7 @@ def record_manual_dataset_change(
         },
     )
 
-    lesson_id = (
-        f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
-    )
+    lesson_id = _new_lesson_id()
     lesson = Lesson(
         id=lesson_id,
         version=str(new_version),
@@ -729,11 +815,7 @@ def promote_router_config(
     json_path, npz_path = apply_router_candidate(payload, versions_dir=versions_dir)
     new_version = int(payload["version"])
 
-    promoted_at = (
-        datetime.now(timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z")
-    )
+    promoted_at = _now_iso()
 
     # 2. Ledger entry — record the candidate metadata for later inspection.
     metadata = payload.get("metadata") or {}
@@ -747,18 +829,12 @@ def promote_router_config(
         "n_models": len(payload.get("model_psi") or {}),
         "fitted_from": payload.get("fitted_from"),
         "metadata": metadata,
-        "verdicts": [
-            {"critic": v.critic, "approved": v.approved, "reason": v.reason}
-            for v in outcome.verdicts
-        ],
+        "verdicts": _verdicts_list(outcome.verdicts),
     }
     if outcome.proposal.prediction is not None:
-        ledger_payload["prediction"] = {
-            "rubric": outcome.proposal.prediction.rubric,
-            "expected_delta": outcome.proposal.prediction.expected_delta,
-            "rationale": outcome.proposal.prediction.rationale,
-            "confidence": outcome.proposal.prediction.confidence,
-        }
+        ledger_payload["prediction"] = _prediction_dict(outcome.proposal.prediction)
+    if outcome.manifest_verdict is not None:
+        ledger_payload["manifest_verdict"] = _manifest_verdict_dict(outcome.manifest_verdict)
 
     entry = write_entry(
         kind="promote",
@@ -771,10 +847,7 @@ def promote_router_config(
 
     # 3. Lesson — uses the existing build_lesson scaffold so the Evolution
     # timeline picks it up uniformly.
-    lesson_id = (
-        f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-"
-        f"{secrets.token_hex(2)}"
-    )
+    lesson_id = _new_lesson_id()
     proposal_source = (
         "claude_code"
         if outcome.proposal.source == "claude_code"
@@ -842,6 +915,7 @@ def _verify_dataset_promotion(
     from router.config_io import load_current_config
     from router.data.dataset_io import load_current
     from router.errors import (
+        DatasetNotFoundError,
         RouterConfigInvalidError,
         RouterConfigNotFoundError,
     )
@@ -853,11 +927,13 @@ def _verify_dataset_promotion(
     except (RouterConfigNotFoundError, RouterConfigInvalidError):
         return VerificationOutcome.evaluate(prediction, prediction.expected_delta)
 
-    # Re-measure gap_score on the now-live dataset.
+    # Re-measure gap_score on the now-live dataset. A missing dataset is the
+    # legitimate cold-start case (face-value); a corrupt/unreadable one
+    # (DatasetInvalidError, I/O) must surface, not masquerade as verified.
     name = payload["name"]
     try:
         live_dataset = load_current(name, datasets_dir=datasets_dir)
-    except Exception:
+    except DatasetNotFoundError:
         return VerificationOutcome.evaluate(prediction, prediction.expected_delta)
 
     report = cluster_gaps(live_dataset, assigner=assigner)
@@ -922,25 +998,16 @@ def promote_dataset(
     new_version = int(payload["version"])
     name = str(payload["name"])
 
-    # AHE Pillar 3 — materialize the VerificationOutcome from live state
-    # before recording the Lesson. Only when the proposer attached a
-    # Prediction *and* the caller didn't pre-compute one (e.g. via
-    # harness.loop._actual_delta_for_rubric).
-    if (
-        outcome.proposal.prediction is not None
-        and outcome.verification is None
-    ):
-        outcome.verification = _verify_dataset_promotion(
+    # Local so we never mutate the caller's outcome.
+    verification = outcome.verification
+    if outcome.proposal.prediction is not None and verification is None:
+        verification = _verify_dataset_promotion(
             outcome.proposal.prediction,
             payload,
             datasets_dir=datasets_dir,
         )
 
-    promoted_at = (
-        datetime.now(timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z")
-    )
+    promoted_at = _now_iso()
 
     metadata = payload.get("metadata") or {}
     added = int(metadata.get("added", 0))
@@ -957,27 +1024,14 @@ def promote_dataset(
         "gap_score_before": gap_score_before,
         "gap_score_after": gap_score_after,
         "metadata": metadata,
-        "verdicts": [
-            {"critic": v.critic, "approved": v.approved, "reason": v.reason}
-            for v in outcome.verdicts
-        ],
+        "verdicts": _verdicts_list(outcome.verdicts),
     }
     if outcome.proposal.prediction is not None:
-        ledger_payload["prediction"] = {
-            "rubric": outcome.proposal.prediction.rubric,
-            "expected_delta": outcome.proposal.prediction.expected_delta,
-            "rationale": outcome.proposal.prediction.rationale,
-            "confidence": outcome.proposal.prediction.confidence,
-        }
-    if outcome.verification is not None:
-        ledger_payload["verification"] = {
-            "rubric": outcome.verification.rubric,
-            "expected_delta": outcome.verification.expected_delta,
-            "actual_delta": outcome.verification.actual_delta,
-            "direction_correct": outcome.verification.direction_correct,
-            "magnitude_met": outcome.verification.magnitude_met,
-            "verdict": outcome.verification.verdict,
-        }
+        ledger_payload["prediction"] = _prediction_dict(outcome.proposal.prediction)
+    if verification is not None:
+        ledger_payload["verification"] = _verification_dict(verification)
+    if outcome.manifest_verdict is not None:
+        ledger_payload["manifest_verdict"] = _manifest_verdict_dict(outcome.manifest_verdict)
 
     entry = write_entry(
         kind="promote",
@@ -988,10 +1042,7 @@ def promote_dataset(
         payload=ledger_payload,
     )
 
-    lesson_id = (
-        f"L-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-"
-        f"{secrets.token_hex(2)}"
-    )
+    lesson_id = _new_lesson_id()
     proposal_source = (
         "claude_code"
         if outcome.proposal.source == "claude_code"
@@ -1013,10 +1064,8 @@ def promote_dataset(
     if gap_score_before is not None and gap_score_after is not None:
         gap_text = f" (gap_score {float(gap_score_before):.2f} → {float(gap_score_after):.2f})"
     verification_text = ""
-    if outcome.verification is not None:
-        verification_text = (
-            f" Prediction {outcome.verification.verdict}."
-        )
+    if verification is not None:
+        verification_text = f" Prediction {verification.verdict}."
     lesson_summary = (
         f"Promoted dataset {name!r} v{new_version} — "
         f"added {added} sample(s){gap_text}.{verification_text}"

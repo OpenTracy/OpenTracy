@@ -1,0 +1,21 @@
+# Loop decision blueprint — the critic set, selection key, and promote strategy
+# the harness loop uses. Edit to reconfigure the loop without code changes.
+#
+# A critic is either a bare name or {name, params}. To gate on per-golden
+# regressions, add e.g.:
+#   - {name: regression_budget, params: {max_regressions: 1}}
+# To block promotion when the manifest verdict is ROLLBACK_AND_PIVOT, add:
+#   - manifest_gate
+#
+# selection: selection_key (pass-rate -> quality -> latency) or two_tier
+# (pass-rate -> latency, the Paper-2 literal).
+version: 1
+pre_critics:
+  - scope
+post_critics:
+  - eval_lift
+selection: selection_key
+promote_strategy: best
+# Stages counted as LLM time in the performance audit (the rest are tool/compute).
+llm_stages:
+  - generate

@@ -20,8 +20,8 @@ The proposer:
      `max_additions`). Already-existing IDs are filtered.
   5. Builds the v(n+1) payload: existing samples + new samples,
      bumped version, appended history line.
-  6. Wraps it in a Proposal with kind="dataset" inline metadata + an
-     optional Prediction tying coverage-gap shrinkage to the candidate.
+  6. Wraps it in a Proposal with kind="dataset" inline metadata, including
+     the before/after coverage gap_score for promote-time verification.
 
 Cold-start (no dataset exists yet for `name`) raises
 `DatasetNotFoundError` — the caller (MCP / wakeup) can create one
@@ -31,14 +31,14 @@ manually first.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
 from experiments.types import Mutation
 from harness.proposer.dataset.coverage import CoverageReport, cluster_gaps
 from harness.proposer.dataset.mining import get_adapter
-from harness.types import Prediction, Proposal
+from harness.types import Proposal
 from router.core.clustering import ClusterAssigner
 from router.core.embeddings import PromptEmbedder
 from router.data.dataset import Dataset, DatasetSample
@@ -127,13 +127,9 @@ class DatasetProposer:
                 f" Expecting gap_score {gap_before:.2f} → {gap_after:.2f}."
             )
 
-        prediction = Prediction(
-            rubric="coverage_gap_score",
-            expected_delta=(gap_after - gap_before) if (gap_before is not None and gap_after is not None) else -0.05,
-            rationale=rationale,
-            confidence=0.45,
-        )
-
+        # No Prediction: coverage_gap_score is not an eval-suite rubric, so the
+        # loop has no realized signal to verify it against. The gap_score is
+        # re-measured at promote time from the metadata below.
         proposal = Proposal(
             mutations=[
                 Mutation(
@@ -154,8 +150,8 @@ class DatasetProposer:
                 "total_size": len(payload["samples"]),
                 "gap_score_before": gap_before,
                 "gap_score_after": gap_after,
+                "rationale": rationale,
             },
-            prediction=prediction,
         )
         logger.info(
             "proposed dataset %s v%d: added=%d source=%s",

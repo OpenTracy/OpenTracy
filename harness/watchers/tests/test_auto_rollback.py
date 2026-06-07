@@ -5,11 +5,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 
-import pytest
 
 from harness.watchers.auto_rollback import (
     RollbackDecision,
-    WindowMetrics,
     check_auto_rollback,
 )
 
@@ -341,7 +339,6 @@ def test_notification_round_trip(tmp_path, monkeypatch):
     from runtime.store.notifications import (
         notify_channels,
         iter_notifications,
-        write_notification,
     )
 
     root = tmp_path / "notifications"
@@ -365,3 +362,46 @@ def test_notification_empty_channel_list(tmp_path):
     from runtime.store.notifications import notify_channels
     rows = notify_channels([], subject="x", body="y", root=tmp_path / "n")
     assert rows == []
+
+
+def _csat_drop_feedback(promote_at):
+    return [
+        _feedback_row(score=5, at=promote_at - timedelta(hours=6)),
+        _feedback_row(score=5, at=promote_at - timedelta(hours=3)),
+        _feedback_row(score=2, at=promote_at + timedelta(hours=3)),
+        _feedback_row(score=2, at=promote_at + timedelta(hours=6)),
+    ]
+
+
+def test_rollback_flags_foreseen_when_manifest_was_rollback():
+    now = datetime(2026, 5, 12, 12, 0, tzinfo=timezone.utc)
+    promote_at = now - timedelta(hours=12)
+    promote = _promote_entry(when=promote_at)
+    promote["payload"] = {"manifest_verdict": {"verdict": "rollback_and_pivot"}}
+    out = check_auto_rollback(
+        policy=_FakePolicy(),
+        now_iso=_iso(now),
+        entries_iter=[promote],
+        feedback_iter=_csat_drop_feedback(promote_at),
+        traces_iter=[],
+    )
+    assert out is not None
+    assert out.foreseen is True
+    assert out.suspect_manifest_verdict == "rollback_and_pivot"
+    assert "foreseeable" in out.reason
+
+
+def test_rollback_not_foreseen_without_manifest():
+    now = datetime(2026, 5, 12, 12, 0, tzinfo=timezone.utc)
+    promote_at = now - timedelta(hours=12)
+    out = check_auto_rollback(
+        policy=_FakePolicy(),
+        now_iso=_iso(now),
+        entries_iter=[_promote_entry(when=promote_at)],
+        feedback_iter=_csat_drop_feedback(promote_at),
+        traces_iter=[],
+    )
+    assert out is not None
+    assert out.foreseen is False
+    assert out.suspect_manifest_verdict is None
+    assert "foreseeable" not in out.reason

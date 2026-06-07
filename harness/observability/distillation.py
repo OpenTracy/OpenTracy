@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from experiments.branching import list_candidates
+from harness.observability.audit import performance_audit
 from harness.observability.types import (
     DistilledEpoch,
     DistilledSession,
@@ -29,7 +30,6 @@ from ledger.writer import read_entries, read_lessons
 SESSIONS_DIR = Path("traces/distilled/sessions")
 EPOCHS_DIR = Path("traces/distilled/epochs")
 RESULTS_GLOB = Path("experiments/results")
-TRACES_GLOB = Path("traces/raw")
 
 
 # ---------- helpers ----------
@@ -53,21 +53,6 @@ def _all_results() -> list[dict[str, Any]]:
     for p in sorted(RESULTS_GLOB.glob("*.jsonl")):
         out.extend(_read_jsonl(p))
     return out
-
-
-def _all_traces() -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for p in sorted(TRACES_GLOB.glob("*.jsonl")):
-        out.extend(_read_jsonl(p))
-    return out
-
-
-def _percentile(xs: list[float], q: float) -> float:
-    if not xs:
-        return 0.0
-    s = sorted(xs)
-    k = max(0, min(len(s) - 1, int(q * (len(s) - 1))))
-    return s[k]
 
 
 def _now_iso() -> str:
@@ -118,12 +103,13 @@ def distill_session(
     if promote_entries:
         final_decision = "auto_approve"
         promoted_version = promote_entries[-1].agent_version_after
+    elif any(e.kind == "rejected" for e in ledger_rows):
+        final_decision = "rejected_by_critic"
+    elif any(e.kind == "queued_review" for e in ledger_rows):
+        final_decision = "queued_for_review"
     elif latest is not None:
-        # Couldn't find promotion → either queued, rejected by critic, or rejected by policy
-        # We don't have full visibility from the result row alone; we mark unknown for now
-        final_decision = "queue_human_or_rejected"
+        final_decision = "scored_only"
 
-    # Aggregate (we approximate from result summary; raw trace timing not always tied here)
     agg: Optional[SessionAggregate] = None
     if latest is not None:
         cand = latest.get("candidate", {})
@@ -133,9 +119,62 @@ def distill_session(
             n_traces=n_total,
             n_passed=n_passed,
             n_failed=max(0, n_total - n_passed),
-            avg_latency_ms=0.0,   # not in result row; would need trace lookup
-            p95_latency_ms=0.0,
+            avg_latency_ms=float(cand.get("avg_latency_ms", 0.0) or 0.0),
+            p95_latency_ms=float(cand.get("p95_latency_ms", 0.0) or 0.0),
         )
+
+    performance_dict: Optional[dict[str, Any]] = None
+    if latest is not None:
+        cand_view = latest.get("candidate", {})
+        performance_dict = performance_audit(
+            cand_view.get("stage_ms", {}),
+            llm_ms=cand_view.get("llm_ms"),
+            tool_ms=cand_view.get("tool_ms"),
+            n_llm_calls=cand_view.get("n_llm_calls"),
+        )
+
+    # Recover the prediction + verdict from the latest decision entry — promoted,
+    # queued for review, or rejected (not just promoted).
+    prediction_dict: Optional[dict[str, Any]] = None
+    actual_dict: Optional[dict[str, Any]] = None
+    prediction_verified: Optional[bool] = None
+    decision_entries = [
+        e for e in ledger_rows if e.kind in ("promote", "queued_review", "rejected")
+    ]
+    if decision_entries:
+        pl = decision_entries[-1].payload or {}
+        pred = pl.get("prediction")
+        if pred:
+            prediction_dict = {
+                "rubric": pred.get("rubric"),
+                "expected_delta": pred.get("expected_delta"),
+                "rationale": pred.get("rationale"),
+            }
+        # A payload can carry the rubric-scalar verification AND the per-golden
+        # manifest verdict; keep them in separate namespaces so neither clobbers
+        # the other, and treat the prediction as verified only if every present
+        # signal verified.
+        actual: dict[str, Any] = {}
+        verdicts: list[bool] = []
+        verif = pl.get("verification")
+        if verif:
+            actual["rubric"] = {
+                "rubric": verif.get("rubric"),
+                "actual_delta": verif.get("actual_delta"),
+                "verdict": verif.get("verdict"),
+            }
+            verdicts.append(verif.get("verdict") == "verified")
+        mv = pl.get("manifest_verdict")
+        if mv:
+            actual["manifest"] = {
+                "verdict": mv.get("verdict"),
+                "fix_recall": mv.get("fix_recall"),
+                "regression_recall": mv.get("regression_recall"),
+            }
+            verdicts.append(mv.get("verdict") == "keep")
+        if actual:
+            actual_dict = actual
+            prediction_verified = all(verdicts) if verdicts else None
 
     # Build summary
     mutations_str = ", ".join(m.describe() for m in manifest.mutations)
@@ -172,10 +211,11 @@ def distill_session(
         suite=latest.get("suite") if latest else None,
         proposal_source=None,            # not tracked in v0
         mutations=[m.describe() for m in manifest.mutations],
-        prediction=None,                  # P7.4 will populate
-        actual=None,
-        prediction_verified=None,
+        prediction=prediction_dict,
+        actual=actual_dict,
+        prediction_verified=prediction_verified,
         aggregate=agg,
+        performance=performance_dict,
         overall_score=(latest["candidate"]["overall_score"] if latest else None),
         pass_rate=(latest["candidate"]["pass_rate"] if latest else None),
         delta_overall=(latest["delta"]["overall_score"] if latest else None),

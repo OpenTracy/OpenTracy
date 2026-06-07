@@ -25,13 +25,13 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from experiments.types import Mutation
 from harness.proposer.router_psi_compute import compute_blended_psi
 from harness.types import Prediction, Proposal
-from router.config_io import get_current_version, now_iso
+from router.config_io import get_current_version
 from router.core.embeddings import PromptEmbedder
 from router.errors import NotEnoughDataError
 from router.feedback.store_adapter import iter_traces_since
@@ -55,7 +55,6 @@ class RouterProposerConfig:
 
     min_corpus_size: int = DEFAULT_MIN_CORPUS_SIZE
     target_k: Optional[int] = None       # None → sqrt(N/2) heuristic
-    max_augmentation_samples: int = 500  # reserved for future use
     production_alpha: float = DEFAULT_PRODUCTION_ALPHA
     proposal_source: str = DEFAULT_PROPOSAL_SOURCE
 
@@ -144,14 +143,17 @@ class RouterProposer:
             },
             prediction=Prediction(
                 rubric="overall",
-                expected_delta=max(0.0, materials.fit_result.silhouette - 0.0),
+                # A clustering silhouette is not an eval-score delta; stake a
+                # modest fixed lift at low confidence rather than miscalibrating
+                # the verifier against a different metric's scale.
+                expected_delta=0.02,
                 rationale=(
                     f"Fit K={materials.fit_result.k} clusters on "
                     f"{materials.fit_result.n_samples} production traces "
                     f"(silhouette={materials.fit_result.silhouette:.3f}). "
-                    "Expecting AUROC lift over the current config's baseline."
+                    "Expecting a small overall lift over the current config's baseline."
                 ),
-                confidence=0.4,
+                confidence=0.3,
             ),
         )
         logger.info(
@@ -297,35 +299,17 @@ def _intra_cluster_distance(m: _ProposeMaterials) -> Optional[float]:
     doesn't self-baseline on its first arbitrary embedding batch. The
     fix flagged in P15.3.4 lives here.
     """
-    if not m.traces:
+    if not any(t.input_text for t in m.traces):
         return None
-    distances = []
-    for t in m.traces:
-        if not t.input_text:
-            continue
-        # We can't recover the original embedding here without re-embedding,
-        # which we already did above. The proposer keeps the trade-off
-        # cheap: cluster_id is set, recompute once with the cached embedder.
-        # The math: distance between the trace's embedding and its assigned
-        # centroid. We approximate via the assigner's centroids stored in
-        # the fit_result.
-        # (Re-embedding is fine here — embedder is cached process-wide.)
-        # Avoid a circular import; deferred to _intra_cluster_for_traces.
-        return _intra_cluster_for_traces(m)
-    return None
+    return _intra_cluster_for_traces(m)
 
 
 def _intra_cluster_for_traces(m: _ProposeMaterials) -> float:
     import numpy as np
 
-    centroids = m.fit_result.assigner.centroids
-    embedder = None  # not stored on materials; the proposer's _gather already used it
-
-    # We re-embed lazily here. To avoid a runtime dep, use the proposer's
-    # KMeansTrainResult.assigner internal centroids and approximate the
-    # mean distance via the inertia: inertia = sum of squared distances,
-    # so sqrt(inertia / N) is the RMS distance. This avoids re-running
-    # the embedder.
+    # Approximate the mean nearest-centroid distance from the fit inertia
+    # (sum of squared distances): sqrt(inertia / N) is the RMS distance,
+    # which avoids re-running the embedder.
     inertia = float(m.fit_result.inertia)
     n = max(int(m.fit_result.n_samples), 1)
     return float(np.sqrt(inertia / n))

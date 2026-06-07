@@ -45,11 +45,19 @@ def run_suite(
 
     started_at = Report.now_iso()
     cases: list[EvalCase] = []
+    stage_ms: dict[str, float] = {}
+    llm_ms = tool_ms = 0.0
+    n_llm_calls = 0
 
     for golden in goldens:
         history = [Message(role=m.role, content=m.content) for m in golden.input.history]
         _, exec_record = executor.run(golden.input.request, history=history)
         trace_id = write_trace(exec_record)
+        for s in exec_record.stages:
+            stage_ms[s.stage] = round(stage_ms.get(s.stage, 0.0) + float(s.duration_ms), 3)
+        llm_ms += float(getattr(exec_record, "llm_ms", 0.0) or 0.0)
+        tool_ms += float(getattr(exec_record, "tool_ms", 0.0) or 0.0)
+        n_llm_calls += int(getattr(exec_record, "n_llm_calls", 0) or 0)
 
         ctx = EvalContext(
             golden=golden,
@@ -74,6 +82,10 @@ def run_suite(
 
     finished_at = Report.now_iso()
     summary = _aggregate(cases, suite.aggregation)
+    summary["stage_ms"] = stage_ms
+    summary["llm_ms"] = round(llm_ms, 3)
+    summary["tool_ms"] = round(tool_ms, 3)
+    summary["n_llm_calls"] = n_llm_calls
 
     report = Report(
         suite=suite.suite,
@@ -88,6 +100,27 @@ def run_suite(
         _write_report(report, reports_dir)
 
     return report
+
+
+def per_golden_pass(report: Report) -> dict[str, bool]:
+    """Per-golden pass map: a golden passes iff it ran clean and every rubric passed."""
+    return {
+        case.golden_id: bool(case.success) and all(r.passed for r in case.rubric_results)
+        for case in report.cases
+    }
+
+
+def aggregate_per_golden(maps: list[dict[str, bool]]) -> dict[str, float]:
+    """Pass-fraction per golden across k rollouts (AHE: k≥2 stabilizes pass@1)."""
+    if not maps:
+        return {}
+    keys: set[str] = set().union(*maps)
+    return {g: round(sum(1 for m in maps if m.get(g)) / len(maps), 4) for g in keys}
+
+
+def flaky_goldens(passrate: dict[str, float]) -> list[str]:
+    """Goldens that neither always pass nor always fail across rollouts."""
+    return sorted(g for g, rate in passrate.items() if 0.0 < rate < 1.0)
 
 
 def _aggregate(cases: list[EvalCase], method: str) -> dict[str, Any]:

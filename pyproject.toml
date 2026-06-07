@@ -21,7 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 llm = ["anthropic>=0.40", "openai>=1.40"]
 rag = ["faiss-cpu>=1.8", "numpy>=1.26"]
-dev = ["pytest>=8.0", "ruff>=0.5"]
+dev = ["pytest>=8.0", "ruff>=0.15", "mypy>=1.10"]
 # Only needed to run infra/restate/serve.py (the daily compactor scheduler).
 # Stays out of the default dependency set so the runtime + harness don't pull
 # in a Restate dep they never import.
@@ -58,3 +58,13 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+# The legacy surface is untyped; scope the signal to the modules `make
+# typecheck` passes explicitly and don't drown in third-party stubs.
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true

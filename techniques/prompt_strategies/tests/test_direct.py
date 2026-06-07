@@ -100,7 +100,8 @@ def test_real_call_populates_response_and_usage(monkeypatch):
     assert "What is 2+2?" in captured["messages"][0]["content"]
     # Knobs propagated
     assert captured["max_tokens"] == 64
-    assert captured["temperature"] == 0.0
+    # temperature is intentionally NOT sent to Anthropic (current models reject it)
+    assert "temperature" not in captured
 
 
 def test_sdk_failure_returns_error_marker(monkeypatch):

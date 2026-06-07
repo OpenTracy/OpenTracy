@@ -31,7 +31,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Iterable, Optional
 
 
@@ -67,6 +66,11 @@ class RollbackDecision:
     after: WindowMetrics
     promote_entry_id: str
     promote_timestamp: str
+    # Post-promotion half of AHE attribution: did the pre-promotion manifest
+    # already flag this edit as risky? ``foreseen`` is True when the suspect
+    # promote's manifest verdict was ROLLBACK_AND_PIVOT.
+    foreseen: bool = False
+    suspect_manifest_verdict: Optional[str] = None
 
 
 def check_auto_rollback(
@@ -98,7 +102,7 @@ def check_auto_rollback(
         logger.debug("no recent promote — nothing to roll back")
         return None
 
-    if _has_later_rollback(entries, after_id=promote["entry_id"], after_ts=promote["timestamp"]):
+    if _has_later_rollback(entries, after_ts=promote["timestamp"]):
         logger.debug("promote %s already rolled back — skipping", promote["entry_id"])
         return None
 
@@ -171,6 +175,13 @@ def check_auto_rollback(
         return None
 
     reason = "; ".join(reasons)
+
+    mv = (promote.get("payload") or {}).get("manifest_verdict") or {}
+    mv_verdict = mv.get("verdict")
+    foreseen = mv_verdict == "rollback_and_pivot"
+    if foreseen:
+        reason += " (foreseeable — pre-promotion manifest verdict was ROLLBACK_AND_PIVOT)"
+
     return RollbackDecision(
         target_version=target_version,
         suspect_version=suspect_version,
@@ -179,6 +190,8 @@ def check_auto_rollback(
         after=after,
         promote_entry_id=promote["entry_id"],
         promote_timestamp=promote["timestamp"],
+        foreseen=foreseen,
+        suspect_manifest_verdict=mv_verdict,
     )
 
 
@@ -206,7 +219,7 @@ def _last_promote(entries: list) -> Optional[dict]:
     return best
 
 
-def _has_later_rollback(entries: list, *, after_id: str, after_ts: str) -> bool:
+def _has_later_rollback(entries: list, *, after_ts: str) -> bool:
     """True iff the ledger has a rollback entry that post-dates `after_ts`.
 
     We check timestamp (string-compared, ISO sorts lex == temporal) so

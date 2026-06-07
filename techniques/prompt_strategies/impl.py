@@ -24,6 +24,7 @@ of the pipeline expects.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -87,7 +88,7 @@ class _Direct:
 
         try:
             if provider == "openai":
-                text, usage, tool_calls = _run_openai_loop(
+                text, usage, tool_calls, timing = _run_openai_loop(
                     model=model,
                     system=system,
                     user=user_msg,
@@ -99,7 +100,7 @@ class _Direct:
                     max_iterations=self.max_tool_iterations,
                 )
             else:
-                text, usage, tool_calls = _run_anthropic_loop(
+                text, usage, tool_calls, timing = _run_anthropic_loop(
                     model=model,
                     system=system,
                     user=user_msg,
@@ -130,6 +131,9 @@ class _Direct:
             context.state["llm_usage"] = {**usage, "model": model, "provider": provider}
         if tool_calls:
             context.state["tool_calls"] = tool_calls
+        context.state["llm_ms"] = timing["llm_ms"]
+        context.state["tool_ms"] = timing["tool_ms"]
+        context.state["n_llm_calls"] = timing["n_llm_calls"]
         return context
 
 
@@ -178,12 +182,16 @@ def _run_anthropic_loop(
     total_out = 0
     tool_calls: list[dict[str, Any]] = []
     final_text = ""
+    llm_ms = 0.0
+    tool_ms = 0.0
+    n_llm_calls = 0
 
     for it in range(max_iterations + 1):
+        # `temperature` is intentionally NOT sent: current Anthropic models
+        # reject it (HTTP 400 "temperature is deprecated for this model").
         kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "system": system,
             "messages": messages,
         }
@@ -192,7 +200,10 @@ def _run_anthropic_loop(
         if anthropic_tools and it < max_iterations:
             kwargs["tools"] = anthropic_tools
 
+        _t = time.perf_counter()
         resp = client.messages.create(**kwargs)
+        llm_ms += (time.perf_counter() - _t) * 1000
+        n_llm_calls += 1
         usage = getattr(resp, "usage", None)
         if usage is not None:
             total_in += int(getattr(usage, "input_tokens", 0) or 0)
@@ -227,6 +238,7 @@ def _run_anthropic_loop(
             args = getattr(tu, "input", {}) or {}
             tu_id = getattr(tu, "id", "")
             tool_calls.append({"name": qname, "input": args, "id": tu_id})
+            _t = time.perf_counter()
             try:
                 result_text = mcp_call(agent_id, qname, args)
                 is_error = False
@@ -234,6 +246,7 @@ def _run_anthropic_loop(
                 logger.warning("mcp tool %s failed: %s", qname, e)
                 result_text = f"Tool error: {type(e).__name__}: {e}"
                 is_error = True
+            tool_ms += (time.perf_counter() - _t) * 1000
             block: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": tu_id,
@@ -248,7 +261,8 @@ def _run_anthropic_loop(
     usage_dict: Optional[dict] = None
     if total_in or total_out:
         usage_dict = {"input_tokens": total_in, "output_tokens": total_out}
-    return final_text, usage_dict, tool_calls
+    timing = {"llm_ms": round(llm_ms, 3), "tool_ms": round(tool_ms, 3), "n_llm_calls": n_llm_calls}
+    return final_text, usage_dict, tool_calls, timing
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +304,9 @@ def _run_openai_loop(
     total_out = 0
     tool_calls: list[dict[str, Any]] = []
     final_text = ""
+    llm_ms = 0.0
+    tool_ms = 0.0
+    n_llm_calls = 0
 
     for it in range(max_iterations + 1):
         kwargs: dict[str, Any] = {
@@ -301,7 +318,10 @@ def _run_openai_loop(
         if openai_tools and it < max_iterations:
             kwargs["tools"] = openai_tools
 
+        _t = time.perf_counter()
         resp = client.chat.completions.create(**kwargs)
+        llm_ms += (time.perf_counter() - _t) * 1000
+        n_llm_calls += 1
         usage_obj = getattr(resp, "usage", None)
         if usage_obj is not None:
             total_in += int(getattr(usage_obj, "prompt_tokens", 0) or 0)
@@ -344,11 +364,13 @@ def _run_openai_loop(
             except Exception:
                 args = {}
             tool_calls.append({"name": qname, "input": args, "id": tc.id})
+            _t = time.perf_counter()
             try:
                 result_text = mcp_call(agent_id, qname, args)
             except Exception as e:
                 logger.warning("mcp tool %s failed: %s", qname, e)
                 result_text = f"Tool error: {type(e).__name__}: {e}"
+            tool_ms += (time.perf_counter() - _t) * 1000
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -358,7 +380,8 @@ def _run_openai_loop(
     usage_dict: Optional[dict] = None
     if total_in or total_out:
         usage_dict = {"input_tokens": total_in, "output_tokens": total_out}
-    return final_text, usage_dict, tool_calls
+    timing = {"llm_ms": round(llm_ms, 3), "tool_ms": round(tool_ms, 3), "n_llm_calls": n_llm_calls}
+    return final_text, usage_dict, tool_calls, timing
 
 
 # ---------------------------------------------------------------------------

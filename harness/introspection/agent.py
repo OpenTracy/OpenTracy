@@ -142,7 +142,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "list_available_epochs",
-        "description": "Discover which days/versions have distilled epochs available.",
+        "description": "Discover which days have distilled epochs available.",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
@@ -343,8 +343,12 @@ def _call_claude_code_cli(
             [
                 "claude",
                 "--print",
-                # Auto-accept MCP tool calls. Safe here: our MCP server only
-                # exposes read-only functions over the ledger / distilled corpus.
+                # Auto-accept MCP tool calls so the headless subprocess doesn't
+                # hang on a permission prompt. This surface is NOT read-only:
+                # propose_router_retrain / propose_dataset_curation write to the
+                # ledger and can trigger a promotion. They are gated downstream
+                # by Policy (mode 'off' blocks them); this flag only suppresses
+                # the interactive prompt.
                 "--permission-mode",
                 "bypassPermissions",
                 "--append-system-prompt",
@@ -470,6 +474,7 @@ def introspect(
 
     # Lazy import: only when actually used
     from anthropic import Anthropic
+    from anthropic.types import TextBlock, ToolUseBlock
 
     client = Anthropic(api_key=api_key)
 
@@ -504,7 +509,7 @@ def introspect(
             )
 
         if resp.stop_reason == "end_turn":
-            text_blocks = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
+            text_blocks = [b.text for b in resp.content if isinstance(b, TextBlock)]
             return IntrospectResult(
                 response="\n\n".join(text_blocks).strip()
                 or "(no text response from model)",
@@ -524,13 +529,21 @@ def introspect(
             )
             tool_results = []
             for block in resp.content:
-                if getattr(block, "type", None) == "tool_use":
+                if isinstance(block, ToolUseBlock):
                     output = _execute_tool(block.name, block.input or {})
+                    # Proposer outputs carry the lesson_id after a possibly-long
+                    # `reason`; keep their preview wide enough that the wakeup
+                    # runner can recover the id from the structured tool call.
+                    is_proposer = block.name in (
+                        "propose_router_retrain",
+                        "propose_dataset_curation",
+                    )
+                    cap = 2000 if is_proposer else 200
                     tool_calls_log.append(
                         ToolCall(
                             tool=block.name,
                             input=dict(block.input or {}),
-                            output_preview=str(output)[:200],
+                            output_preview=str(output)[:cap],
                         )
                     )
                     tool_results.append(

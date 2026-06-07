@@ -14,29 +14,46 @@ Approved outcomes are what the next phase (`harness/approver/`) consumes.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from dataclasses import dataclass
-
+from evals.scoring import selection_key, two_tier_key
 from experiments.branching import create_candidate
 from experiments.runner import CandidateResult, run_candidate
 from harness.approver import ApprovalDecision, Policy, decide
+from harness.blueprint import Blueprint
 from harness.critics import Critic, CriticStage, make_critic
 from harness.executor import promote
-from harness.executor.promote import build_lesson
-from ledger.versioning import LIVE_AGENT, read_version
-from ledger.writer import write_entry, write_lesson
+from harness.executor.promote import (
+    _manifest_verdict_dict,
+    _prediction_dict,
+    _verdicts_list,
+    build_lesson,
+)
 from harness.types import (
     CriticContext,
     CriticVerdict,
     LoopOutcome,
+    ManifestVerdict,
     Proposal,
     VerificationOutcome,
 )
+from ledger.versioning import LIVE_AGENT, read_version
+from ledger.writer import write_entry, write_lesson
 
-DEFAULT_PRE_CRITICS = ["scope"]
-DEFAULT_POST_CRITICS = ["eval_lift"]
+# A critic is named either bare ("scope") or with params (("eval_lift", {...})).
+# The default critic set + selection live in harness.blueprint.Blueprint.
+CriticSpec = str | tuple[str, dict]
+
+_SELECTION_FNS = {"selection_key": selection_key, "two_tier": two_tier_key}
+
+
+def _selection_fn(name: str):
+    fn = _SELECTION_FNS.get(name)
+    if fn is None:
+        raise ValueError(f"unknown selection {name!r}; expected {sorted(_SELECTION_FNS)}")
+    return fn
 
 
 @dataclass
@@ -50,12 +67,19 @@ class LoopRound:
     queued_lesson_id: Optional[str] = None
 
 
+def _make_from_spec(spec: CriticSpec) -> Critic:
+    if isinstance(spec, str):
+        return make_critic(spec)
+    name, params = spec
+    return make_critic(name, params)
+
+
 def _split_critics(
-    pre_names: list[str], post_names: list[str]
+    pre_names: list[CriticSpec], post_names: list[CriticSpec]
 ) -> tuple[list[Critic], list[Critic]]:
     """Build critic instances and verify each is in its expected stage."""
-    pre = [make_critic(n) for n in pre_names]
-    post = [make_critic(n) for n in post_names]
+    pre = [_make_from_spec(s) for s in pre_names]
+    post = [_make_from_spec(s) for s in post_names]
     for c in pre:
         if c.stage != CriticStage.PRE:
             raise ValueError(f"critic {c.name!r} is {c.stage.value}, expected pre")
@@ -83,8 +107,9 @@ def _run_critics(
 def propose_and_score(
     proposals: list[Proposal],
     suite_path: Path | str,
-    pre_critics: Optional[list[str]] = None,
-    post_critics: Optional[list[str]] = None,
+    pre_critics: Optional[list[CriticSpec]] = None,
+    post_critics: Optional[list[CriticSpec]] = None,
+    blueprint: Optional[Blueprint] = None,
 ) -> list[LoopOutcome]:
     """Run the full pipeline for a batch of proposals.
 
@@ -92,9 +117,10 @@ def propose_and_score(
     decides what to do with `approved` outcomes — promote to live, queue
     for human review, etc.
     """
+    bp = blueprint or Blueprint()
     pre, post = _split_critics(
-        pre_critics if pre_critics is not None else DEFAULT_PRE_CRITICS,
-        post_critics if post_critics is not None else DEFAULT_POST_CRITICS,
+        pre_critics if pre_critics is not None else bp.pre_critics,
+        post_critics if post_critics is not None else bp.post_critics,
     )
 
     outcomes: list[LoopOutcome] = []
@@ -117,15 +143,28 @@ def propose_and_score(
         result: CandidateResult = run_candidate(manifest.id, suite_path)
         outcome.candidate_result = result
 
-        # Verify prediction (AHE pillar 3) — opt-in: only when proposal made one
+        # Verify prediction (AHE pillar 3) — opt-in: only when proposal made one.
+        # Per-golden predictions are scored by the ManifestVerdict (the real
+        # contract); rubric-only predictions (dataset/router) keep the scalar
+        # VerificationOutcome. The two don't both run, so the rubric verdict is
+        # never miscalibrated against a pass-rate-style expected_delta.
         if proposal.prediction is not None:
-            actual_delta = _actual_delta_for_rubric(result, proposal.prediction.rubric)
-            outcome.verification = VerificationOutcome.evaluate(
-                proposal.prediction, actual_delta
-            )
+            if proposal.prediction.predicted_fixes or proposal.prediction.predicted_regressions:
+                outcome.manifest_verdict = ManifestVerdict.evaluate(
+                    proposal.prediction, result.delta.get("per_golden", {})
+                )
+            else:
+                actual_delta = _actual_delta_for_rubric(result, proposal.prediction.rubric)
+                outcome.verification = VerificationOutcome.evaluate(
+                    proposal.prediction, actual_delta
+                )
 
         # Post-eval critics
-        ctx_post = CriticContext(proposal=proposal, candidate_result=result)
+        ctx_post = CriticContext(
+            proposal=proposal,
+            candidate_result=result,
+            manifest_verdict=outcome.manifest_verdict,
+        )
         post_verdicts, post_blocked = _run_critics(post, ctx_post)
         outcome.verdicts.extend(post_verdicts)
 
@@ -145,11 +184,12 @@ def _actual_delta_for_rubric(result: "CandidateResult", rubric: str) -> float:
 def run_loop(
     proposals: list[Proposal],
     suite_path: Path | str,
-    pre_critics: Optional[list[str]] = None,
-    post_critics: Optional[list[str]] = None,
+    pre_critics: Optional[list[CriticSpec]] = None,
+    post_critics: Optional[list[CriticSpec]] = None,
     policy: Optional[Policy] = None,
     auto_promote: bool = False,
-    promote_strategy: str = "best",   # "best" | "all" | "none"
+    promote_strategy: Optional[str] = None,   # "best" | "all" | "none"; default from blueprint
+    blueprint: Optional[Blueprint] = None,
 ) -> list[LoopRound]:
     """Full pipeline including approver + executor.
 
@@ -164,14 +204,16 @@ def run_loop(
 
     Returns one LoopRound per input proposal.
     """
-    if promote_strategy not in {"best", "all", "none"}:
-        raise ValueError(f"promote_strategy must be best|all|none, got {promote_strategy!r}")
+    bp = blueprint or Blueprint()
+    strategy = promote_strategy if promote_strategy is not None else bp.promote_strategy
+    if strategy not in {"best", "all", "none"}:
+        raise ValueError(f"promote_strategy must be best|all|none, got {strategy!r}")
 
-    outcomes = propose_and_score(proposals, suite_path, pre_critics, post_critics)
+    outcomes = propose_and_score(proposals, suite_path, pre_critics, post_critics, blueprint=bp)
     pol = policy or Policy.from_yaml()
 
     decisions = [decide(o, pol) for o in outcomes]
-    rounds = [LoopRound(outcome=o, decision=d) for o, d in zip(outcomes, decisions)]
+    rounds = [LoopRound(outcome=o, decision=d) for o, d in zip(outcomes, decisions, strict=True)]
 
     # Queue-for-human path. Write a provisional lesson + queued_review entry
     # so the UI Review queue can surface the candidate. The candidate's agent
@@ -191,16 +233,24 @@ def run_loop(
         )
         delta_overall = delta.get("overall_score", 0.0) if delta else 0.0
 
+        queued_payload: dict = {
+            "mutations": [m.describe() for m in r.outcome.proposal.mutations],
+            "delta": delta,
+            "policy_mode": pol.mode,
+            "verdicts": _verdicts_list(r.outcome.verdicts),
+        }
+        pred = r.outcome.proposal.prediction
+        if pred is not None:
+            queued_payload["prediction"] = _prediction_dict(pred)
+        if r.outcome.manifest_verdict is not None:
+            queued_payload["manifest_verdict"] = _manifest_verdict_dict(r.outcome.manifest_verdict)
+
         entry = write_entry(
             kind="queued_review",
             candidate_id=r.outcome.candidate_id,
             agent_version_before=live_version,
             summary=f"queued for human review (Δoverall={delta_overall:+.4f})",
-            payload={
-                "mutations": [m.describe() for m in r.outcome.proposal.mutations],
-                "delta": delta,
-                "policy_mode": pol.mode,
-            },
+            payload=queued_payload,
         )
         lesson = build_lesson(
             r.outcome,
@@ -211,7 +261,7 @@ def run_loop(
         write_lesson(lesson)
         r.queued_lesson_id = lesson.id
 
-    if not auto_promote or promote_strategy == "none":
+    if not auto_promote or strategy == "none":
         return rounds
 
     eligible_idxs = [
@@ -220,15 +270,14 @@ def run_loop(
     if not eligible_idxs:
         return rounds
 
-    if promote_strategy == "best":
-        best_idx = max(
-            eligible_idxs,
-            key=lambda i: (
-                rounds[i].outcome.candidate_result.delta["overall_score"]
-                if rounds[i].outcome.candidate_result is not None
-                else float("-inf")
-            ),
-        )
+    if strategy == "best":
+        sel = _selection_fn(bp.selection)
+
+        def _best_key(idx: int) -> tuple[float, ...]:
+            cr = rounds[idx].outcome.candidate_result
+            return sel(cr.candidate) if cr is not None else (float("-inf"),)
+
+        best_idx = max(eligible_idxs, key=_best_key)
         version, lesson_id = promote(rounds[best_idx].outcome)
         rounds[best_idx].promoted_version = version
         rounds[best_idx].promoted_lesson_id = lesson_id

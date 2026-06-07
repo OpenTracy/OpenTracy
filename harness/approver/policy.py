@@ -142,7 +142,7 @@ def decide(outcome: LoopOutcome, policy: Policy) -> ApprovalDecision:
     if effective_mode == "auto":
         if outcome.candidate_result is None:
             return ApprovalDecision.QUEUE_HUMAN
-        delta = float(outcome.candidate_result.delta["overall_score"])
+        delta = float((outcome.candidate_result.delta or {}).get("overall_score", 0.0))
         if delta >= policy.auto_min_lift:
             return ApprovalDecision.AUTO_APPROVE
         return ApprovalDecision.QUEUE_HUMAN
