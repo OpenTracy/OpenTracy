@@ -40,7 +40,6 @@ def _make_payload(version: int = 1, k: int = 3) -> dict:
 
 
 def test_apply_writes_json_and_sidecar(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr("router.config_io.VERSIONS_DIR", tmp_path)
     payload = _make_payload(version=1, k=3)
 
     json_path, npz_path = apply_router_candidate(payload, versions_dir=tmp_path)
@@ -53,7 +52,6 @@ def test_apply_writes_json_and_sidecar(tmp_path: Path, monkeypatch):
 def test_apply_strips_centroids_from_inline_json(tmp_path: Path, monkeypatch):
     """The big centroid array shouldn't be duplicated in the JSON; it lives
     only in the sidecar .npz."""
-    monkeypatch.setattr("router.config_io.VERSIONS_DIR", tmp_path)
     payload = _make_payload(version=2, k=3)
 
     json_path, _ = apply_router_candidate(payload, versions_dir=tmp_path)
@@ -68,7 +66,6 @@ def test_apply_strips_centroids_from_inline_json(tmp_path: Path, monkeypatch):
 def test_apply_persists_drift_baseline(tmp_path: Path, monkeypatch):
     """The drift_baseline arrives via the candidate payload and must survive
     the JSON round-trip — P15.3.4's risk fix."""
-    monkeypatch.setattr("router.config_io.VERSIONS_DIR", tmp_path)
     payload = _make_payload(version=3, k=3)
     apply_router_candidate(payload, versions_dir=tmp_path)
 
@@ -77,7 +74,6 @@ def test_apply_persists_drift_baseline(tmp_path: Path, monkeypatch):
 
 
 def test_apply_flips_current_pointer(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr("router.config_io.VERSIONS_DIR", tmp_path)
     payload = _make_payload(version=7, k=3)
     apply_router_candidate(payload, versions_dir=tmp_path)
 
@@ -94,7 +90,6 @@ def test_apply_flips_current_pointer(tmp_path: Path, monkeypatch):
 
 def test_apply_round_trip_via_load_current_config(tmp_path: Path, monkeypatch):
     """Write → load_current_config → centroids/registry/lambda all readable."""
-    monkeypatch.setattr("router.config_io.VERSIONS_DIR", tmp_path)
     payload = _make_payload(version=4, k=3)
     apply_router_candidate(payload, versions_dir=tmp_path)
 

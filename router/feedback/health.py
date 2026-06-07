@@ -187,10 +187,11 @@ def _hours_since(iso: str) -> Optional[float]:
 
 
 def _count_traces_since(since_iso: Optional[str]) -> int:
-    """Cheap line count over JSONL partitions newer than since_iso."""
-    from router.feedback.store_adapter import _select_partition_files, _TRACES_RAW
+    """Cheap line count over the ACTIVE agent's JSONL partitions newer than since_iso."""
+    from router.feedback.store_adapter import _select_partition_files
+    from runtime.agent_paths import raw_traces_dir
 
-    files = _select_partition_files(_TRACES_RAW, since_iso, None)
+    files = _select_partition_files(raw_traces_dir(), since_iso, None)
     count = 0
     for path in files:
         try:
@@ -253,7 +254,9 @@ def _latest_router_eval_metrics(*, version: int) -> tuple[Optional[float], Optio
 
     Returns ``(avg_error, win_rate)`` or ``(None, None)``.
     """
-    reports_dir = Path("evals") / "reports"
+    from runtime.agent_paths import evals_reports_dir
+
+    reports_dir = evals_reports_dir()
     if not reports_dir.exists():
         return None, None
 

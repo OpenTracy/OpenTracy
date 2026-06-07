@@ -284,7 +284,6 @@ def test_analyze_clusters_shape():
 def test_snapshot_writes_partial_config(tmp_path: Path, monkeypatch):
     """Snapshot writes router_config_v1.json with model_psi={} + sidecar
     centroids; current pointer is NOT updated."""
-    monkeypatch.setattr("router.config_io.VERSIONS_DIR", tmp_path)
 
     embedder = _embedder_with_blobs(k=3, dim=8)
     prompts = _prompts_across_blobs(k=3, per_blob=80)
@@ -317,7 +316,6 @@ def test_snapshot_writes_partial_config(tmp_path: Path, monkeypatch):
 
 def test_snapshot_bumps_version_relative_to_current(tmp_path: Path, monkeypatch):
     """When a current pointer exists at v3, snapshot writes v4."""
-    monkeypatch.setattr("router.config_io.VERSIONS_DIR", tmp_path)
     # Seed a v3 + pointer (.txt fallback to be portable).
     (tmp_path / "router_config_v3.json").write_text(
         json.dumps({"version": 3, "k": 0, "model_psi": {}, "cost_weight": 0.0})

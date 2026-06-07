@@ -63,7 +63,7 @@ def _make_proposal(version: int = 1) -> Proposal:
 def tmp_versions(tmp_path: Path, monkeypatch):
     versions = tmp_path / "versions"
     versions.mkdir()
-    monkeypatch.setattr("router.config_io.VERSIONS_DIR", versions)
+    monkeypatch.setattr("runtime.agent_paths.router_versions_dir", lambda *a, **k: versions)
     return versions
 
 

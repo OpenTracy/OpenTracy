@@ -55,7 +55,12 @@ _TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates" / "agent"
 # inherit. Files are unlinked; dirs are removed; mcp.json / improvement.yaml
 # are reset to the template defaults afterward.
 _INHERITED_STATE_FILES = ("secrets.env", "secrets.enc.json", "onboarding_session.json")
-_INHERITED_STATE_DIRS = ("integrations", "workspace")
+# Per-agent learned/accumulated state — a new agent starts cold, never inheriting
+# another agent's router model, datasets, corpus, or eval/experiment outputs.
+_INHERITED_STATE_DIRS = (
+    "integrations", "workspace", "router", "datasets", "corpora",
+    "evals", "experiments",
+)
 _TEMPLATE_RESET_FILES = ("mcp.json", "improvement.yaml")
 
 
