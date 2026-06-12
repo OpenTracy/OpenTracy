@@ -15,6 +15,7 @@
  * Bearer and bounce the user back to /login. Without this, expired
  * tokens silently render every screen empty.
  */
+import { getCurrentAgent } from './agentStore';
 import { getBearer, signOut } from './auth';
 
 let installed = false;
@@ -33,11 +34,22 @@ export function installAuthFetch(): void {
     if (!isInternalApi(url)) {
       return original(input, init);
     }
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+
+    // Pin every request to this tab's selected agent so the backend binds to
+    // it instead of the shared global active pointer (which another tab can
+    // flip out from under us). Path-scoped endpoints ignore it harmlessly.
+    const agentId = getCurrentAgent();
+    if (agentId && !headers.has('x-agent-id')) {
+      headers.set('x-agent-id', agentId);
+    }
+
     const bearer = getBearer();
     if (!bearer) {
-      return original(input, init);
+      // No session (e.g. OSS mode): keep the old behaviour — no Authorization
+      // and no 401 sign-out — but still forward the agent header.
+      return original(input, agentId ? { ...init, headers } : init);
     }
-    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     if (!headers.has('Authorization')) {
       headers.set('Authorization', `Bearer ${bearer}`);
     }

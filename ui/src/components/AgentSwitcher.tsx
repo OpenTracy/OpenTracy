@@ -18,6 +18,7 @@ import {
   type AgentListResponse,
   type AgentSummary,
 } from '../api';
+import { setCurrentAgent } from '../lib/agentStore';
 import { Icon } from './Icon';
 
 interface AgentSwitcherProps {
@@ -67,6 +68,9 @@ export const AgentSwitcher = ({ onOpenSheet, onNewAgent }: AgentSwitcherProps) =
     setSwitching(a.id);
     try {
       await activateAgent(a.id);
+      // Pin this tab to the newly-selected agent immediately (the reload below
+      // re-seeds it from /v1/agents, but this covers any in-flight request).
+      setCurrentAgent(a.id);
       await refresh();
       setOpen(false);
       // Force a full reload — every screen needs to re-fetch against

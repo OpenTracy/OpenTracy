@@ -1021,7 +1021,15 @@ async def stream_traces(request: Request) -> StreamingResponse:
     backfill is done client-side via GET /traces?limit=...
 
     A 15s heartbeat keeps proxies from idling the connection."""
-    queue = trace_bus.subscribe()
+    # Pin the stream to the request's agent (+ tenant) so a subscriber only
+    # receives its own agent's live traces, matching the per-agent backfill.
+    # EventSource can't send the x-agent-id header, so the UI passes the agent
+    # as a query param; fall back to the middleware-resolved active agent.
+    from runtime.agent_context import get_active as _get_agent
+    from runtime.tenant_context import get_active as _get_tenant
+
+    stream_agent = (request.query_params.get("agent_id") or "").strip() or _get_agent()
+    queue = trace_bus.subscribe(tenant_id=_get_tenant(), agent_id=stream_agent)
 
     async def gen() -> Any:
         import asyncio as _asyncio
@@ -4791,6 +4799,12 @@ def evolve_endpoint(
             if pinned_tenant is not None:
                 from runtime.tenant_context import set_active as _set_tenant
                 _set_tenant(pinned_tenant)
+            # Symmetric with the tenant pin: bind the agent too so any code in
+            # this background task that reads get_active() resolves the right
+            # agent instead of falling back to _default (ContextVars don't
+            # propagate into the threadpool).
+            from runtime.agent_context import set_active as _set_agent
+            _set_agent(agent_id)
             kwargs: dict[str, Any] = {
                 "agent_id": agent_id,
                 "tasks": list(payload.tasks),
@@ -4863,6 +4877,9 @@ def explore_endpoint(
             if pinned_tenant is not None:
                 from runtime.tenant_context import set_active as _set_tenant
                 _set_tenant(pinned_tenant)
+            # Bind the agent too (ContextVars don't propagate into the threadpool).
+            from runtime.agent_context import set_active as _set_agent
+            _set_agent(agent_id)
             workspace = get_workspace(agent_id)
             seed_workspace_via_explore(
                 workspace=workspace,

@@ -250,7 +250,11 @@ class RouterProposer:
             from evals.seeding import load_goldens
             from harness.proposer.router_psi_compute import compute_psi_from_cache
 
-            goldens = load_goldens(Path("evals/golden"))
+            # Absolute path to the shared goldens library — the cache is keyed by
+            # these prompts, and the proposer can run from a non-repo-root cwd
+            # (e.g. a brain subprocess), so don't rely on a relative path.
+            goldens_dir = Path(__file__).resolve().parents[2] / "evals" / "golden"
+            goldens = load_goldens(goldens_dir)
             samples = [
                 (str(g["input"]["request"]), self.embedder.embed(str(g["input"]["request"])))
                 for g in goldens

@@ -80,6 +80,7 @@ def compute_psi_from_cache(
     counts = {m: _np.zeros(k) for m in model_ids}
     all_losses: dict[str, list[float]] = {m: [] for m in model_ids}
 
+    total_hits = 0
     for prompt, emb in samples:
         cid = int(assigner.assign(_np.asarray(emb, dtype=float)).cluster_id)
         if cid < 0 or cid >= k:
@@ -92,6 +93,18 @@ def compute_psi_from_cache(
             sums[m][cid] += entry.loss
             counts[m][cid] += 1
             all_losses[m].append(entry.loss)
+            total_hits += 1
+
+    if total_hits == 0:
+        # No (prompt, model) overlap between the eval samples and the cache —
+        # every model would collapse to a uniform default Ψ, which can't drive
+        # routing. Surface it loudly; the result is useless, not just empty.
+        logger.warning(
+            "cache-replay Ψ: 0 cache hits for model_ids=%s over %d sample(s) — "
+            "check that the response cache was populated for these models",
+            model_ids,
+            len(samples),
+        )
 
     out: dict[str, _np.ndarray] = {}
     for m in model_ids:

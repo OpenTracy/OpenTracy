@@ -5,6 +5,7 @@
  * In prod, the UI is served from the same origin as the backend, so the
  * relative paths just work.
  */
+import { getCurrentAgent, setCurrentAgent } from './lib/agentStore';
 
 export interface HistoryMessage {
   role: 'user' | 'assistant' | 'system';
@@ -389,7 +390,14 @@ export interface TraceStreamHandlers {
  * The browser auto-reconnects on transient drops.
  */
 export function subscribeTraces(handlers: TraceStreamHandlers): () => void {
-  const es = new EventSource('/v1/traces/stream');
+  // EventSource can't send custom headers, so scope the stream to this tab's
+  // agent via a query param (the backend reads it the same way it reads the
+  // x-agent-id header for normal requests).
+  const agentId = getCurrentAgent();
+  const url = agentId
+    ? `/v1/traces/stream?agent_id=${encodeURIComponent(agentId)}`
+    : '/v1/traces/stream';
+  const es = new EventSource(url);
   if (handlers.onOpen) es.addEventListener('open', handlers.onOpen);
   if (handlers.onError) es.addEventListener('error', handlers.onError);
   es.addEventListener('trace', (msg) => {
@@ -1286,7 +1294,13 @@ export interface AgentCreateRequest {
   activate?: boolean;
 }
 
-export const listAgents = () => _getJson<AgentListResponse>('/v1/agents');
+export async function listAgents(): Promise<AgentListResponse> {
+  const res = await _getJson<AgentListResponse>('/v1/agents');
+  // Seed this tab's agent pointer from the backend's active agent so every
+  // subsequent request carries x-agent-id (see lib/agentStore).
+  if (res.active) setCurrentAgent(res.active);
+  return res;
+}
 
 export const getAgentById = (id: string) =>
   _getJson<AgentSummary>(`/v1/agents/${encodeURIComponent(id)}`);

@@ -72,6 +72,28 @@ const deltaColor = (v: number): string =>
 
 const fmtDelta = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(4)}`;
 
+// Describe a mutation in words — WHICH setting in WHICH file changed — without
+// exposing the raw new value. Mutation strings look like
+// "pipeline/route.yaml:knobs.small=claude-sonnet-4-6 (manual)".
+const explainMutation = (m: string): React.ReactNode => {
+  const loc = m.split('=')[0].trim(); // drop "=<value>"
+  const ci = loc.indexOf(':');
+  if (ci === -1) {
+    return (
+      <>
+        Updated <span className="mono">{loc.replace(/\s*\(.*\)$/, '')}</span>
+      </>
+    );
+  }
+  const file = loc.slice(0, ci).trim();
+  const setting = loc.slice(ci + 1).trim();
+  return (
+    <>
+      Updated <span className="mono">{setting}</span> in <span className="mono">{file}</span>
+    </>
+  );
+};
+
 const renderRule = (status: string, policy: PolicyView | null) => {
   const mode = policy?.mode || 'review';
   const lift = policy?.auto_min_lift ?? 0.01;
@@ -442,25 +464,28 @@ export const LessonDetail = () => {
           </Card>
         </TabsContent>
 
-        {/* DIFF */}
+        {/* DIFF — explain what changed, not the raw values */}
         <TabsContent value="diff">
           <div className="dim mb-3 text-[12.5px]">
-            Mutations applied to the agent config in this version.
+            What this version changed in the agent config.
           </div>
+          {l.summary && (
+            <p className="mb-4 text-sm leading-relaxed text-foreground">{l.summary}</p>
+          )}
           {l.mutations.length === 0 ? (
             <Card className="px-4 py-3.5">
-              <div className="dim text-[13px]">No mutations recorded.</div>
+              <div className="dim text-[13px]">No changes recorded.</div>
             </Card>
           ) : (
             <Card className="gap-0 py-0">
               {l.mutations.map((m, i) => (
                 <div
                   key={i}
-                  className={`mono px-4 py-3 text-[13px] ${
+                  className={`px-4 py-3 text-[13px] ${
                     i < l.mutations.length - 1 ? 'border-b border-border' : ''
                   }`}
                 >
-                  {m}
+                  {explainMutation(m)}
                 </div>
               ))}
             </Card>
