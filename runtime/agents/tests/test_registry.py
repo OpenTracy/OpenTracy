@@ -133,6 +133,28 @@ def test_create_agent_writes_dir_and_registry(workspace):
     assert reg.active == "_default"
 
 
+def test_create_agent_seeds_starter_datasets(workspace):
+    """A new agent ships with a goldens eval dataset + an empty growing
+    rag-gaps dataset, so the mining→projection→eval loop works out of the box."""
+    from router.data.dataset_io import get_current_version, load_current
+
+    ensure_bootstrapped(root=workspace["root"], live_dir=workspace["live"])
+    meta = create_agent({"name": "seeded", "prompt": "x"}, root=workspace["root"])
+
+    ds_dir = workspace["root"] / meta.id / "datasets"
+    # goldens — projected from the shared evals/golden library, non-growing.
+    assert get_current_version("goldens", datasets_dir=ds_dir) == 1
+    goldens = load_current("goldens", datasets_dir=ds_dir)
+    assert goldens.size() > 0
+    assert goldens.metadata.growing is False
+    # rag-gaps — empty growing dataset wired to the failed-lookups adapter.
+    assert get_current_version("rag-gaps", datasets_dir=ds_dir) == 1
+    rag = load_current("rag-gaps", datasets_dir=ds_dir)
+    assert rag.size() == 0
+    assert rag.metadata.growing is True
+    assert rag.metadata.source == "failed lookups"
+
+
 def test_create_agent_slug_collision_appends_suffix(workspace):
     ensure_bootstrapped(root=workspace["root"], live_dir=workspace["live"])
     create_agent({"name": "support", "prompt": "x"}, root=workspace["root"])

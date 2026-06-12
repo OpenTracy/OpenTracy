@@ -118,6 +118,13 @@ def test_mcp_servers_are_per_agent(client):
 
 
 def test_datasets_are_per_agent(client):
-    assert client.post("/datasets", headers=_h("alpha"), json={"name": "rag-gaps"}).status_code == 201
-    assert [d["name"] for d in client.get("/datasets", headers=_h("alpha")).json()] == ["rag-gaps"]
-    assert client.get("/datasets", headers=_h("beta")).json() == []
+    # Every agent is seeded with the same starter datasets (goldens + rag-gaps),
+    # but a dataset created for alpha must never appear for beta.
+    assert client.post("/datasets", headers=_h("alpha"), json={"name": "custom-ds"}).status_code == 201
+    alpha = {d["name"] for d in client.get("/datasets", headers=_h("alpha")).json()}
+    beta = {d["name"] for d in client.get("/datasets", headers=_h("beta")).json()}
+    assert "custom-ds" in alpha
+    assert "custom-ds" not in beta
+    # The seeded starter datasets are present and isolated per agent.
+    assert {"goldens", "rag-gaps"} <= alpha
+    assert {"goldens", "rag-gaps"} <= beta

@@ -24,19 +24,23 @@ Idempotent: re-running produces byte-identical output when the embedder
 from __future__ import annotations
 
 import argparse
-import hashlib
 import logging
 import sys
 from pathlib import Path
 from typing import Optional
 
-import yaml
-
-from router.data.dataset import DatasetMetadata, DatasetSample
+from router.data.dataset import DatasetSample
 from router.data.dataset_io import (
     get_current_version,
     now_iso,
     save_dataset,
+)
+
+# Sample-building is shared with create_agent's starter-dataset seeding.
+from evals.seeding import (
+    build_samples as _build_samples,
+    load_goldens as _load_goldens,
+    sample_id as _sample_id,
 )
 
 
@@ -51,75 +55,6 @@ _EPOCH_ADDED_AT = "1970-01-01T00:00:00Z"
 DEFAULT_DATASET_NAME = "goldens"
 DEFAULT_GOLDENS_DIR = Path("evals/golden")
 DEFAULT_EMBEDDER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-
-
-def _sample_id(prompt: str, tag: Optional[str]) -> str:
-    """Stable short hash of prompt+tag. Determines idempotency of the migration."""
-    key = f"{prompt}\0{tag or ''}".encode("utf-8")
-    digest = hashlib.sha256(key).hexdigest()[:12]
-    return f"smp_{digest}"
-
-
-def _load_goldens(goldens_dir: Path) -> list[dict]:
-    """Read all *.yaml files in `goldens_dir` and return their parsed dicts, sorted by id."""
-    if not goldens_dir.exists():
-        raise FileNotFoundError(f"goldens dir not found: {goldens_dir}")
-    files = sorted(goldens_dir.glob("*.yaml"))
-    if not files:
-        raise RuntimeError(f"no *.yaml files in {goldens_dir}")
-    out = []
-    for path in files:
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        if "input" not in data or "request" not in data["input"]:
-            logger.warning("skipping %s — missing input.request", path)
-            continue
-        out.append(data)
-    out.sort(key=lambda d: d.get("id", ""))
-    return out
-
-
-def _ground_truth_from_expected(expected: dict) -> str:
-    """Best-effort: prefer 'exact', then first 'contains' token, else empty."""
-    if not expected:
-        return ""
-    if "exact" in expected:
-        return str(expected["exact"])
-    contains = expected.get("contains") or []
-    if isinstance(contains, list) and contains:
-        return str(contains[0])
-    return ""
-
-
-def _build_samples(
-    goldens: list[dict],
-    embedder,
-) -> list[DatasetSample]:
-    samples: list[DatasetSample] = []
-    for g in goldens:
-        prompt = str(g["input"]["request"])
-        expected = g.get("expected") or {}
-        ground_truth = _ground_truth_from_expected(expected)
-        tag = expected.get("category")
-        embedding = embedder.embed(prompt)
-        # Normalize to a plain Python list[float] for JSON serialization.
-        try:
-            embedding_list = embedding.tolist()  # numpy ndarray
-        except AttributeError:
-            embedding_list = list(embedding)
-        samples.append(
-            DatasetSample(
-                id=_sample_id(prompt, tag),
-                prompt=prompt,
-                ground_truth=ground_truth,
-                tag=tag,
-                trace_id=None,
-                added_at=_EPOCH_ADDED_AT,
-                source="manual",
-                embedding=embedding_list,
-            )
-        )
-    return samples
 
 
 def _v0_placeholder_payload(name: str, embedder_model: str, embedding_dim: int) -> dict:

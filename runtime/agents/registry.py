@@ -228,6 +228,7 @@ def create_agent(
 
     _strip_inherited_state(agent_dir)
     _apply_payload_to_dir(agent_dir, payload)
+    _seed_starter_datasets(agent_dir)
 
     timestamp = _now_iso(now_iso)
     meta = AgentMetadata(
@@ -365,6 +366,48 @@ def _strip_inherited_state(agent_dir: Path) -> None:
             shutil.copyfile(src, dst)
         elif dst.exists():
             dst.unlink()
+
+
+# Shared test library every new agent's goldens are projected from.
+_GOLDENS_LIBRARY = Path(__file__).resolve().parents[2] / "evals" / "golden"
+
+
+def _seed_starter_datasets(agent_dir: Path) -> None:
+    """Give a new agent its starter eval datasets so the mining→projection→eval
+    loop works out of the box:
+
+      - ``goldens`` — the shared ``evals/golden`` test library, projected into
+        an Eval dataset (so the agent has a baseline eval set from day one).
+      - ``rag-gaps`` — an empty *growing* dataset wired to the "failed lookups"
+        mining adapter; it auto-curates once the agent has traffic.
+
+    Best-effort and idempotent: a seeding failure (e.g. embedder unavailable)
+    is logged but never blocks agent creation, and an already-seeded dataset is
+    left untouched. Writes are scoped to ``agent_dir/datasets`` explicitly so
+    seeding doesn't depend on the active-agent context (the new agent isn't
+    active yet)."""
+    ds_dir = agent_dir / "datasets"
+    try:
+        from evals.seeding import build_empty_growing_payload, build_goldens_payload
+        from router.data.dataset_io import get_current_version, save_dataset
+        from runtime.embedder_pool import get_pool
+
+        embedder = get_pool().get()
+        if (
+            get_current_version("goldens", datasets_dir=ds_dir) is None
+            and _GOLDENS_LIBRARY.is_dir()
+        ):
+            save_dataset(
+                build_goldens_payload(_GOLDENS_LIBRARY, embedder),
+                datasets_dir=ds_dir,
+            )
+        if get_current_version("rag-gaps", datasets_dir=ds_dir) is None:
+            save_dataset(
+                build_empty_growing_payload("rag-gaps", "failed lookups", embedder),
+                datasets_dir=ds_dir,
+            )
+    except Exception:
+        logger.warning("starter-dataset seeding failed for %s", agent_dir, exc_info=True)
 
 
 def _apply_payload_to_dir(agent_dir: Path, payload: dict[str, Any]) -> None:
