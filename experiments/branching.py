@@ -93,8 +93,10 @@ def create_candidate(
     cand_root = candidates_dir / cid
     cand_root.mkdir(parents=True, exist_ok=False)
 
-    # Copy the entire agent/ tree (yaml + prompts + custom)
-    shutil.copytree(baseline_dir, cand_root / "agent")
+    # Copy the agent's trainable surface (yaml + pipeline + prompts + config) —
+    # NOT runtime accumulation, which lives under the agent dir and would recurse.
+    from ledger.versioning import SURFACE_IGNORE
+    shutil.copytree(baseline_dir, cand_root / "agent", ignore=SURFACE_IGNORE)
 
     # Read baseline version (before any mutation applies to the candidate copy)
     baseline_cfg = load_agent(baseline_dir / "agent.yaml")

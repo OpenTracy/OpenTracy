@@ -1,10 +1,12 @@
-"""Per-agent compiled-pipeline cache.
+"""Per-(tenant, agent) compiled-pipeline cache.
 
 Each agent serves from its own catalog dir (``agents/<id>/``); this caches the
-loaded config + compiled pipeline per agent so concurrent requests for
-different agents don't recompile or step on each other. The active agent is
-read from :mod:`runtime.agent_context` at call time, so the cache key always
-matches whatever partition the rest of the request resolves to.
+loaded config + compiled pipeline so concurrent requests for different agents
+don't recompile or step on each other. The cache key is ``(tenant_id,
+agent_id)`` — both read from the active ContextVars at call time — because the
+live agent dir resolves under the active tenant. Keying on ``agent_id`` alone
+would let two tenants that share an agent id (every tenant has a ``_default``)
+collide and serve each other's compiled pipeline.
 """
 
 from __future__ import annotations
@@ -17,22 +19,24 @@ if TYPE_CHECKING:
     from runtime.executor.pipeline import PipelineExecutor
 
 _lock = threading.Lock()
-_cache: dict[str, tuple["AgentConfig", "PipelineExecutor"]] = {}
+_cache: dict[tuple[str, str], tuple["AgentConfig", "PipelineExecutor"]] = {}
 
 
 def get_active_executor() -> tuple["AgentConfig", "PipelineExecutor"]:
-    """Resolve (config, executor) for the active agent, compiling on miss."""
+    """Resolve (config, executor) for the active (tenant, agent), compiling on miss."""
     from runtime.agent_context import get_active
+    from runtime.tenant_context import get_active as get_active_tenant
 
     agent_id = get_active()
     if not agent_id:
         raise RuntimeError("no active agent in context")
-    return _get(agent_id)
+    return _get(get_active_tenant(), agent_id)
 
 
-def _get(agent_id: str) -> tuple["AgentConfig", "PipelineExecutor"]:
+def _get(tenant_id: str, agent_id: str) -> tuple["AgentConfig", "PipelineExecutor"]:
+    key = (tenant_id, agent_id)
     with _lock:
-        hit = _cache.get(agent_id)
+        hit = _cache.get(key)
     if hit is not None:
         return hit
 
@@ -50,16 +54,18 @@ def _get(agent_id: str) -> tuple["AgentConfig", "PipelineExecutor"]:
     cfg = load_agent(str(agent_dir / "agent.yaml"))
     executor = PipelineExecutor(compile_agent(cfg))
     with _lock:
-        _cache[agent_id] = (cfg, executor)
+        _cache[key] = (cfg, executor)
     return cfg, executor
 
 
 def invalidate(agent_id: Optional[str] = None) -> None:
-    """Drop one agent's cached pipeline, or all of them when ``agent_id`` is
-    ``None``. Called after an edit/activate/promote so the next request
-    recompiles from the updated surface."""
+    """Drop cached pipeline(s). With ``agent_id`` None, clear everything.
+    Otherwise drop every tenant's entry for that agent id — invalidation is
+    triggered by an edit/activate/promote and we'd rather over-invalidate
+    (a spare recompile) than risk serving a stale pipeline."""
     with _lock:
         if agent_id is None:
             _cache.clear()
         else:
-            _cache.pop(agent_id, None)
+            for key in [k for k in _cache if k[1] == agent_id]:
+                _cache.pop(key, None)

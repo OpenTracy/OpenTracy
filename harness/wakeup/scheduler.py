@@ -27,10 +27,16 @@ logger = logging.getLogger("harness.wakeup.scheduler")
 _DEFAULT_THRESHOLD = int(os.getenv("HARNESS_ROUTER_WAKEUP_N", "50"))
 _COUNTER_DIR = Path(".harness")
 _COUNTER_PATH = _COUNTER_DIR / "wakeup_counter.txt"  # legacy default (back-compat)
-_LOCK_PATH = Path("/tmp") / "opentracy_router_wakeup.lock"
+def _lock_path() -> Path:
+    """Cross-process wakeup lock, namespaced per tenant so a busy tenant
+    doesn't serialize another tenant's improvement passes on a shared host."""
+    from runtime.tenant_context import get_active as _get_tenant
+
+    return Path("/tmp") / f"opentracy_router_wakeup_{_get_tenant()}.lock"
+
 
 # Module-level lock guards counter increments within a single process.
-# Cross-process exclusion is via the lockfile in _LOCK_PATH.
+# Cross-process exclusion is via the per-tenant lockfile (``_lock_path()``).
 _counter_lock = threading.Lock()
 
 # Per-agent wakeup queue. ``_pending`` holds distinct agents awaiting their
@@ -108,7 +114,7 @@ def maybe_fire(
         agent_id = get_active()
     th = threshold if threshold is not None else _DEFAULT_THRESHOLD
     cpath = counter_path or _counter_path_for(agent_id)
-    lpath = lock_path or _LOCK_PATH
+    lpath = lock_path or _lock_path()
 
     n = increment_trace_counter(counter_path=cpath)
     if n < th:

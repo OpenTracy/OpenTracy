@@ -49,16 +49,16 @@ def client(tmp_path, monkeypatch):
 def test_prompt_edit_invalidates_active_cache(client):
     from runtime.executor import cache
 
-    cache._cache["_default"] = ("stale-cfg", "stale-exec")
+    cache._cache[("_default", "_default")] = ("stale-cfg", "stale-exec")
     r = client.put("/agent/prompt", json={"content": "A brand new prompt."})
     assert r.status_code == 200, r.text
-    assert "_default" not in cache._cache
+    assert ("_default", "_default") not in cache._cache
 
 
 def test_route_edit_invalidates_active_cache(client):
     from runtime.executor import cache
 
-    cache._cache["_default"] = ("stale-cfg", "stale-exec")
+    cache._cache[("_default", "_default")] = ("stale-cfg", "stale-exec")
     r = client.put("/agent/route", json={"small": "claude-opus-4-7"})
     assert r.status_code == 200, r.text
-    assert "_default" not in cache._cache
+    assert ("_default", "_default") not in cache._cache

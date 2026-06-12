@@ -1,10 +1,11 @@
 """Version snapshots — the rollback primitive.
 
 When a candidate is promoted to live, the prior agent tree is snapshotted into
-``ledger/<agent>/versions/<version_id>/agent/``. Rollback copies that snapshot
-back over the live agent dir. Both the live agent dir and the versions dir are
-resolved **per active agent at call time**, so each agent has its own version
-lineage and a promotion for agent A never collides with agent B.
+``<ledger_root>/<agent>/versions/<version_id>/agent/``. Rollback copies that
+snapshot back over the live agent dir. Both the live agent dir and the versions
+dir are resolved **per active agent (and tenant) at call time**, so each agent
+has its own version lineage and a promotion for agent A never collides with
+agent B (nor with the same agent id under another tenant).
 
 Snapshots are content-addressed by the version string in agent.yaml. We trust
 that version is bumped on every promotion (executor's responsibility).
@@ -17,6 +18,17 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+
+
+# Runtime accumulation that is NOT the trainable surface. Excluded from version
+# snapshots and candidate branches — copying it bloats snapshots and, since some
+# of it lives under the agent dir, would recurse. Preserved across rollback.
+_ACCUMULATION = (
+    "experiments", "evals", "router", "datasets", "corpora", "workspace",
+    "integrations", "mcp_servers", "secrets.env", "secrets.enc.json",
+    "onboarding.json", "onboarding_session.json",
+)
+SURFACE_IGNORE = shutil.ignore_patterns(*_ACCUMULATION)
 
 
 def _live_agent_dir() -> Path:
@@ -36,8 +48,15 @@ def _live_agent_dir() -> Path:
 
 
 def _versions_dir() -> Path:
-    """``ledger/<agent>/versions`` for the active agent."""
-    return Path("ledger") / _live_agent_dir().name / "versions"
+    """``<ledger_root>/<agent>/versions`` for the active agent.
+
+    Routes through the tenant-aware ledger root (same one the ledger writer
+    uses) so snapshots land under ``tenants/<t>/ledger/<agent>/versions`` in
+    infra mode and never collide across tenants that share an agent id.
+    """
+    from runtime.agent_paths import _ledger_root
+
+    return _ledger_root() / _live_agent_dir().name / "versions"
 
 
 def resolve_live_dir() -> Path:
@@ -103,7 +122,7 @@ def snapshot_agent(
         # original snapshot if version got duplicated by mistake).
         return version, target
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(base, target)
+    shutil.copytree(base, target, ignore=SURFACE_IGNORE)
     return version, target
 
 
@@ -132,7 +151,15 @@ def restore_version(
     if current_version == version:
         return base
 
-    if base.exists():
-        shutil.rmtree(base)
-    shutil.copytree(snap, base)
+    # Restore the surface from the snapshot but PRESERVE runtime accumulation
+    # (router model, corpus, datasets, eval/experiment outputs, workspace).
+    base.mkdir(parents=True, exist_ok=True)
+    for item in list(base.iterdir()):
+        if item.name in _ACCUMULATION:
+            continue
+        if item.is_dir():
+            shutil.rmtree(item)
+        else:
+            item.unlink()
+    shutil.copytree(snap, base, dirs_exist_ok=True)
     return base
