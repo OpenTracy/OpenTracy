@@ -8,10 +8,13 @@ the trainer.
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 
-DEFAULT_MIN_CORPUS_SIZE = 200
+# Floor below which we refuse to fit the router. Overridable via env so an
+# operator can fit on a smaller local corpus (default 200 for production signal).
+DEFAULT_MIN_CORPUS_SIZE = int(os.getenv("HARNESS_ROUTER_MIN_CORPUS", "200"))
 
 
 def check_first_fit_eligibility(

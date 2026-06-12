@@ -144,6 +144,46 @@ def router_health_check() -> dict[str, Any]:
     return compute_router_health().to_dict()
 
 
+def _bootstrap_registry_from_route():
+    """Cold-start: seed the router's model registry from the active agent's
+    ``route.yaml`` (``small`` + ``big``). The first fit learns each model's Ψ
+    from traces; this just declares the candidate models so the fit has a
+    non-empty registry to attach Ψ to."""
+    import numpy as np
+    import yaml
+
+    from ledger.versioning import resolve_live_dir
+    from router.models.llm_profile import LLMProfile
+    from router.models.llm_registry import LLMRegistry
+
+    reg = LLMRegistry()
+    route_path = resolve_live_dir() / "pipeline" / "route.yaml"
+    if not route_path.exists():
+        return reg
+    knobs = (yaml.safe_load(route_path.read_text(encoding="utf-8")) or {}).get("knobs") or {}
+    # Rough $/1k-token costs; cost_weight defaults to 0 so these only matter if
+    # the operator later tunes cost-aware routing.
+    costs = {
+        "claude-haiku-4-5": 0.0008, "claude-sonnet-4-6": 0.003,
+        "claude-sonnet-4-5": 0.003, "claude-opus-4-7": 0.015,
+    }
+    seen: set[str] = set()
+    for key in ("small", "big"):
+        model = knobs.get(key)
+        if model and model not in seen:
+            seen.add(model)
+            reg.register(
+                LLMProfile(
+                    model_id=str(model),
+                    psi_vector=np.array([0.5]),
+                    cost_per_1k_tokens=costs.get(model, 0.003),
+                    num_validation_samples=0,
+                    cluster_sample_counts=np.array([0]),
+                )
+            )
+    return reg
+
+
 def propose_router_retrain(rationale: str = "") -> dict[str, Any]:
     """Trigger a router_config retrain via the AHE pipeline.
 
@@ -202,14 +242,14 @@ def propose_router_retrain(rationale: str = "") -> dict[str, Any]:
         try:
             _, registry, _ = load_current_config()
         except (RouterConfigNotFoundError, RouterConfigInvalidError):
-            registry = LLMRegistry()
+            # Cold start: seed the registry from the agent's route.yaml models.
+            registry = _bootstrap_registry_from_route()
             if len(registry) == 0:
                 return {
                     "action": "blocked",
                     "reason": (
-                        "cold_start_no_models: no current router_config and the "
-                        "registry is empty — register at least one LLMProfile via "
-                        "the agent config before proposing"
+                        "cold_start_no_models: no current router_config and "
+                        "route.yaml declares no small/big model to seed from"
                     ),
                     "lesson_id": None,
                 }
@@ -251,12 +291,39 @@ def propose_router_retrain(rationale: str = "") -> dict[str, Any]:
             "lesson_id": None,
         }
 
-    # 4. Stamp the rationale on the proposal metadata.
+    # 4. Degenerate single-model fit → skip honestly (don't run a meaningless eval).
+    skip = _degenerate_fit_skip(proposal)
+    if skip is not None:
+        return skip
+
+    # 5. Stamp the rationale on the proposal metadata.
     if rationale:
         proposal.metadata = {**proposal.metadata, "claude_code_rationale": rationale}
 
-    # 5. Critic + approver + executor — full AHE pipeline.
+    # 6. Critic + approver + executor — full AHE pipeline.
     return _run_router_pipeline(proposal, policy, mode)
+
+
+def _degenerate_fit_skip(proposal) -> Optional[dict[str, Any]]:
+    """A router needs ≥2 models to route between. When only one model has
+    served traffic the fit's Ψ table has a single row, so the candidate would
+    be compared against itself — the critic can only ever call it a wash.
+    Return a ``"skipped"`` result in that case so the outcome is an honest
+    "nothing to route yet" instead of a misleading ``"rejected"``."""
+    payload = proposal.mutations[0].value if proposal.mutations else {}
+    model_psi = payload.get("model_psi", {}) if isinstance(payload, dict) else {}
+    if len(model_psi) < 2:
+        models = ", ".join(model_psi) or "none"
+        return {
+            "action": "skipped",
+            "lesson_id": None,
+            "reason": (
+                f"degenerate_single_model_fit: only {len(model_psi)} model in the "
+                f"Ψ table ({models}); need ≥2 models serving traffic to route "
+                "between."
+            ),
+        }
+    return None
 
 
 # ---------- P15.3 follow-ups: end-to-end promotion ----------

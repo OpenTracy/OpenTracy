@@ -41,6 +41,68 @@ from router.models.llm_registry import LLMRegistry
 logger = logging.getLogger("harness.proposer.router_psi_compute")
 
 
+def compute_psi_from_cache(
+    *,
+    assigner: ClusterAssigner,
+    cache: Any,
+    samples: list[tuple[str, Any]],
+    model_ids: list[str],
+    default_loss: float = 0.5,
+) -> dict[str, np.ndarray]:
+    """Per-(cluster, model) expected error from a counterfactual response cache.
+
+    This is the "cache-replay" Ψ source: the cache holds a per-prompt ``loss``
+    (0=correct, 1=error) for each model run over the same eval prompts, so we
+    can score each model *counterfactually* on the very prompts the agent sees
+    — exactly what a router needs to know which model wins which cluster.
+
+    Args:
+        assigner: the newly-fitted cluster assigner (``num_clusters`` = K).
+        cache: a ``ResponseCache`` (``hash_prompt`` + ``get_by_hash``).
+        samples: ``(prompt, embedding)`` for the cache's source prompts. The
+            embedding must come from the same embedder the clusters were fit
+            with so ``assign`` lands in the right space.
+        model_ids: the models to score (typically the registry's models).
+        default_loss: fallback for a (cluster, model) with no cached entry and
+            no overall signal for that model.
+
+    Returns:
+        ``{model_id: length-K np.ndarray}``. A cluster with no cached loss for a
+        model falls back to that model's overall mean loss (or ``default_loss``).
+    """
+    import numpy as _np
+
+    k = assigner.num_clusters
+    if k <= 0:
+        raise ValueError("compute_psi_from_cache requires assigner.num_clusters > 0")
+
+    sums = {m: _np.zeros(k) for m in model_ids}
+    counts = {m: _np.zeros(k) for m in model_ids}
+    all_losses: dict[str, list[float]] = {m: [] for m in model_ids}
+
+    for prompt, emb in samples:
+        cid = int(assigner.assign(_np.asarray(emb, dtype=float)).cluster_id)
+        if cid < 0 or cid >= k:
+            continue
+        phash = cache.hash_prompt(prompt)
+        for m in model_ids:
+            entry = cache.get_by_hash(phash, m)
+            if entry is None:
+                continue
+            sums[m][cid] += entry.loss
+            counts[m][cid] += 1
+            all_losses[m].append(entry.loss)
+
+    out: dict[str, _np.ndarray] = {}
+    for m in model_ids:
+        overall = float(_np.mean(all_losses[m])) if all_losses[m] else default_loss
+        vec = _np.full(k, overall, dtype=float)
+        seen = counts[m] > 0
+        vec[seen] = sums[m][seen] / counts[m][seen]
+        out[m] = vec
+    return out
+
+
 def compute_blended_psi(
     *,
     assigner: ClusterAssigner,
@@ -48,6 +110,7 @@ def compute_blended_psi(
     traces: list[TraceRecord],
     preference_dataset: Any = None,  # PreferenceDataset; reserved for future use
     cache: Any = None,                # ResponseCache; reserved for cache-replay path
+    cache_psi: dict[str, Any] | None = None,  # precomputed cache-replay bench Ψ
     production_alpha: float = 0.3,
 ) -> dict[str, list[float]]:
     """Build ``{model_id: K-vector}`` blending bench + production Psi.
@@ -101,7 +164,13 @@ def compute_blended_psi(
 
     out: dict[str, list[float]] = {}
     for profile in registry.get_all():
-        bench_psi = _resize_to_k(profile.psi_vector, k)
+        # Prefer the cache-replay Ψ (counterfactual per-cluster loss measured
+        # against the eval prompts) over the registry's static bench vector —
+        # the static one is identical across models and can't drive routing.
+        if cache_psi is not None and profile.model_id in cache_psi:
+            bench_psi = _resize_to_k(np.asarray(cache_psi[profile.model_id], dtype=float), k)
+        else:
+            bench_psi = _resize_to_k(profile.psi_vector, k)
         update = prod_updates.get(profile.model_id)
         if update is None:
             out[profile.model_id] = bench_psi.tolist()
