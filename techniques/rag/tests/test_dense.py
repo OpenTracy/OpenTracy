@@ -41,7 +41,7 @@ def small_index(tmp_path, monkeypatch):
     embedder = _BagOfWordsEmbedder()
     ingest(src, chunk_size=20, overlap=2, root=idx_root, embedder=embedder)
 
-    monkeypatch.setattr("corpora.store._DEFAULT_ROOT", idx_root)
+    monkeypatch.setattr("runtime.agent_paths.corpus_indexed_dir", lambda *a, **k: idx_root)
     return embedder
 
 
@@ -64,7 +64,7 @@ def test_dense_returns_docs_from_corpus(small_index, monkeypatch):
 def test_dense_empty_corpus_returns_no_docs(tmp_path, monkeypatch):
     """No index → returns 0 docs, no crash. Generate stage handles
     the zero-docs case gracefully."""
-    monkeypatch.setattr("corpora.store._DEFAULT_ROOT", tmp_path / "empty")
+    monkeypatch.setattr("runtime.agent_paths.corpus_indexed_dir", lambda *a, **k: tmp_path / "empty")
     retriever = _DenseRetriever(knobs={"k": 8})
     ctx = Context(request="anything at all", documents=[])
     retriever.execute(ctx)

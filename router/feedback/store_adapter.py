@@ -43,7 +43,11 @@ from router.feedback.trace_to_training import TraceRecord
 logger = logging.getLogger("router.feedback.store_adapter")
 
 
-_TRACES_RAW = Path("traces") / "raw"
+def _default_traces_raw() -> Path:
+    """The ACTIVE agent's raw traces dir — each agent's router learns only
+    from its own traffic."""
+    from runtime.agent_paths import raw_traces_dir
+    return raw_traces_dir()
 
 
 def iter_traces_since(
@@ -70,10 +74,9 @@ def iter_traces_since(
         embedder: Optional PromptEmbedder. When supplied alongside
                   ``assigner``, each trace's prompt is embedded + assigned.
         assigner: Optional ClusterAssigner.
-        traces_root: Override the default ``traces/raw`` location (used in
-                     tests).
+        traces_root: Override the active-agent raw dir (used in tests).
     """
-    root = traces_root if traces_root is not None else _TRACES_RAW
+    root = traces_root if traces_root is not None else _default_traces_raw()
     files = _select_partition_files(root, since_iso, until_iso)
 
     have_assignment = embedder is not None and assigner is not None

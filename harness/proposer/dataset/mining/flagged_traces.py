@@ -27,8 +27,7 @@ from .base import build_sample, embed_list, prompt_hash
 
 
 SOURCE_LABEL = "flagged traces"
-_DEFAULT_GOLDENS = Path("evals") / "golden"
-_DEFAULT_PINNED = Path("traces") / "pinned"
+_DEFAULT_GOLDENS = Path("evals") / "golden"  # shared test library
 
 
 def iter_candidates(
@@ -42,6 +41,8 @@ def iter_candidates(
     limit: Optional[int] = None,
 ) -> Iterator[DatasetSample]:
     """Yield samples from goldens-with-trace-source then pinned traces."""
+    from runtime.agent_paths import pinned_traces_dir
+
     seen = set(existing or ())
     yielded = 0
 
@@ -58,7 +59,7 @@ def iter_candidates(
 
     # 2. Pinned trace rows (when populated)
     for sample in _iter_pinned(
-        pinned_dir or _DEFAULT_PINNED,
+        pinned_dir if pinned_dir is not None else pinned_traces_dir(),
         since_iso=since_iso,
         until_iso=until_iso,
         embedder=embedder,

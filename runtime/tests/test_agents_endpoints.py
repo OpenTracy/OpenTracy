@@ -10,14 +10,8 @@ def client(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     # Redirect the registry to tmp so tests don't share state with the
-    # real ``agents/`` dir.
+    # real ``agents/`` dir. _default is bootstrapped from the template.
     monkeypatch.setattr("runtime.agents.registry._DEFAULT_ROOT", tmp_path / "agents")
-    monkeypatch.setattr("runtime.agents.registry._LIVE_AGENT_DIR", tmp_path / "agent")
-
-    # Seed a tiny live agent dir so bootstrap has something to migrate.
-    (tmp_path / "agent" / "prompts").mkdir(parents=True)
-    (tmp_path / "agent" / "agent.yaml").write_text("agent:\n  version: v0.0.1\n")
-    (tmp_path / "agent" / "prompts" / "system.md").write_text("seed prompt")
 
     # Avoid the server's lifespan from compiling the real agent — we only
     # want to exercise the /agents/* surface here. Patch _reload_live_pipeline

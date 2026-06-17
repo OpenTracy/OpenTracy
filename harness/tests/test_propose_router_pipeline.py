@@ -63,7 +63,7 @@ def _make_proposal(version: int = 1) -> Proposal:
 def tmp_versions(tmp_path: Path, monkeypatch):
     versions = tmp_path / "versions"
     versions.mkdir()
-    monkeypatch.setattr("router.config_io.VERSIONS_DIR", versions)
+    monkeypatch.setattr("runtime.agent_paths.router_versions_dir", lambda *a, **k: versions)
     return versions
 
 
@@ -141,12 +141,33 @@ def critic_fails(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_blocked_when_cache_missing(tmp_versions, tmp_ledger):
-    """Default cache path doesn't exist → blocked with cache_missing reason."""
+def test_pipeline_blocked_when_cache_missing(tmp_versions, tmp_ledger, tmp_path, monkeypatch):
+    """Cache path doesn't exist → blocked with cache_missing reason. We point
+    DEFAULT_CACHE_PATH at a nonexistent tmp file so the test doesn't depend on
+    whatever response cache happens to sit in the repo."""
+    monkeypatch.setattr(
+        "router.evaluation.cache.DEFAULT_CACHE_PATH", tmp_path / "no-such-cache.jsonl"
+    )
     proposal = _make_proposal()
     out = lib._run_router_pipeline(proposal, _FakePolicy(mode="auto"), "auto")
     assert out["action"] == "blocked"
     assert "cache_missing" in out["reason"] or "cache" in out["reason"].lower()
+
+
+def test_degenerate_single_model_fit_is_skipped():
+    """A fit with <2 models in its Ψ table is skipped (nothing to route),
+    not run through the critic."""
+    one_model = _make_proposal()
+    one_model.mutations[0].value["model_psi"] = {
+        "sonnet": {"psi_vector": [0.5, 0.1], "cost_per_1k_tokens": 0.003}
+    }
+    out = lib._degenerate_fit_skip(one_model)
+    assert out is not None
+    assert out["action"] == "skipped"
+    assert "degenerate_single_model_fit" in out["reason"]
+    assert "sonnet" in out["reason"]
+    # Two models → not degenerate, pipeline proceeds.
+    assert lib._degenerate_fit_skip(_make_proposal()) is None
 
 
 def test_pipeline_rejected_when_critic_blocks(critic_fails, tmp_versions, tmp_ledger):

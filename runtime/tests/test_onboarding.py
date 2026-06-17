@@ -186,6 +186,30 @@ def test_record_skip_marks_completed_and_skipped(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Path resolution — OSS state lands in the active agent's dir
+# ---------------------------------------------------------------------------
+
+
+def test_oss_state_resolves_under_active_agent(tmp_path, monkeypatch):
+    """In OSS mode, onboarding state + prompt resolve under the active
+    agent's catalog dir (``agents/<active>/``), not a global slot."""
+    monkeypatch.chdir(tmp_path)
+    from runtime.agents.registry import ensure_bootstrapped
+    ensure_bootstrapped()  # writes agents/_default + registry, active=_default
+
+    from runtime.store import onboarding, onboarding_session
+
+    # agents_root() is relative to cwd in OSS mode (we chdir'd to tmp_path).
+    state = onboarding._resolve_state_path(None)
+    prompt = onboarding._resolve_prompt_path(None)
+    session = onboarding_session._resolve_session_path()
+
+    assert state == Path("agents") / "_default" / "onboarding.json"
+    assert prompt == Path("agents") / "_default" / "prompts" / "system.md"
+    assert session == Path("agents") / "_default" / "onboarding_session.json"
+
+
+# ---------------------------------------------------------------------------
 # Server endpoints
 # ---------------------------------------------------------------------------
 
@@ -194,13 +218,11 @@ def test_record_skip_marks_completed_and_skipped(tmp_path):
 def client(tmp_path, monkeypatch):
     """FastAPI TestClient with onboarding state isolated to tmp_path."""
     from fastapi.testclient import TestClient
+    # OSS onboarding resolves under the active agent's catalog dir; point
+    # that at tmp_path so the endpoints don't touch the real catalog.
     monkeypatch.setattr(
-        "runtime.store.onboarding._DEFAULT_PATH",
-        tmp_path / "onboarding.json",
-    )
-    monkeypatch.setattr(
-        "runtime.store.onboarding._DEFAULT_PROMPT_PATH",
-        tmp_path / "prompts" / "system.md",
+        "runtime.store.onboarding._active_agent_dir",
+        lambda: tmp_path,
     )
     # Stub the Lesson hook so we don't touch the real ledger.
     import runtime.store.onboarding as ob
@@ -211,9 +233,6 @@ def client(tmp_path, monkeypatch):
         yield c
 
 
-@pytest.mark.skip(
-    reason="state isolation bug: completed flag leaks across test sessions — needs fresh tmp_path",
-)
 def test_get_state_returns_empty_first_run(client):
     r = client.get("/onboarding/state")
     assert r.status_code == 200

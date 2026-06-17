@@ -163,6 +163,7 @@ def _run(
 
         prompt = g.input.request
         ground_truth = g.expected.exact or ""
+        keywords = list(g.expected.contains or [])
 
         for model_id, client in clients.items():
             if cache.has(prompt, model_id):
@@ -182,7 +183,15 @@ def _run(
                 failed += 1
                 continue
 
-            loss = float(metric_fn(response.text, ground_truth)) if ground_truth else 0.5
+            if ground_truth:
+                loss = float(metric_fn(response.text, ground_truth))
+            elif keywords:
+                # contains-style golden (no exact answer): it's correct when the
+                # response mentions every required keyword, an error otherwise.
+                text = response.text.lower()
+                loss = 0.0 if all(k.lower() in text for k in keywords) else 1.0
+            else:
+                loss = 0.5
             cache.add(
                 prompt=prompt,
                 model_id=model_id,

@@ -39,7 +39,7 @@ from harness.types import (
     Proposal,
     VerificationOutcome,
 )
-from ledger.versioning import LIVE_AGENT, read_version
+from ledger.versioning import read_version
 from ledger.writer import write_entry, write_lesson
 
 # A critic is named either bare ("scope") or with params (("eval_lift", {...})).
@@ -195,7 +195,7 @@ def run_loop(
 
     Steps:
       1. propose_and_score (Proposal → critics → branch → score → critics)
-      2. For each outcome, ask the approver (mode in policies/auto_approve.yaml)
+      2. For each outcome, ask the approver (mode in the agent's policy.yaml)
       3. If decision is AUTO_APPROVE *and* `auto_promote=True`, promote according
          to `promote_strategy`:
            - "best": only the single highest-Δoverall outcome promotes
@@ -219,7 +219,7 @@ def run_loop(
     # so the UI Review queue can surface the candidate. The candidate's agent
     # already lives at experiments/candidates/<cand_id>/ — promote_queued()
     # reads it back when a human approves.
-    live_version = read_version(LIVE_AGENT)
+    live_version = read_version()
     for r in rounds:
         if r.decision != ApprovalDecision.QUEUE_HUMAN:
             continue

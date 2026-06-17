@@ -202,11 +202,15 @@ def _complete_via_cli(
     args.append(prompt)
 
     try:
+        from runtime import agent_context
+
         proc = subprocess.run(
             args,
             capture_output=True,
             text=True,
             timeout=timeout_s,
+            # Carry the active agent/tenant into the child + its MCP server.
+            env=agent_context.subprocess_env(),
         )
     except subprocess.TimeoutExpired as e:
         raise RuntimeError(

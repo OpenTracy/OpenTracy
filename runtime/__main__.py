@@ -1,8 +1,8 @@
 """CLI entry: `uv run python -m runtime "your question"`.
 
-Loads agent/agent.yaml, compiles the pipeline, runs the request, prints the
-response on stdout and a per-stage summary + trace_id on stderr, and persists
-the full trace to traces/raw/.
+Loads the active agent's agent.yaml, compiles the pipeline, runs the request,
+prints the response on stdout and a per-stage summary + trace_id on stderr, and
+persists the full trace to traces/raw/.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("request", help="The user request")
     parser.add_argument(
         "--agent",
-        default="agent/agent.yaml",
-        help="Path to agent.yaml (default: agent/agent.yaml)",
+        default=None,
+        help="Path to agent.yaml (default: the active agent)",
     )
     parser.add_argument(
         "--quiet",
@@ -36,7 +36,15 @@ def main(argv: list[str] | None = None) -> int:
 
     load_env()
 
-    cfg = load_agent(args.agent)
+    agent_path = args.agent
+    if agent_path is None:
+        from ledger.versioning import resolve_live_dir
+        from runtime.agents.registry import ensure_bootstrapped
+
+        ensure_bootstrapped()
+        agent_path = str(resolve_live_dir() / "agent.yaml")
+
+    cfg = load_agent(agent_path)
     pipe = compile_agent(cfg)
     exe = PipelineExecutor(pipe)
 

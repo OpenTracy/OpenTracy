@@ -58,7 +58,11 @@ class TraceBus:
     captured at startup via attach_loop()."""
 
     def __init__(self, *, max_queue: int = 200) -> None:
-        self._subs: list[asyncio.Queue[dict[str, Any]]] = []
+        # Each subscriber is (queue, tenant_id, agent_id). A None scope field
+        # means "any" (admin/unfiltered); the SSE endpoint always pins the
+        # request's tenant+agent so a subscriber only ever sees its own agent's
+        # traces — never another agent's (or, in infra mode, another tenant's).
+        self._subs: list[tuple[asyncio.Queue[dict[str, Any]], Optional[str], Optional[str]]] = []
         self._lock = threading.Lock()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._max_queue = max_queue
@@ -68,22 +72,24 @@ class TraceBus:
         from the writer thread back onto the running event loop."""
         self._loop = loop
 
-    def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
+    def subscribe(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> asyncio.Queue[dict[str, Any]]:
         q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self._max_queue)
         with self._lock:
-            self._subs.append(q)
+            self._subs.append((q, tenant_id, agent_id))
         return q
 
     def unsubscribe(self, q: asyncio.Queue[dict[str, Any]]) -> None:
         with self._lock:
-            try:
-                self._subs.remove(q)
-            except ValueError:
-                pass
+            self._subs = [s for s in self._subs if s[0] is not q]
 
     def publish(self, event: dict[str, Any]) -> None:
-        """Fan-out to all subscribers. Bounded — drops the oldest item if a
-        subscriber is full."""
+        """Fan-out to subscribers whose (tenant, agent) scope matches the event.
+        Bounded — drops the oldest item if a subscriber is full."""
         loop = self._loop
         if loop is None:
             return
@@ -94,8 +100,18 @@ class TraceBus:
         loop.call_soon_threadsafe(self._fanout, subs, event)
 
     @staticmethod
-    def _fanout(subs: list[asyncio.Queue[dict[str, Any]]], event: dict[str, Any]) -> None:
-        for q in subs:
+    def _fanout(
+        subs: list[tuple[asyncio.Queue[dict[str, Any]], Optional[str], Optional[str]]],
+        event: dict[str, Any],
+    ) -> None:
+        ev_tenant = event.get("tenant_id")
+        ev_agent = event.get("agent_id")
+        for q, sub_tenant, sub_agent in subs:
+            # A pinned subscriber only receives events for its own agent/tenant.
+            if sub_agent is not None and sub_agent != ev_agent:
+                continue
+            if sub_tenant is not None and sub_tenant != ev_tenant:
+                continue
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
@@ -113,13 +129,21 @@ class TraceBus:
 bus = TraceBus()
 
 
-def _summary_event(env: dict[str, Any]) -> dict[str, Any]:
+def _summary_event(
+    env: dict[str, Any],
+    *,
+    agent_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+) -> dict[str, Any]:
     """Compact payload for SSE — never the full request/response bodies.
-    The UI fetches detail on click via /traces/{trace_id}."""
+    The UI fetches detail on click via /traces/{trace_id}. ``agent_id`` +
+    ``tenant_id`` scope the fan-out so a subscriber only sees its own agent."""
     stages = env.get("stages") or []
     history = env.get("history") or []
     request = env.get("request") or ""
     return {
+        "agent_id": agent_id,
+        "tenant_id": tenant_id,
         "trace_id": env.get("trace_id") or "",
         "timestamp": env.get("timestamp") or "",
         "session_id": env.get("session_id"),
@@ -189,7 +213,11 @@ def write_trace(
         f.write(json.dumps(env, ensure_ascii=False) + "\n")
 
     try:
-        bus.publish(_summary_event(env))
+        from runtime.tenant_context import get_active as _get_tenant
+
+        bus.publish(
+            _summary_event(env, agent_id=(agent_id or get_active()), tenant_id=_get_tenant())
+        )
     except Exception:
         # The pub/sub fan-out must never break the write path.
         logger.exception("TraceBus publish failed for %s", env.get("trace_id"))

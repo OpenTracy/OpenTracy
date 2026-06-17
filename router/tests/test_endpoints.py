@@ -19,7 +19,7 @@ def tmp_versions(tmp_path: Path, monkeypatch):
     """Redirect router/config_io to a temp versions/ for each test."""
     versions = tmp_path / "versions"
     versions.mkdir()
-    monkeypatch.setattr("router.config_io.VERSIONS_DIR", versions)
+    monkeypatch.setattr("runtime.agent_paths.router_versions_dir", lambda *a, **k: versions)
     return versions
 
 

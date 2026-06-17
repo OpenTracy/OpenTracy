@@ -188,10 +188,12 @@ def read_entries(
     out: list[LedgerEntry] = []
     if entries_dir is not None:
         roots: list[Path] = [Path(entries_dir)]
+    elif agent_id == "__all__":
+        roots = _all_agent_entries_dirs()        # explicit cross-agent read
     elif agent_id is not None:
         roots = [_entries_dir_for(agent_id)]
     else:
-        roots = _all_agent_entries_dirs()
+        roots = [_entries_dir_for()]             # default: the active agent only
     for root in roots:
         if not root.exists():
             continue
@@ -233,10 +235,12 @@ def read_lessons(
     out: list[Lesson] = []
     if lessons_dir is not None:
         roots: list[Path] = [Path(lessons_dir)]
+    elif agent_id == "__all__":
+        roots = _all_agent_lessons_dirs()        # explicit cross-agent read
     elif agent_id is not None:
         roots = [_lessons_dir_for(agent_id)]
     else:
-        roots = _all_agent_lessons_dirs()
+        roots = [_lessons_dir_for()]             # default: the active agent only
     for root in roots:
         if not root.exists():
             continue

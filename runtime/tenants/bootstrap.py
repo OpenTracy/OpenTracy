@@ -20,10 +20,6 @@ Migration shape:
                                      traces     -> tenants/_default/traces
                                      corpora    -> tenants/_default/corpora
 
-The live ``agent/`` (singular) directory is NOT moved — it stays at the
-project root because the runtime executor mounts it directly and we
-defer per-tenant live-agent isolation to P16.2.
-
 Failure mode: best-effort. If any individual move raises, we log and
 continue with the rest of the migration so a partial install can be
 retried on next boot. The migration lock at ``tenants/.migration.lock``
@@ -71,6 +67,23 @@ def migrate_legacy_to_default(
     boot always wants them on.
     """
     root = Path(project_root) if project_root is not None else Path.cwd()
+
+    # Safety: never migrate a source checkout in place. A dev/test boot with
+    # OPENTRACY_MULTI_TENANT=1 and cwd at the repo root would otherwise move the
+    # live agents/ledger/traces/corpora into tenants/_default/ and replace them
+    # with symlinks — silently mutating the working tree. A real deployment's
+    # data root is not a checkout; require an explicit opt-in to override.
+    looks_like_checkout = (root / ".git").exists() or (
+        (root / "pyproject.toml").is_file() and (root / "runtime").is_dir()
+    )
+    if looks_like_checkout and os.getenv("OPENTRACY_ALLOW_ROOT_MIGRATION") != "1":
+        logger.warning(
+            "migration: refusing to migrate source checkout at %s "
+            "(set OPENTRACY_ALLOW_ROOT_MIGRATION=1 to override)",
+            root,
+        )
+        return False
+
     tenants_dir = root / _TENANTS_ROOT
     default_dir = tenants_dir / _DEFAULT_ID
 

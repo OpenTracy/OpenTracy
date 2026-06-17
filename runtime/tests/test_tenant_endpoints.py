@@ -16,6 +16,7 @@ def client(tmp_path, monkeypatch):
     # the /admin/tenants/* surface. OSS local mode (flag off) doesn't
     # exercise these routes.
     monkeypatch.setenv("OPENTRACY_MULTI_TENANT", "1")
+    monkeypatch.chdir(tmp_path)  # isolate cwd: the multi-tenant lifespan migration runs against cwd
 
     # Re-route every storage helper to tmp_path so the test doesn't
     # touch the operator's real filesystem.
@@ -28,15 +29,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "runtime.agents.registry._DEFAULT_ROOT", tmp_path / "agents"
     )
-    monkeypatch.setattr(
-        "runtime.agents.registry._LIVE_AGENT_DIR", tmp_path / "agent"
-    )
-
-    # Seed a minimal live agent dir so the agent bootstrap step has
-    # something to copy from.
-    (tmp_path / "agent" / "prompts").mkdir(parents=True)
-    (tmp_path / "agent" / "agent.yaml").write_text("agent:\n  version: v0.0.1\n")
-    (tmp_path / "agent" / "prompts" / "system.md").write_text("seed")
 
     # Stub the heavy lifespan steps so the test isn't gated on the
     # full pipeline loader.

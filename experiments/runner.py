@@ -11,7 +11,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from evals.runners.runner import (
     aggregate_per_golden,
@@ -22,9 +22,6 @@ from evals.runners.runner import (
 from experiments.branching import candidate_agent_path, list_candidates
 from experiments.types import CandidateManifest
 
-BASELINE_AGENT = Path("agent/agent.yaml")
-RESULTS_DIR = Path("experiments/results")
-EVAL_REPORTS_DIR = Path("evals/reports")
 
 
 @dataclass
@@ -136,18 +133,25 @@ def _load_manifest(candidate_id: str) -> CandidateManifest:
 def run_candidate(
     candidate_id: str,
     suite_path: Path | str,
-    baseline_agent: Path | str = BASELINE_AGENT,
-    results_dir: Path | str = RESULTS_DIR,
+    baseline_agent: Optional[Path | str] = None,
+    results_dir: Optional[Path | str] = None,
     write_result: bool = True,
     n_rollouts: int = 1,
 ) -> CandidateResult:
     """Run baseline + candidate against the same suite; record the delta.
+
+    ``baseline_agent`` defaults to the active agent's agent.yaml so the delta
+    is measured against the same surface the candidate was branched from.
 
     n_rollouts > 1 runs each suite k times and aggregates per-golden pass-rates
     (AHE Algorithm 1: k≥2 rollouts stabilize pass@1). Default 1 is unchanged.
     """
     if n_rollouts < 1:
         raise ValueError(f"n_rollouts must be >= 1, got {n_rollouts}")
+    if baseline_agent is None:
+        from ledger.versioning import resolve_live_dir
+
+        baseline_agent = resolve_live_dir() / "agent.yaml"
     manifest = _load_manifest(candidate_id)
     cand_yaml = candidate_agent_path(candidate_id)
     if not cand_yaml.exists():
@@ -187,14 +191,20 @@ def run_candidate(
     )
 
     if write_result:
+        if results_dir is None:
+            from runtime.agent_paths import experiments_results_dir
+            results_dir = experiments_results_dir()
         _append_result(result, results_dir)
 
     return result
 
 
 def _persist_candidate_report(
-    candidate_id: str, report: Any, reports_dir: Path | str = EVAL_REPORTS_DIR
+    candidate_id: str, report: Any, reports_dir: Optional[Path | str] = None
 ) -> Path:
+    if reports_dir is None:
+        from runtime.agent_paths import evals_reports_dir
+        reports_dir = evals_reports_dir()
     out_dir = Path(reports_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"cand_{candidate_id}.json"

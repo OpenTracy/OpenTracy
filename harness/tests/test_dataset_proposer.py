@@ -62,7 +62,7 @@ def _seed_failed_lookups_dataset(name: str, datasets_dir: Path) -> None:
 def tmp_datasets(tmp_path: Path, monkeypatch):
     d = tmp_path / "datasets"
     d.mkdir()
-    monkeypatch.setattr("router.data.dataset_io.DEFAULT_DATASETS_DIR", d)
+    monkeypatch.setattr("runtime.agent_paths.datasets_dir", lambda *a, **k: d)
     return d
 
 
@@ -70,8 +70,8 @@ def test_propose_yields_dataset_kind_proposal(tmp_datasets, tmp_path, monkeypatc
     raw_dir = tmp_path / "raw"
     _seed_failed_lookup_traces(raw_dir, n=3)
     monkeypatch.setattr(
-        "harness.proposer.dataset.mining.failed_lookups._DEFAULT_TRACES_RAW",
-        raw_dir,
+        "runtime.agent_paths.raw_traces_dir",
+        lambda *a, **k: raw_dir,
     )
     _seed_failed_lookups_dataset("rag-gaps", tmp_datasets)
 
@@ -95,8 +95,8 @@ def test_propose_carries_gap_metadata_and_no_prediction(tmp_datasets, tmp_path, 
     raw_dir = tmp_path / "raw"
     _seed_failed_lookup_traces(raw_dir, n=2)
     monkeypatch.setattr(
-        "harness.proposer.dataset.mining.failed_lookups._DEFAULT_TRACES_RAW",
-        raw_dir,
+        "runtime.agent_paths.raw_traces_dir",
+        lambda *a, **k: raw_dir,
     )
     _seed_failed_lookups_dataset("rag-gaps", tmp_datasets)
 
@@ -115,8 +115,8 @@ def test_propose_with_assigner_computes_gap_scores(tmp_datasets, tmp_path, monke
     raw_dir = tmp_path / "raw"
     _seed_failed_lookup_traces(raw_dir, n=4)
     monkeypatch.setattr(
-        "harness.proposer.dataset.mining.failed_lookups._DEFAULT_TRACES_RAW",
-        raw_dir,
+        "runtime.agent_paths.raw_traces_dir",
+        lambda *a, **k: raw_dir,
     )
     _seed_failed_lookups_dataset("rag-gaps", tmp_datasets)
 
@@ -174,8 +174,8 @@ def test_propose_empty_traces_raises_nothing_to_add(tmp_datasets, tmp_path, monk
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()  # empty dir
     monkeypatch.setattr(
-        "harness.proposer.dataset.mining.failed_lookups._DEFAULT_TRACES_RAW",
-        raw_dir,
+        "runtime.agent_paths.raw_traces_dir",
+        lambda *a, **k: raw_dir,
     )
     _seed_failed_lookups_dataset("rag-gaps", tmp_datasets)
 
@@ -189,8 +189,8 @@ def test_propose_source_override(tmp_datasets, tmp_path, monkeypatch):
     raw_dir = tmp_path / "raw"
     _seed_failed_lookup_traces(raw_dir, n=2)
     monkeypatch.setattr(
-        "harness.proposer.dataset.mining.failed_lookups._DEFAULT_TRACES_RAW",
-        raw_dir,
+        "runtime.agent_paths.raw_traces_dir",
+        lambda *a, **k: raw_dir,
     )
     # Dataset was created with source='manual' (no adapter), but we override
     payload = {
@@ -211,8 +211,8 @@ def test_propose_respects_max_additions(tmp_datasets, tmp_path, monkeypatch):
     raw_dir = tmp_path / "raw"
     _seed_failed_lookup_traces(raw_dir, n=10)
     monkeypatch.setattr(
-        "harness.proposer.dataset.mining.failed_lookups._DEFAULT_TRACES_RAW",
-        raw_dir,
+        "runtime.agent_paths.raw_traces_dir",
+        lambda *a, **k: raw_dir,
     )
     _seed_failed_lookups_dataset("rag-gaps", tmp_datasets)
 

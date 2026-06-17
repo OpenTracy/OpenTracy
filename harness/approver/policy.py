@@ -4,7 +4,7 @@ Critics already filtered out scope violations and regressions. The approver
 decides whether an outcome that *passed* the critics should auto-promote, get
 queued for human review, or be hard-rejected by policy.
 
-policies/auto_approve.yaml controls behavior. Conservative default: review.
+Each agent's own ``policy.yaml`` controls its behavior. Conservative default: review.
 
 Per-kind overrides
 ------------------
@@ -34,8 +34,14 @@ import yaml
 
 from harness.types import LoopOutcome, kind_from_mutations
 
-DEFAULT_POLICY_PATH = Path("policies/auto_approve.yaml")
 VALID_MODES = ("auto", "review", "off")
+
+
+def _resolve_policy_path(path: Path | str | None) -> Path:
+    if path is not None:
+        return Path(path)
+    from runtime.agent_paths import policy_path
+    return policy_path()
 
 
 class ApprovalDecision(str, Enum):
@@ -63,8 +69,8 @@ class Policy:
     auto_rollback: AutoRollback = field(default_factory=AutoRollback)
 
     @classmethod
-    def from_yaml(cls, path: Path | str = DEFAULT_POLICY_PATH) -> "Policy":
-        p = Path(path)
+    def from_yaml(cls, path: Path | str | None = None) -> "Policy":
+        p = _resolve_policy_path(path)
         if not p.exists():
             return cls()
         with p.open() as f:
@@ -109,8 +115,8 @@ class Policy:
             },
         }
 
-    def write_yaml(self, path: Path | str = DEFAULT_POLICY_PATH) -> None:
-        p = Path(path)
+    def write_yaml(self, path: Path | str | None = None) -> None:
+        p = _resolve_policy_path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("w") as f:
             yaml.safe_dump(self.to_dict(), f, sort_keys=False)

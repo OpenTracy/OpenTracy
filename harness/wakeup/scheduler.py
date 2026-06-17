@@ -13,6 +13,7 @@ introspection prompt.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import threading
@@ -24,12 +25,32 @@ logger = logging.getLogger("harness.wakeup.scheduler")
 
 
 _DEFAULT_THRESHOLD = int(os.getenv("HARNESS_ROUTER_WAKEUP_N", "50"))
-_COUNTER_PATH = Path(".harness") / "wakeup_counter.txt"
-_LOCK_PATH = Path("/tmp") / "opentracy_router_wakeup.lock"
+_COUNTER_DIR = Path(".harness")
+_COUNTER_PATH = _COUNTER_DIR / "wakeup_counter.txt"  # legacy default (back-compat)
+def _lock_path() -> Path:
+    """Cross-process wakeup lock, namespaced per tenant so a busy tenant
+    doesn't serialize another tenant's improvement passes on a shared host."""
+    from runtime.tenant_context import get_active as _get_tenant
+
+    return Path("/tmp") / f"opentracy_router_wakeup_{_get_tenant()}.lock"
+
 
 # Module-level lock guards counter increments within a single process.
-# Cross-process exclusion is via the lockfile in _LOCK_PATH.
+# Cross-process exclusion is via the per-tenant lockfile (``_lock_path()``).
 _counter_lock = threading.Lock()
+
+# Per-agent wakeup queue. ``_pending`` holds distinct agents awaiting their
+# improvement run; ``_inflight`` holds the ones being improved right now. A
+# flood of traces for one agent coalesces into a single run (it won't re-enqueue
+# while pending or in flight); other agents still get their turn — the worker
+# drains the queue one agent at a time under the cross-process lock.
+_pending: set[str] = set()
+_inflight: set[str] = set()
+_queue_lock = threading.Lock()
+
+
+def _counter_path_for(agent_id: str) -> Path:
+    return _COUNTER_DIR / f"wakeup_counter_{agent_id}.txt"
 
 
 class _LockHeldError(Exception):
@@ -66,56 +87,104 @@ def reset_trace_counter(*, counter_path: Optional[Path] = None) -> None:
 
 
 def maybe_fire(
+    agent_id: Optional[str] = None,
     *,
     threshold: Optional[int] = None,
     counter_path: Optional[Path] = None,
     lock_path: Optional[Path] = None,
     runner: Optional[Callable[[], None]] = None,
 ) -> None:
-    """Increment the counter; if it reached ``threshold``, fire async.
+    """Bump an agent's wakeup counter; on threshold, enqueue it and ensure the
+    serialized worker is draining the queue.
 
-    This must return instantly — it's called from the trace write path.
-    Concurrent wake-ups are blocked by the lockfile.
+    Returns instantly — it's called from the trace write path. ``agent_id``
+    defaults to the active agent in the current context, so each agent's traces
+    drive its own counter. One agent is improved at a time (cross-process
+    lockfile); per-agent counters mean a busy agent doesn't starve the others.
 
     Args:
+        agent_id: Agent to count/improve (default: the active agent).
         threshold: Override ``HARNESS_ROUTER_WAKEUP_N`` env default.
         counter_path / lock_path: Override defaults (tests use this).
         runner: Override the ``run_wakeup`` callable (tests use this).
     """
+    if agent_id is None:
+        from runtime.agent_context import get_active
+
+        agent_id = get_active()
     th = threshold if threshold is not None else _DEFAULT_THRESHOLD
-    cpath = counter_path or _COUNTER_PATH
-    lpath = lock_path or _LOCK_PATH
+    cpath = counter_path or _counter_path_for(agent_id)
+    lpath = lock_path or _lock_path()
+
     n = increment_trace_counter(counter_path=cpath)
     if n < th:
         return
-
-    # Try to acquire the cross-process lockfile.
-    try:
-        _acquire_lock(lpath)
-    except _LockHeldError:
-        # Previous wake-up still running — skip; the next trace will retry.
-        logger.info("wakeup skipped: another wakeup is already running")
-        return
-
-    # Reset counter only after we successfully acquired the lock.
     reset_trace_counter(counter_path=cpath)
+
+    if not _enqueue(agent_id):
+        return  # already pending or in flight — coalesce into the running pass
 
     fn = runner or _default_runner
 
-    def _run_with_release() -> None:
-        try:
-            fn()
-        except Exception as e:  # pragma: no cover — defensive
-            logger.exception("wakeup run failed: %s", e)
-        finally:
-            _release_lock(lpath)
+    # Become the worker if no one holds the cross-process lock; otherwise the
+    # running worker will drain what we just enqueued.
+    try:
+        _acquire_lock(lpath)
+    except _LockHeldError:
+        logger.info("wakeup enqueued for %s; a worker is already draining", agent_id)
+        return
 
     thread = threading.Thread(
-        target=_run_with_release,
+        target=_drain_with_release,
+        args=(lpath, fn),
         daemon=True,
-        name="router-wakeup",
+        name="agent-wakeup",
     )
     thread.start()
+
+
+def _enqueue(agent_id: str) -> bool:
+    """Add an agent to the pending set unless it's already pending/in flight."""
+    with _queue_lock:
+        if agent_id in _pending or agent_id in _inflight:
+            return False
+        _pending.add(agent_id)
+        return True
+
+
+def _next_agent() -> Optional[str]:
+    with _queue_lock:
+        if not _pending:
+            return None
+        agent_id = _pending.pop()
+        _inflight.add(agent_id)
+        return agent_id
+
+
+def _finish_agent(agent_id: str) -> None:
+    with _queue_lock:
+        _inflight.discard(agent_id)
+
+
+def _drain_with_release(lock_path: Path, runner: Callable[[], None]) -> None:
+    """Run the queued agents one at a time, each in its own pinned context,
+    then release the cross-process lock."""
+    from runtime.agent_context import set_active
+
+    try:
+        while True:
+            agent_id = _next_agent()
+            if agent_id is None:
+                break
+            set_active(agent_id)
+            try:
+                runner()
+            except Exception as e:  # pragma: no cover — defensive
+                logger.exception("wakeup run failed for %s: %s", agent_id, e)
+            finally:
+                _finish_agent(agent_id)
+    finally:
+        _release_lock(lock_path)
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +251,7 @@ def _pid_alive(pid: int) -> bool:
         os.kill(pid, 0)
     except OSError as e:
         # ESRCH = no such process; EPERM = exists but we lack permission.
-        if getattr(e, "errno", None) == 1:  # EPERM — process exists, owned by another user
+        if getattr(e, "errno", None) == errno.EPERM:  # process exists, owned by another user
             return True
         return False
     return True
@@ -201,11 +270,25 @@ def _release_lock(path: Path) -> None:
 
 
 def _default_runner() -> None:
-    """Default wakeup body — calls ``run_wakeup`` from the runner module.
+    """Default wakeup body — calls ``run_wakeup`` for the active agent, but
+    only if that agent's ``improvement.yaml`` has it enabled.
 
     Defined as a module-level function (not a lambda) so tests can swap it
-    out via ``runner=`` arg.
+    out via ``runner=`` arg. The worker has already pinned the active agent.
     """
+    from runtime.agent_context import get_active
+
+    agent_id = get_active()
+    try:
+        from runtime.agents.improvement import load
+
+        cfg = load(agent_id)
+        if not cfg.enabled or cfg.transport == "disabled":
+            logger.info("wakeup skipped: improvement disabled for %s", agent_id)
+            return
+    except Exception:
+        pass  # default to enabled if the config can't be read
+
     from harness.wakeup.runner import run_wakeup
 
     run_wakeup()

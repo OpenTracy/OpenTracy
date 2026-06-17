@@ -29,6 +29,21 @@ register(server)
 
 
 async def main() -> None:
+    # The spawner (brain CLI) passes OPENTRACY_AGENT_ID / OPENTRACY_TENANT_ID so
+    # this server's tool calls resolve the SAME agent/tenant, not _default.
+    import os
+
+    from runtime import agent_context
+
+    agent_id = os.environ.get("OPENTRACY_AGENT_ID")
+    if agent_id:
+        agent_context.set_active(agent_id)
+    tenant_id = os.environ.get("OPENTRACY_TENANT_ID")
+    if tenant_id:
+        from runtime import tenant_context
+
+        tenant_context.set_active(tenant_id)
+
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 

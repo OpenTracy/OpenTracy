@@ -26,10 +26,7 @@ from harness.observability.types import (
     TopEvent,
 )
 from ledger.writer import read_entries, read_lessons
-
-SESSIONS_DIR = Path("traces/distilled/sessions")
-EPOCHS_DIR = Path("traces/distilled/epochs")
-RESULTS_GLOB = Path("experiments/results")
+from runtime.agent_paths import distilled_dir, experiments_results_dir
 
 
 # ---------- helpers ----------
@@ -50,8 +47,10 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _all_results() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for p in sorted(RESULTS_GLOB.glob("*.jsonl")):
-        out.extend(_read_jsonl(p))
+    results_dir = experiments_results_dir()
+    if results_dir.exists():
+        for p in sorted(results_dir.glob("*.jsonl")):
+            out.extend(_read_jsonl(p))
     return out
 
 
@@ -68,7 +67,7 @@ def _now_iso() -> str:
 
 def distill_session(
     candidate_id: str,
-    sessions_dir: Path | str = SESSIONS_DIR,
+    sessions_dir: Optional[Path | str] = None,
 ) -> DistilledSession:
     """Build a DistilledSession for one candidate from existing artifacts.
 
@@ -229,7 +228,7 @@ def distill_session(
     )
 
     # Persist
-    out_dir = Path(sessions_dir)
+    out_dir = Path(sessions_dir) if sessions_dir is not None else distilled_dir("sessions")
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{session.session_id}.json"
     with path.open("w") as f:
@@ -237,7 +236,7 @@ def distill_session(
     return session
 
 
-def distill_all_sessions(sessions_dir: Path | str = SESSIONS_DIR) -> list[DistilledSession]:
+def distill_all_sessions(sessions_dir: Optional[Path | str] = None) -> list[DistilledSession]:
     out: list[DistilledSession] = []
     for m in list_candidates():
         try:
@@ -296,7 +295,7 @@ def _epoch_summary(counts: EpochCounts, kind: str, span: str) -> str:
     return ", ".join(bits) + "."
 
 
-def distill_day(date_str: str, epochs_dir: Path | str = EPOCHS_DIR) -> DistilledEpoch:
+def distill_day(date_str: str, epochs_dir: Optional[Path | str] = None) -> DistilledEpoch:
     """date_str: 'YYYY-MM-DD'."""
     start = f"{date_str}T00:00:00.000Z"
     end = f"{date_str}T23:59:59.999Z"
@@ -329,7 +328,7 @@ def distill_day(date_str: str, epochs_dir: Path | str = EPOCHS_DIR) -> Distilled
         summary=_epoch_summary(counts, "Daily", date_str),
     )
 
-    out_dir = Path(epochs_dir)
+    out_dir = Path(epochs_dir) if epochs_dir is not None else distilled_dir("epochs")
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"day_{date_str}.json"
     with path.open("w") as f:
@@ -337,7 +336,7 @@ def distill_day(date_str: str, epochs_dir: Path | str = EPOCHS_DIR) -> Distilled
     return epoch
 
 
-def distill_version(version: str, epochs_dir: Path | str = EPOCHS_DIR) -> DistilledEpoch:
+def distill_version(version: str, epochs_dir: Optional[Path | str] = None) -> DistilledEpoch:
     """All ledger activity where this version was either before or after."""
     entries = [
         e
@@ -370,7 +369,7 @@ def distill_version(version: str, epochs_dir: Path | str = EPOCHS_DIR) -> Distil
         summary=_epoch_summary(counts, "Version", version),
     )
 
-    out_dir = Path(epochs_dir)
+    out_dir = Path(epochs_dir) if epochs_dir is not None else distilled_dir("epochs")
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"version_{version}.json"
     with path.open("w") as f:

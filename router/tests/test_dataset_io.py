@@ -51,7 +51,7 @@ def _payload(name: str = "goldens", version: int = 1, n_samples: int = 2) -> dic
 def tmp_datasets(tmp_path: Path, monkeypatch):
     d = tmp_path / "datasets"
     d.mkdir()
-    monkeypatch.setattr("router.data.dataset_io.DEFAULT_DATASETS_DIR", d)
+    monkeypatch.setattr("runtime.agent_paths.datasets_dir", lambda *a, **k: d)
     return d
 
 

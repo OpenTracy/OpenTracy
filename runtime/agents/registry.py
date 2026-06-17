@@ -1,23 +1,23 @@
-"""Agent registry — CRUD on ``agents/`` + the live ``agent/`` dir (P2.0).
+"""Agent registry — CRUD on the ``agents/<id>/`` catalog (P2.0).
 
 Operations
 ----------
 
-  - ``ensure_bootstrapped()`` — first-run migration. If ``agents/registry.json``
-    is missing, snapshot the current ``agent/`` directory into
-    ``agents/_default/``, write the registry with ``_default`` as the
+  - ``ensure_bootstrapped()`` — first-run setup. If ``agents/registry.json``
+    is missing, seed ``agents/_default/`` from the committed template
+    (``templates/agent/``) and write the registry with ``_default`` as the
     active agent. Idempotent.
   - ``list_agents()`` / ``get_agent(id)`` — read.
-  - ``create_agent(payload)`` — make a new ``agents/<id>/``. Seeded with
-    the operator's prompt/model/channels (from onboarding) and a default
-    pipeline copied from the currently-active agent.
-  - ``activate(id)`` — copy ``agents/<id>/*`` → ``agent/*`` and update
-    the registry's ``active`` pointer. Triggers ``on_activate`` hook so
-    the runtime can recompile its pipeline.
+  - ``create_agent(payload)`` — make a new ``agents/<id>/``. Seeded from
+    the committed template (or an explicit ``seed_from`` agent), stripped
+    of inherited per-agent state, then the operator's
+    prompt/model/channels (from onboarding) are applied.
+  - ``activate(id)`` — flip the registry's ``active`` pointer to
+    ``agents/<id>/`` (the catalog entry IS the live surface; nothing is
+    copied). Triggers ``on_activate`` so the runtime can recompile.
   - ``delete_agent(id)`` — soft delete (rename to ``_deleted/<id>``)
-    plus registry mutation. Never touches the live ``agent/`` dir; if
-    the active agent is deleted, the caller decides what to activate
-    next (UI surface).
+    plus registry mutation. If the active agent is deleted, the caller
+    decides what to activate next (UI surface).
 
 Concurrency: FastAPI single-process, no real concurrency between
 requests. A simple file write + rename is enough — no locking primitives.
@@ -41,11 +41,27 @@ logger = logging.getLogger("runtime.agents.registry")
 
 
 _DEFAULT_ROOT = Path("agents")
-_LIVE_AGENT_DIR = Path("agent")           # the running agent
 _REGISTRY_FILE = "registry.json"
 _DELETED_BUCKET = "_deleted"
 _DEFAULT_ID = "_default"
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
+
+# Committed, clean structural template that seeds both the default agent
+# and every new agent. Resolved off this file so it is found regardless
+# of cwd or tenant root.
+_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates" / "agent"
+
+# Per-agent state a seed source may carry that a new agent must NOT
+# inherit. Files are unlinked; dirs are removed; mcp.json / improvement.yaml
+# are reset to the template defaults afterward.
+_INHERITED_STATE_FILES = ("secrets.env", "secrets.enc.json", "onboarding_session.json")
+# Per-agent learned/accumulated state — a new agent starts cold, never inheriting
+# another agent's router model, datasets, corpus, or eval/experiment outputs.
+_INHERITED_STATE_DIRS = (
+    "integrations", "workspace", "router", "datasets", "corpora",
+    "evals", "experiments",
+)
+_TEMPLATE_RESET_FILES = ("mcp.json", "improvement.yaml", "policy.yaml")
 
 
 # ---------------------------------------------------------------------------
@@ -60,8 +76,11 @@ def ensure_bootstrapped(
     now_iso: Optional[str] = None,
     project_root: Optional[Path] = None,
 ) -> Registry:
-    """If ``agents/registry.json`` is missing, migrate ``agent/`` to
-    ``agents/_default/`` and write a registry. Idempotent.
+    """If ``agents/registry.json`` is missing, seed ``agents/_default/``
+    from the committed template and write a registry. Idempotent.
+
+    ``live_dir`` overrides the seed source (tests point it at a fixture);
+    when omitted the committed template (``templates/agent/``) is used.
 
     P2.1 — also partitions storage. Flat dirs that pre-date multi-agent
     (``ledger/{entries,lessons,decisions,notifications}/...`` +
@@ -73,7 +92,7 @@ def ensure_bootstrapped(
     Returns the registry in its post-bootstrap state.
     """
     root = _resolve_root(root)
-    live = Path(live_dir) if live_dir is not None else _LIVE_AGENT_DIR
+    seed = Path(live_dir) if live_dir is not None else _TEMPLATE_DIR
     project = Path(project_root) if project_root is not None else Path.cwd()
     root.mkdir(parents=True, exist_ok=True)
 
@@ -86,20 +105,20 @@ def ensure_bootstrapped(
     if registry_path.is_file():
         return _load_registry(root)
 
-    logger.info("agents/registry.json missing — migrating agent/ → agents/_default/")
+    logger.info("agents/registry.json missing — seeding agents/_default/ from the template")
     default_dir = root / _DEFAULT_ID
     if not default_dir.is_dir():
-        if live.is_dir():
-            _copy_tree(live, default_dir)
+        if seed.is_dir():
+            _copy_tree(seed, default_dir)
         else:
             default_dir.mkdir(parents=True, exist_ok=True)
-            logger.warning("no live agent/ dir to migrate — created empty agents/_default/")
+            logger.warning("no agent template at %s — created empty agents/_default/", seed)
 
     meta = AgentMetadata(
         id=_DEFAULT_ID,
         name="Default agent",
         template=None,
-        description="Migrated from the single-agent layout that preceded P2.0.",
+        description="Seeded from the committed agent template.",
         created_at=_now_iso(now_iso),
         updated_at=_now_iso(now_iso),
     )
@@ -119,9 +138,25 @@ def agents_root() -> Path:
     Public surface for sibling modules (``channels``, ``improvement``,
     ``mcp``) that previously read the ``_DEFAULT_ROOT`` constant
     directly. In multi-tenant mode this routes through the active
-    tenant; in OSS mode it returns the legacy ``agents/`` path.
+    tenant; in OSS mode it returns the top-level ``agents/`` path.
     """
     return _resolve_root(None)
+
+
+def live_agent_dir(agent_id: Optional[str] = None) -> Optional[Path]:
+    """Directory the runtime should read an agent's live surface from.
+
+    The catalog entry ``agents/<id>/`` IS the live agent — there is no
+    separate global copy. ``agent_id=None`` resolves the registry's active
+    agent. Returns ``None`` when the agent has no dir on disk (eg. before
+    bootstrap).
+    """
+    root = _resolve_root(None)
+    aid = agent_id or _load_registry(root).active
+    if not aid:
+        return None
+    d = root / aid
+    return d if d.is_dir() else None
 
 
 def list_agents(*, root: Optional[Path] = None) -> list[AgentMetadata]:
@@ -160,10 +195,11 @@ def create_agent(
     (unique across the registry; appends a hex suffix on collision).
 
     ``seed_from`` (optional) is the id of an existing agent whose
-    pipeline yamls are used as the starting point. Defaults to the
-    currently-active agent so the new agent inherits the routing /
-    rerank / generate stages. The prompt + model + name are overwritten
-    by the payload.
+    pipeline yamls are used as the starting point — an explicit opt-in
+    to inherit another agent's tuning. When omitted, the new agent is
+    seeded from the committed template (``templates/agent/``). Either
+    way the agent dir is stripped of inherited per-agent state and the
+    prompt + model + name from the payload are applied.
     """
     rroot = _resolve_root(root)
     registry = _load_registry(rroot)
@@ -173,30 +209,26 @@ def create_agent(
     if agent_dir.exists():
         raise ValueError(f"agents/{agent_id} already exists")
 
-    source_id = seed_from or registry.active or _DEFAULT_ID
-    source_dir = rroot / source_id
-    if not source_dir.is_dir():
-        # New tenants start with empty agents/ dirs (see
-        # tenants.registry.create_tenant), so the per-tenant _default
-        # seed isn't there yet. Fall back to the canonical seed at
-        # tenants/_default/agents/_default — the migration bootstrap
-        # always populates it on first boot. Without this fallback,
-        # create_agent for a fresh tenant produces an empty dir with
-        # no pipeline yaml, and activate_agent silently fails to load
-        # a pipeline at chat time.
-        fallback = _baseline_seed_dir(rroot)
-        if fallback is not None and fallback.is_dir():
-            source_dir = fallback
+    if seed_from:
+        source_dir = rroot / seed_from
+        if not source_dir.is_dir():
+            # The opt-in source isn't on disk (eg. a fresh tenant whose
+            # per-tenant _default isn't seeded yet). Fall back to the
+            # canonical baseline so the new agent still gets a working
+            # pipeline instead of an empty dir.
+            fallback = _baseline_seed_dir(rroot)
+            if fallback is not None and fallback.is_dir():
+                source_dir = fallback
+    else:
+        source_dir = _TEMPLATE_DIR
     if source_dir.is_dir():
         _copy_tree(source_dir, agent_dir)
     else:
         agent_dir.mkdir(parents=True, exist_ok=True)
 
-    integrations_dir = agent_dir / "integrations"
-    if integrations_dir.is_dir():
-        shutil.rmtree(integrations_dir, ignore_errors=True)
-
+    _strip_inherited_state(agent_dir)
     _apply_payload_to_dir(agent_dir, payload)
+    _seed_starter_datasets(agent_dir)
 
     timestamp = _now_iso(now_iso)
     meta = AgentMetadata(
@@ -235,10 +267,9 @@ def update_agent(
         meta.description = description
     if model is not None:
         meta.model = model
-        # P3.0 — propagate to the agent's route.yaml so /run uses it.
-        # If this agent is currently active, live ``agent/`` won't update
-        # until the operator hits /activate again — that's acceptable;
-        # the catalog copy is the source of truth.
+        # P3.0 — propagate to the agent's route.yaml so /run uses it. The
+        # catalog dir IS the live surface; the HTTP layer invalidates the
+        # compiled-pipeline cache so the change takes effect immediately.
         _set_route_yaml_model(rroot / agent_id, model)
     meta.updated_at = _now_iso(now_iso)
     _save_registry(rroot, registry)
@@ -249,36 +280,24 @@ def activate(
     agent_id: str,
     *,
     root: Optional[Path] = None,
-    live_dir: Optional[Path] = None,
     on_activate: Optional[Callable[[AgentMetadata], None]] = None,
 ) -> AgentMetadata:
     """Make ``agents/<id>/`` the live agent.
 
-    Copies the catalog entry into ``agent/`` (the runtime reads from
-    there). Updates ``registry.active``. The optional ``on_activate``
-    hook fires after the copy — the server uses it to recompile its
-    pipeline.
+    The catalog entry IS the live surface — activation just flips
+    ``registry.active``; nothing is copied. The optional ``on_activate``
+    hook fires afterwards — the server uses it to recompile its pipeline
+    and invalidate the per-agent cache.
     """
     rroot = _resolve_root(root)
-    live = Path(live_dir) if live_dir is not None else _LIVE_AGENT_DIR
     registry = _load_registry(rroot)
     meta = registry.get(agent_id)
     if meta is None:
         raise KeyError(agent_id)
 
-    source = rroot / agent_id
-    if not source.is_dir():
+    if not (rroot / agent_id).is_dir():
         raise FileNotFoundError(f"agents/{agent_id}/ missing on disk")
 
-    # Snapshot current live agent back into its catalog entry so any
-    # mid-flight prompt/route edits aren't lost on switch.
-    prev_active = registry.active
-    if prev_active and prev_active != agent_id and live.is_dir():
-        prev_dir = rroot / prev_active
-        if prev_dir.is_dir() or registry.get(prev_active) is not None:
-            _copy_tree(live, prev_dir)
-
-    _replace_tree(source, live)
     registry.active = agent_id
     _save_registry(rroot, registry)
 
@@ -325,6 +344,70 @@ def delete_agent(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
+
+def _strip_inherited_state(agent_dir: Path) -> None:
+    """Remove per-agent state a seed source may carry so a new agent
+    starts isolated — no inherited secrets, integrations, onboarding
+    session, or workspace. ``mcp.json`` / ``improvement.yaml`` are reset
+    to the committed template defaults."""
+    for rel in _INHERITED_STATE_FILES:
+        path = agent_dir / rel
+        if path.exists():
+            path.unlink()
+    for rel in _INHERITED_STATE_DIRS:
+        directory = agent_dir / rel
+        if directory.is_dir():
+            shutil.rmtree(directory, ignore_errors=True)
+    for rel in _TEMPLATE_RESET_FILES:
+        src = _TEMPLATE_DIR / rel
+        dst = agent_dir / rel
+        if src.is_file():
+            shutil.copyfile(src, dst)
+        elif dst.exists():
+            dst.unlink()
+
+
+# Shared test library every new agent's goldens are projected from.
+_GOLDENS_LIBRARY = Path(__file__).resolve().parents[2] / "evals" / "golden"
+
+
+def _seed_starter_datasets(agent_dir: Path) -> None:
+    """Give a new agent its starter eval datasets so the mining→projection→eval
+    loop works out of the box:
+
+      - ``goldens`` — the shared ``evals/golden`` test library, projected into
+        an Eval dataset (so the agent has a baseline eval set from day one).
+      - ``rag-gaps`` — an empty *growing* dataset wired to the "failed lookups"
+        mining adapter; it auto-curates once the agent has traffic.
+
+    Best-effort and idempotent: a seeding failure (e.g. embedder unavailable)
+    is logged but never blocks agent creation, and an already-seeded dataset is
+    left untouched. Writes are scoped to ``agent_dir/datasets`` explicitly so
+    seeding doesn't depend on the active-agent context (the new agent isn't
+    active yet)."""
+    ds_dir = agent_dir / "datasets"
+    try:
+        from evals.seeding import build_empty_growing_payload, build_goldens_payload
+        from router.data.dataset_io import get_current_version, save_dataset
+        from runtime.embedder_pool import get_pool
+
+        embedder = get_pool().get()
+        if (
+            get_current_version("goldens", datasets_dir=ds_dir) is None
+            and _GOLDENS_LIBRARY.is_dir()
+        ):
+            save_dataset(
+                build_goldens_payload(_GOLDENS_LIBRARY, embedder),
+                datasets_dir=ds_dir,
+            )
+        if get_current_version("rag-gaps", datasets_dir=ds_dir) is None:
+            save_dataset(
+                build_empty_growing_payload("rag-gaps", "failed lookups", embedder),
+                datasets_dir=ds_dir,
+            )
+    except Exception:
+        logger.warning("starter-dataset seeding failed for %s", agent_dir, exc_info=True)
 
 
 def _apply_payload_to_dir(agent_dir: Path, payload: dict[str, Any]) -> None:
@@ -469,26 +552,6 @@ def _copy_tree(src: Path, dst: Path) -> None:
     shutil.copytree(src, dst, symlinks=False)
 
 
-def _replace_tree(src: Path, dst: Path) -> None:
-    """Atomic-ish replace: copy src to a temp dir, then move into place.
-
-    Falls back to direct copy if the temp move would cross devices.
-    """
-    if not src.is_dir():
-        raise FileNotFoundError(src)
-    parent = dst.parent
-    parent.mkdir(parents=True, exist_ok=True)
-    staging = parent / f".{dst.name}.staging-{secrets.token_hex(3)}"
-    try:
-        shutil.copytree(src, staging, symlinks=False)
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.move(str(staging), str(dst))
-    finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
-
-
 def _baseline_seed_dir(tenant_agents_root: Path) -> Optional[Path]:
     """Cross-tenant fallback for the ``_default`` agent seed.
 
@@ -500,12 +563,12 @@ def _baseline_seed_dir(tenant_agents_root: Path) -> Optional[Path]:
 
     ``tenant_agents_root`` is the per-tenant agents dir (eg.
     ``tenants/acme/agents/``). Walks up two levels to the tenants/
-    root, then back down to ``_default/agents/_default``. Returns
-    None in OSS mode (when this helper shouldn't be needed at all).
+    root, then back down to ``_default/agents/_default``. In OSS mode
+    there are no tenants, so the committed template is the baseline.
     """
     from runtime.tenants.feature import is_multi_tenant_enabled
     if not is_multi_tenant_enabled():
-        return None
+        return _TEMPLATE_DIR
     # tenants/<t>/agents → tenants/<t> → tenants → tenants/_default/agents/_default
     try:
         tenants_root = tenant_agents_root.parent.parent

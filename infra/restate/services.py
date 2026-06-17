@@ -26,7 +26,7 @@ from pathlib import Path
 import restate
 from restate import Context, RunOptions, Service
 
-from runtime.store.compactor import compact_day
+from runtime.store.compactor import compact_day_all_agents
 
 logger = restate.getLogger(__name__) if hasattr(restate, "getLogger") else logging.getLogger(__name__)
 
@@ -47,12 +47,16 @@ def _next_run_at(now: datetime, hour: int = 0, minute: int = 5) -> datetime:
 
 def _compact_yesterday(day: str) -> str:
     """The actual side effect — runs inside ctx.run() so Restate journals
-    the result and replays it on retry."""
-    out: Path | None = compact_day(day, force=False)
-    if out is None:
+    the result and replays it on retry. Compacts every agent's traces for
+    the day under the active tenant's traces root."""
+    results = compact_day_all_agents(day, force=False)
+    compacted = {a: out for a, out in results.items() if out is not None}
+    if not compacted:
         return f"skipped:{day}"
-    n_parts = sum(1 for _ in out.rglob("*.parquet"))
-    return f"compacted:{day}:{n_parts}_parts"
+    n_parts = sum(
+        sum(1 for _ in out.rglob("*.parquet")) for out in compacted.values()
+    )
+    return f"compacted:{day}:{len(compacted)}_agents:{n_parts}_parts"
 
 
 @compactor.handler()

@@ -38,7 +38,6 @@ from router.models.llm_client import LLMClient
 logger = logging.getLogger("router.augmentation.goldens")
 
 
-DEFAULT_OUTPUT_DIR = Path("evals") / "preference_pairs"
 DEFAULT_MAX_SAMPLES = 500
 
 
@@ -91,7 +90,7 @@ class GoldenAugmenter:
         max_tokens: int = 256,
         temperature: float = 0.0,
         max_samples: int = DEFAULT_MAX_SAMPLES,
-        output_dir: Path = DEFAULT_OUTPUT_DIR,
+        output_dir: Optional[Path] = None,
     ):
         """Args:
             llm_clients: Models to generate responses with.
@@ -110,6 +109,9 @@ class GoldenAugmenter:
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.max_samples = max_samples
+        if output_dir is None:
+            from runtime.agent_paths import preference_pairs_dir
+            output_dir = preference_pairs_dir()
         self.output_dir = output_dir
 
     # ------------------------------------------------------------------

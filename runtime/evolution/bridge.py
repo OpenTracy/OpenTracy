@@ -85,23 +85,11 @@ def publish_iteration(
 
 
 def eval_reports_dir() -> Path:
-    """The canonical directory eval reports go in.
+    """The active agent's eval-reports dir (``agents/<id>/evals/reports``),
+    tenant-aware via the agents root."""
+    from runtime.agent_paths import evals_reports_dir
 
-    Multi-tenant (staging/prod) → ``tenants/<tid>/evals/reports/`` so
-    reports persist on gcsfuse alongside the rest of the tenant's data
-    and don't collide across tenants.
-
-    OSS / single-tenant → flat ``<project_root>/evals/reports/`` to
-    match the legacy layout (baked-in candidate reports from the
-    experiments runner live there)."""
-    from runtime.tenants.feature import is_multi_tenant_enabled
-
-    if is_multi_tenant_enabled():
-        from runtime.tenant_context import get_active
-        from runtime.tenants.registry import get_tenant_dir
-
-        return get_tenant_dir(get_active()) / "evals" / "reports"
-    return Path(__file__).resolve().parent.parent.parent / "evals" / "reports"
+    return evals_reports_dir()
 
 
 def _write_eval_report(
@@ -396,9 +384,8 @@ def _decide_status_via_policy(
     if not has_edits:
         return _PolicyDecision("auto_promoted")
     try:
-        from runtime.server import _policy_path
         from harness.approver import Policy
-        policy = Policy.from_yaml(_policy_path())
+        policy = Policy.from_yaml()  # active agent's policy.yaml
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning("bridge: policy load failed (%s) — defaulting to review", exc)
         return _PolicyDecision("awaiting_review")

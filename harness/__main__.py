@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from typing import Any
+from typing import Any, Optional
 
 from harness.approver import Policy
 from harness.blueprint import Blueprint
@@ -17,6 +17,24 @@ from harness.loop import run_loop
 from harness.proposer import sweep_knob
 from harness.rollback import rollback_to
 from ledger.versioning import list_snapshots, read_version
+
+
+def _pin_active_agent(agent_id: Optional[str]) -> str:
+    """Pin the agent the CLI operates on, so it writes to the same ledger
+    partition and live surface the runtime serves. Defaults to the registry's
+    active agent (NOT the bare ``_default`` fallback)."""
+    from runtime.agent_context import set_active
+
+    if not agent_id:
+        try:
+            from runtime.agents.registry import get_registry
+
+            agent_id = get_registry().active
+        except Exception:
+            agent_id = None
+    if agent_id:
+        set_active(agent_id)
+    return agent_id or "_default"
 
 
 def _parse_values(raw: str) -> list[Any]:
@@ -34,6 +52,8 @@ def _parse_values(raw: str) -> list[Any]:
 
 
 def cmd_sweep(args: argparse.Namespace) -> int:
+    agent = _pin_active_agent(getattr(args, "agent", None))
+    print(f"  agent:        {agent}", file=sys.stderr)
     if ":" not in args.knob:
         print(f"--knob must be 'file:dotted.path' (got {args.knob!r})", file=sys.stderr)
         return 2
@@ -105,6 +125,8 @@ def cmd_sweep(args: argparse.Namespace) -> int:
 
 
 def cmd_rollback(args: argparse.Namespace) -> int:
+    agent = _pin_active_agent(getattr(args, "agent", None))
+    print(f"agent: {agent}", file=sys.stderr)
     snapshots = list_snapshots()
     if args.version not in snapshots:
         print(f"unknown version {args.version!r}", file=sys.stderr)
@@ -139,17 +161,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_sweep.add_argument(
         "--policy-mode", choices=["auto", "review", "off"],
-        help="override policies/auto_approve.yaml mode for this run",
+        help="override the agent's policy.yaml mode for this run",
     )
     p_sweep.add_argument(
         "--policy-min-lift", type=float, default=0.0,
         help="min Δoverall_score required for auto promotion (only if mode=auto)",
     )
+    p_sweep.add_argument(
+        "--agent", help="agent id to operate on (default: the registry's active agent)",
+    )
     p_sweep.set_defaults(func=cmd_sweep)
 
-    p_rollback = sub.add_parser("rollback", help="restore live agent/ to a prior version")
+    p_rollback = sub.add_parser("rollback", help="restore the live agent to a prior version")
     p_rollback.add_argument("version", help="version id (e.g. v0.0.1)")
     p_rollback.add_argument("--reason", default="manual rollback", help="reason recorded in the ledger")
+    p_rollback.add_argument(
+        "--agent", help="agent id to operate on (default: the registry's active agent)",
+    )
     p_rollback.set_defaults(func=cmd_rollback)
 
     args = parser.parse_args(argv)

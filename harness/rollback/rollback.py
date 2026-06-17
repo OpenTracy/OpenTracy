@@ -5,13 +5,13 @@ from __future__ import annotations
 import shutil
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Optional
 
 from ledger.versioning import (
-    LIVE_AGENT,
-    VERSIONS_DIR,
     bump_patch,
     list_snapshots,
     read_version,
+    resolve_live_dir,
     restore_version,
     set_version,
     snapshot_agent,
@@ -31,14 +31,14 @@ def _is_within(path: Path, base: Path) -> bool:
 def rollback_to(
     version: str,
     *,
-    agent_dir: Path | str = LIVE_AGENT,
+    agent_dir: Optional[Path | str] = None,
     reason: str = "manual rollback",
 ) -> str:
-    """Restore live agent/ to a prior `version`. Records the rollback in the ledger.
+    """Restore the live agent to a prior `version`. Records the rollback in the ledger.
 
     Returns the version now live (= `version`, except no-op if already there).
     """
-    agent_dir = Path(agent_dir)
+    agent_dir = Path(agent_dir) if agent_dir is not None else resolve_live_dir()
     old_version = read_version(agent_dir)
     if old_version == version:
         return version
@@ -64,8 +64,8 @@ def rollback_edits(
     version: str,
     files: Iterable[str],
     *,
-    agent_dir: Path | str = LIVE_AGENT,
-    versions_dir: Path | str = VERSIONS_DIR,
+    agent_dir: Optional[Path | str] = None,
+    versions_dir: Optional[Path | str] = None,
     reason: str = "file-level rollback",
 ) -> dict[str, list[str]]:
     """Revert only `files` (agent/-relative) to their state at `version`.
@@ -76,7 +76,7 @@ def rollback_edits(
     under it first so this is itself undoable, and records a rollback ledger
     entry. Returns {restored, removed, skipped}.
     """
-    agent_dir = Path(agent_dir)
+    agent_dir = Path(agent_dir) if agent_dir is not None else resolve_live_dir()
     snap = snapshot_path(version, versions_dir)
     if not snap.exists():
         raise FileNotFoundError(f"no snapshot for version {version!r}: {snap}")

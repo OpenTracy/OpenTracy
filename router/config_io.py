@@ -37,16 +37,18 @@ from router.models.llm_profile import LLMProfile
 from router.models.llm_registry import LLMRegistry
 
 
-VERSIONS_DIR = Path("versions")
-
-
 def _vd(versions_dir: Optional[Path]) -> Path:
-    """Resolve the versions directory at call time so monkeypatching works."""
+    """Resolve the versions directory at call time.
+
+    Explicit ``versions_dir`` wins (tests pass it). Otherwise the ACTIVE
+    agent's router versions dir — each agent owns its router model + lineage.
+    """
     if versions_dir is not None:
         return versions_dir
-    # Read the module-level constant lazily (tests patch this attribute).
-    import router.config_io as _self
-    return _self.VERSIONS_DIR
+    from runtime.agent_paths import router_versions_dir
+    return router_versions_dir()
+
+
 _CURRENT_NAME = "router_config_current"
 _CURRENT_TXT = "router_config_current.txt"
 _STAGING_DIR = ".staging"
@@ -55,19 +57,19 @@ _STAGING_DIR = ".staging"
 # --- Path helpers ---
 
 
-def _config_path(version: int, *, versions_dir: Path = VERSIONS_DIR) -> Path:
+def _config_path(version: int, *, versions_dir: Path) -> Path:
     return versions_dir / f"router_config_v{version}.json"
 
 
-def _centroids_path(version: int, *, versions_dir: Path = VERSIONS_DIR) -> Path:
+def _centroids_path(version: int, *, versions_dir: Path) -> Path:
     return versions_dir / f"router_config_v{version}_centroids.npz"
 
 
-def _symlink_current_path(versions_dir: Path = VERSIONS_DIR) -> Path:
+def _symlink_current_path(versions_dir: Path) -> Path:
     return versions_dir / _CURRENT_NAME
 
 
-def _txt_current_path(versions_dir: Path = VERSIONS_DIR) -> Path:
+def _txt_current_path(versions_dir: Path) -> Path:
     return versions_dir / _CURRENT_TXT
 
 

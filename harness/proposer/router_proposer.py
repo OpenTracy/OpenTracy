@@ -217,13 +217,17 @@ class RouterProposer:
             cid = int(fit_result.assigner.assign(emb).cluster_id)
             traces_with_clusters.append(_with_cluster(t, cid))
 
-        # 6. Blend Psi.
+        # 6. Blend Psi. When a response cache is present, derive the bench Ψ
+        # from it (counterfactual per-cluster loss per model) so the router has
+        # real signal about which model wins which cluster.
+        cache_psi = self._cache_psi(fit_result.assigner)
         psi_table = compute_blended_psi(
             assigner=fit_result.assigner,
             registry=self.registry,
             traces=traces_with_clusters,
             preference_dataset=self.preference_dataset,
             cache=self.cache,
+            cache_psi=cache_psi,
             production_alpha=self.cfg.production_alpha,
         )
 
@@ -232,6 +236,39 @@ class RouterProposer:
             traces=traces_with_clusters,
             psi_table=psi_table,
         )
+
+    def _cache_psi(self, assigner) -> Optional[dict[str, Any]]:
+        """Counterfactual bench Ψ from the response cache, or None when no cache
+        is configured. The cache is keyed by the eval prompts, so we embed each
+        golden with the same embedder and let the cache supply per-(cluster,
+        model) loss."""
+        if self.cache is None:
+            return None
+        try:
+            from pathlib import Path
+
+            from evals.seeding import load_goldens
+            from harness.proposer.router_psi_compute import compute_psi_from_cache
+
+            # Absolute path to the shared goldens library — the cache is keyed by
+            # these prompts, and the proposer can run from a non-repo-root cwd
+            # (e.g. a brain subprocess), so don't rely on a relative path.
+            goldens_dir = Path(__file__).resolve().parents[2] / "evals" / "golden"
+            goldens = load_goldens(goldens_dir)
+            samples = [
+                (str(g["input"]["request"]), self.embedder.embed(str(g["input"]["request"])))
+                for g in goldens
+            ]
+            model_ids = [p.model_id for p in self.registry.get_all()]
+            return compute_psi_from_cache(
+                assigner=assigner,
+                cache=self.cache,
+                samples=samples,
+                model_ids=model_ids,
+            )
+        except Exception:
+            logger.warning("cache-replay Ψ failed — falling back to bench Ψ", exc_info=True)
+            return None
 
     def _build_payload(self, m: _ProposeMaterials) -> dict:
         next_version = (get_current_version() or 0) + 1
@@ -258,10 +295,13 @@ class RouterProposer:
                 "metadata": dict(profile.metadata),
             }
 
+        # Carry the fitted centroids inline so the critic can evaluate the
+        # candidate; the executor moves them into the .npz sidecar + nulls this.
+        centroids = m.fit_result.assigner.centroids
         return {
             "version": next_version,
             "k": int(m.fit_result.k),
-            "centroids": None,             # written to sidecar .npz by the executor
+            "centroids": centroids.tolist() if hasattr(centroids, "tolist") else list(centroids),
             "model_psi": model_psi,
             "cost_weight": 0.0,
             "embedder_model": embedder_model,

@@ -63,7 +63,7 @@ def _seed_router_config(versions_dir: Path, *, version: int = 1) -> None:
 
 def test_uniroute_cold_start_falls_back_to_default(tmp_path: Path, monkeypatch):
     """No router_config_current → routing.model = knobs.small + fallback_reason."""
-    monkeypatch.setattr("router.config_io.VERSIONS_DIR", tmp_path)
+    monkeypatch.setattr("runtime.agent_paths.router_versions_dir", lambda *a, **k: tmp_path)
     reset_pool()
 
     stage = RoutingTechnique().compile("uniroute", knobs={"small": "claude-haiku-4-5"})
@@ -79,7 +79,7 @@ def test_uniroute_cold_start_falls_back_to_default(tmp_path: Path, monkeypatch):
 
 def test_uniroute_happy_path_returns_full_decision(tmp_path: Path, monkeypatch):
     """With a fitted config, routing.decision has the full UniRoute payload."""
-    monkeypatch.setattr("router.config_io.VERSIONS_DIR", tmp_path)
+    monkeypatch.setattr("runtime.agent_paths.router_versions_dir", lambda *a, **k: tmp_path)
     _seed_router_config(tmp_path, version=1)
     reset_pool()
 

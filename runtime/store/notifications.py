@@ -27,8 +27,8 @@ _NOTIFICATIONS_ROOT = _DEFAULT_NOTIFICATIONS_ROOT  # back-compat alias
 
 
 def _notifications_root_for(agent_id: Optional[str] = None) -> Path:
-    from runtime.agent_context import get_active
-    return Path("ledger") / (agent_id or get_active()) / "notifications"
+    from runtime.agent_paths import notifications_dir
+    return notifications_dir(agent_id)
 
 
 def _resolve_root(root: Optional[Path], agent_id: Optional[str] = None) -> Path:

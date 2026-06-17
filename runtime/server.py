@@ -149,10 +149,9 @@ async def lifespan(app: FastAPI):
         _ensure_tenants_bootstrapped()
 
     # P2.0 — ensure multi-agent registry exists. On first run this
-    # migrates the legacy ``agent/`` dir to ``agents/_default/`` and
-    # writes ``agents/registry.json`` pointing at it. P2.1 also moves
-    # flat ledger/* and traces/* dirs into <root>/_default/<kind>/.
-    # Idempotent.
+    # seeds ``agents/_default/`` from the committed template and writes
+    # ``agents/registry.json`` pointing at it. P2.1 also moves flat
+    # ledger/* and traces/* dirs into <root>/_default/<kind>/. Idempotent.
     from runtime.agent_context import set_active as _set_active_agent
     from runtime.agents.registry import ensure_bootstrapped, get_registry
     ensure_bootstrapped()
@@ -161,7 +160,13 @@ async def lifespan(app: FastAPI):
         _set_active_agent(reg.active)
         logger.info("active agent: %s", reg.active)
 
-    cfg = load_agent("agent/agent.yaml")
+    # Boot the fallback executor from the ACTIVE agent's catalog dir.
+    from runtime.agents.registry import live_agent_dir as _live_agent_dir
+
+    _boot_dir = _live_agent_dir(reg.active)
+    if _boot_dir is None:
+        raise RuntimeError(f"active agent {reg.active!r} has no catalog dir after bootstrap")
+    cfg = load_agent(str(_boot_dir / "agent.yaml"))
     pipeline = compile_agent(cfg)
     executor = PipelineExecutor(pipeline)
     _state["cfg"] = cfg
@@ -238,6 +243,32 @@ async def tenant_middleware(request: Request, call_next):
         # Restore previous regardless of how this request set things,
         # so re-entrant calls (rare) don't leak context.
         tenant_context.set_active(previous)
+
+
+@app.middleware("http")
+async def agent_middleware(request: Request, call_next):
+    """Pin the agent this request reads/writes as. An explicit ``x-agent-id``
+    header wins; otherwise default to the registry's active agent so read
+    endpoints (lessons, versions, traces) scope to the UI-selected agent.
+    Channel/serving handlers override this with the path's agent_id."""
+    from runtime import agent_context
+
+    previous = agent_context._active
+    incoming = (request.headers.get("x-agent-id") or "").strip()
+    chosen = incoming
+    if not chosen:
+        try:
+            from runtime.agents.registry import get_registry
+
+            chosen = get_registry().active
+        except Exception:
+            chosen = None
+    if chosen:
+        agent_context.set_active(chosen)
+    try:
+        return await call_next(request)
+    finally:
+        agent_context.set_active(previous)
 
 
 # P17.1 — Map QuotaExceeded to HTTP 402 (Payment Required). The
@@ -366,14 +397,8 @@ def _lesson_trace_count(candidate_id: Optional[str]) -> Optional[int]:
     if not candidate_id:
         return None
     import json
-    from pathlib import Path
 
-    report_path = (
-        Path(__file__).resolve().parent.parent
-        / "evals"
-        / "reports"
-        / f"cand_{candidate_id}.json"
-    )
+    report_path = _reports_dir() / f"cand_{candidate_id}.json"
     if not report_path.exists():
         return None
     try:
@@ -523,6 +548,7 @@ async def approve_lesson(
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    _invalidate_active_cache()
     return _lesson_to_summary(lesson)
 
 
@@ -594,8 +620,7 @@ async def get_lesson_traces(lesson_id: str) -> LessonTracesResponse:
         raise HTTPException(status_code=404, detail=f"unknown lesson {lesson_id!r}")
 
     cand_id = lesson.candidate_id or ""
-    project_root = Path(__file__).resolve().parent.parent
-    report_path = project_root / "evals" / "reports" / f"cand_{cand_id}.json"
+    report_path = _reports_dir() / f"cand_{cand_id}.json"
 
     if not cand_id or not report_path.exists():
         return LessonTracesResponse(
@@ -664,6 +689,7 @@ async def rollback_version(version: str, payload: Optional[RollbackRequest] = No
 
     reason = (payload.reason if payload else None) or "ui rollback"
     rollback_to(version, reason=reason)
+    _invalidate_active_cache()
     return RollbackResponse(version=version, previous_version=previous, rolled_back=True)
 
 
@@ -806,7 +832,7 @@ class PolicyUpdateRequest(BaseModel):
 
 @app.put("/policy", response_model=PolicyView)
 async def update_policy(payload: PolicyUpdateRequest) -> PolicyView:
-    """Persist policy changes to policies/auto_approve.yaml. Validates every
+    """Persist policy changes to the active agent's policy.yaml. Validates every
     mode field (global + each per-kind override) so the UI can't write
     something the approver doesn't understand."""
     from harness.approver.policy import AutoRollback, Policy
@@ -995,7 +1021,15 @@ async def stream_traces(request: Request) -> StreamingResponse:
     backfill is done client-side via GET /traces?limit=...
 
     A 15s heartbeat keeps proxies from idling the connection."""
-    queue = trace_bus.subscribe()
+    # Pin the stream to the request's agent (+ tenant) so a subscriber only
+    # receives its own agent's live traces, matching the per-agent backfill.
+    # EventSource can't send the x-agent-id header, so the UI passes the agent
+    # as a query param; fall back to the middleware-resolved active agent.
+    from runtime.agent_context import get_active as _get_agent
+    from runtime.tenant_context import get_active as _get_tenant
+
+    stream_agent = (request.query_params.get("agent_id") or "").strip() or _get_agent()
+    queue = trace_bus.subscribe(tenant_id=_get_tenant(), agent_id=stream_agent)
 
     async def gen() -> Any:
         import asyncio as _asyncio
@@ -1349,8 +1383,15 @@ class ReportDetail(ReportSummary):
     per_rubric: dict[str, Any] = {}
 
 
-_EVALS_DIR = Path(__file__).resolve().parent.parent / "evals"
+_EVALS_DIR = Path(__file__).resolve().parent.parent / "evals"  # shared: suites + golden
 _REPORT_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
+def _reports_dir() -> Path:
+    """The active agent's eval-reports dir — reports are per-agent outputs."""
+    from runtime.agent_paths import evals_reports_dir
+
+    return evals_reports_dir()
 
 
 def _safe_yaml_load(path: Path) -> dict[str, Any]:
@@ -1376,7 +1417,7 @@ def _load_golden(golden_id: str) -> Optional[GoldenView]:
 
 
 def _list_report_files() -> list[Path]:
-    reports_dir = _EVALS_DIR / "reports"
+    reports_dir = _reports_dir()
     if not reports_dir.exists():
         return []
     return sorted(reports_dir.glob("*.json"))
@@ -1532,12 +1573,12 @@ async def run_suite_endpoint(name: str) -> ReportSummary:
     from evals.runners.runner import run_suite
 
     try:
-        report = run_suite(suite_path, agent_path=_AGENT_DIR / "agent.yaml")
+        report = run_suite(suite_path, agent_path=_agent_dir() / "agent.yaml")
     except Exception as e:  # surface load / compile / score errors verbatim
         raise HTTPException(status_code=500, detail=f"run failed: {e}") from e
 
     report_id = f"{report.suite}_{_ts_safe(report.started_at)}"
-    path = _EVALS_DIR / "reports" / f"{report_id}.json"
+    path = _reports_dir() / f"{report_id}.json"
     meta = _load_report_meta(path)
     if meta is None:
         raise HTTPException(status_code=500, detail="report written but not readable")
@@ -1557,12 +1598,12 @@ async def run_all_suites_endpoint() -> dict[str, Any]:
     errors: list[dict[str, str]] = []
     for sp in sorted(suites_dir.glob("*.yaml")):
         try:
-            report = run_suite(sp, agent_path=_AGENT_DIR / "agent.yaml")
+            report = run_suite(sp, agent_path=_agent_dir() / "agent.yaml")
         except Exception as e:
             errors.append({"suite": sp.stem, "error": str(e)})
             continue
         report_id = f"{report.suite}_{_ts_safe(report.started_at)}"
-        meta = _load_report_meta(_EVALS_DIR / "reports" / f"{report_id}.json")
+        meta = _load_report_meta(_reports_dir() / f"{report_id}.json")
         if meta is not None:
             reports.append(meta)
     return {
@@ -1595,7 +1636,7 @@ async def list_reports(
 async def get_report(report_id: str) -> ReportDetail:
     if not _REPORT_ID_RE.match(report_id):
         raise HTTPException(status_code=400, detail=f"invalid report_id {report_id!r}")
-    path = _EVALS_DIR / "reports" / f"{report_id}.json"
+    path = _reports_dir() / f"{report_id}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"unknown report {report_id!r}")
     with path.open() as f:
@@ -1844,8 +1885,38 @@ class AgentConfigView(BaseModel):
     keys: list[AgentKeyStatus]
 
 
-_PROJECT_ROOT_AGENT = Path(__file__).resolve().parent.parent
-_AGENT_DIR = _PROJECT_ROOT_AGENT / "agent"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _agent_dir() -> Path:
+    """The request's active agent catalog dir (agents/<id>/), so the UI's
+    config endpoints (prompt, route/model, eval) read/write the SAME surface
+    the runtime serves."""
+    from runtime.agent_context import get_active
+    from runtime.agents.registry import live_agent_dir
+
+    d = live_agent_dir(get_active())
+    if d is None:
+        raise HTTPException(status_code=503, detail="no active agent resolved")
+    return d
+
+
+def _invalidate_active_cache() -> None:
+    """Drop the active agent's compiled-pipeline cache so the next request
+    serves the just-mutated surface (prompt/route edit, promote, rollback)."""
+    from runtime.agent_context import get_active
+    from runtime.executor.cache import invalidate as _invalidate_cache
+
+    _invalidate_cache(get_active())
+
+
+def _display_path(p: Path) -> str:
+    """Human-readable path for the UI — relative to the project root when the
+    file lives under it, otherwise the absolute path."""
+    try:
+        return str(p.relative_to(_PROJECT_ROOT))
+    except ValueError:
+        return str(p)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -1858,10 +1929,10 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 
 def _resolve_prompt_path() -> Path:
-    """Read generate.yaml's prompt knob, resolve relative to agent/."""
-    gen = _read_yaml(_AGENT_DIR / "pipeline" / "generate.yaml")
+    """Read generate.yaml's prompt knob, resolve relative to the agent dir."""
+    gen = _read_yaml(_agent_dir() / "pipeline" / "generate.yaml")
     rel = (gen.get("knobs") or {}).get("prompt", "../prompts/system.md")
-    return (_AGENT_DIR / "pipeline" / rel).resolve()
+    return (_agent_dir() / "pipeline" / rel).resolve()
 
 
 def _mask_key(value: str) -> str:
@@ -1885,7 +1956,7 @@ async def get_agent_config() -> AgentConfigView:
         with prompt_path.open() as f:
             prompt_content = f.read()
 
-    route = _read_yaml(_AGENT_DIR / "pipeline" / "route.yaml")
+    route = _read_yaml(_agent_dir() / "pipeline" / "route.yaml")
     knobs = route.get("knobs") or {}
     models = AgentModelsView(
         small=knobs.get("small"),
@@ -1909,7 +1980,7 @@ async def get_agent_config() -> AgentConfigView:
         cc_detail = "no Anthropic key, no claude CLI"
 
     mcp_server_path = (
-        _PROJECT_ROOT_AGENT / "harness" / "introspection" / "mcp_server.py"
+        _PROJECT_ROOT / "harness" / "introspection" / "mcp_server.py"
     )
 
     integrations = [
@@ -1954,7 +2025,7 @@ async def get_agent_config() -> AgentConfigView:
         version=cfg.version,
         description=cfg.description,
         system_prompt=AgentPromptView(
-            path=str(prompt_path.relative_to(_PROJECT_ROOT_AGENT)),
+            path=_display_path(prompt_path),
             content=prompt_content,
         ),
         models=models,
@@ -1990,10 +2061,10 @@ async def update_prompt(payload: PromptUpdateRequest) -> PromptUpdateResponse:
     from harness.executor.promote import record_manual_change
 
     prompt_path = _resolve_prompt_path()
-    if not str(prompt_path).startswith(str(_AGENT_DIR.resolve())):
-        raise HTTPException(status_code=400, detail="resolved prompt path escapes agent/")
+    if not str(prompt_path).startswith(str(_agent_dir().resolve())):
+        raise HTTPException(status_code=400, detail="resolved prompt path escapes the agent dir")
 
-    rel_path = prompt_path.relative_to(_PROJECT_ROOT_AGENT)
+    rel_path = _display_path(prompt_path)
 
     def _write_prompt() -> None:
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2007,6 +2078,7 @@ async def update_prompt(payload: PromptUpdateRequest) -> PromptUpdateResponse:
         mutations_desc=[f"{rel_path} (manual)"],
         voice="I updated my system prompt directly.",
     )
+    _invalidate_active_cache()
 
     return PromptUpdateResponse(
         path=str(rel_path),
@@ -2035,7 +2107,7 @@ async def update_route(payload: RouteUpdateRequest) -> RouteUpdateResponse:
 
     from harness.executor.promote import record_manual_change
 
-    route_path = _AGENT_DIR / "pipeline" / "route.yaml"
+    route_path = _agent_dir() / "pipeline" / "route.yaml"
     if not route_path.exists():
         raise HTTPException(status_code=404, detail="route.yaml missing")
 
@@ -2083,6 +2155,8 @@ async def update_route(payload: RouteUpdateRequest) -> RouteUpdateResponse:
         voice="I changed how I route requests between models.",
     )
 
+    _invalidate_active_cache()
+
     # Re-read route to return current state
     with route_path.open() as f:
         doc = yaml.safe_load(f) or {}
@@ -2097,12 +2171,34 @@ async def update_route(payload: RouteUpdateRequest) -> RouteUpdateResponse:
     )
 
 
+def _active_runtime():
+    """(cfg, executor) for the agent pinned in the current context, via the
+    per-agent cache. Falls back to the boot executor if the cache can't
+    resolve (e.g. no agent dir yet)."""
+    try:
+        from runtime.executor.cache import get_active_executor
+
+        return get_active_executor()
+    except Exception as e:
+        from runtime.agent_context import get_active
+
+        logger.warning(
+            "per-agent executor resolve failed for %s (%s); using boot executor",
+            get_active(), e,
+        )
+        return _state.get("cfg"), _state.get("executor")
+
+
 @app.post("/run", response_model=RunResponse)
 async def run(payload: RunRequest) -> RunResponse:
     import uuid
+    from runtime.agent_context import set_active
+    from runtime.agents.registry import get_registry
     from runtime.tenants import quota
 
-    executor: Optional[PipelineExecutor] = _state.get("executor")
+    # /run has no agent in the path → serve the registry's active agent.
+    set_active(get_registry().active)
+    _, executor = _active_runtime()
     if not executor:
         raise HTTPException(status_code=503, detail="agent not yet loaded")
 
@@ -2293,7 +2389,6 @@ async def list_router_rules() -> list[RouterRuleView]:
     """Synthesized rule list. v1 returns one row representing UniRoute."""
     from router.config_io import load_current_config_payload
     from router.errors import RouterConfigInvalidError, RouterConfigNotFoundError
-    from ledger.writer import read_lessons
 
     try:
         payload = load_current_config_payload()
@@ -3086,11 +3181,9 @@ def onboarding_state() -> OnboardingState:
 
 @app.post("/onboarding/complete", response_model=OnboardingState)
 def onboarding_complete(payload: OnboardingCompleteRequest) -> OnboardingState:
-    """Materialize the day-0 config. P2.0+ creates a NEW agent in the
-    registry (``agents/<id>/``) and activates it instead of overwriting
-    the legacy global ``agent/`` dir. Backwards-compat: also bumps
-    the legacy onboarding.json so the gate logic in the UI keeps
-    working without further changes."""
+    """Materialize the day-0 config. Creates a NEW agent in the registry
+    (``agents/<id>/``) and activates it. Also bumps the active agent's
+    onboarding.json so the gate logic in the UI keeps working."""
     from runtime.agents.registry import activate as activate_agent
     from runtime.agents.registry import create_agent, get_agent
     from runtime.store import onboarding_session as _v2_session
@@ -3112,8 +3205,8 @@ def onboarding_complete(payload: OnboardingCompleteRequest) -> OnboardingState:
             activate_agent(meta.id, on_activate=lambda m: _reload_live_pipeline(m.id))
     except Exception as e:
         logger.warning(
-            "agent registry create+activate failed (%s) — falling back to legacy "
-            "single-agent record_complete()", e,
+            "agent registry create+activate failed (%s) — proceeding with "
+            "record_complete() on the active agent", e,
         )
 
     # Keep the legacy state file in sync so /onboarding/state returns
@@ -3445,15 +3538,24 @@ def _summarize(meta, *, active_id: Optional[str]) -> AgentSummary:
 
 
 def _reload_live_pipeline(agent_id: Optional[str] = None) -> None:
-    """Recompile the pipeline from the live ``agent/`` dir and swap into
-    the running executor. Called after activate(). Also updates the
-    process-global agent context so subsequent writes (traces, lessons,
-    etc) partition under the new agent."""
-    cfg = load_agent("agent/agent.yaml")
+    """Recompile the fallback executor from the agent's catalog dir and swap
+    it into ``_state``. Called after activate(). Also updates the active-agent
+    context so subsequent writes (traces, lessons) partition under it."""
+    from runtime.agents.registry import live_agent_dir as _live_agent_dir
+
+    _dir = _live_agent_dir(agent_id)
+    if _dir is None:
+        raise RuntimeError(f"agent {agent_id!r} has no catalog dir")
+    cfg = load_agent(str(_dir / "agent.yaml"))
     pipeline = compile_agent(cfg)
     executor = PipelineExecutor(pipeline)
     _state["cfg"] = cfg
     _state["executor"] = executor
+    # Drop the per-agent cached pipeline so the next request recompiles from
+    # the updated agents/<id>/ surface.
+    from runtime.executor.cache import invalidate as _invalidate_cache
+
+    _invalidate_cache(agent_id)
     if agent_id:
         from runtime.agent_context import set_active
         set_active(agent_id)
@@ -3482,7 +3584,7 @@ def get_agent_endpoint(agent_id: str) -> AgentSummary:
 @app.post("/agents", response_model=AgentSummary, status_code=201)
 def create_agent_endpoint(payload: AgentCreateRequest) -> AgentSummary:
     """Create a new agent from the onboarding payload. If ``activate``
-    is true, swap the live ``agent/`` dir + recompile the pipeline."""
+    is true, flip the active pointer to it + recompile the pipeline."""
     from runtime.agents.registry import activate as activate_agent
     from runtime.agents.registry import create_agent, get_registry, list_agents
     from runtime.tenants import quota
@@ -3929,8 +4031,6 @@ def widget_message_endpoint(
     run the pipeline, return the response synchronously. No auth — the
     widget_id itself is the routing token; origin pinning is the gate."""
     from runtime.agents.channels import find_agent_by_channel, load
-    from runtime.agents.registry import activate as activate_agent
-    from runtime.agents.registry import get_registry
     from runtime.executor.tracing import write_trace
     from runtime.protocols import Message
 
@@ -3942,15 +4042,14 @@ def widget_message_endpoint(
     if not _origin_matches(origin, list(cfg.get("allowed_domains", []))):
         raise HTTPException(status_code=403, detail="origin_not_allowed")
 
-    reg = get_registry()
-    if reg.active != agent_id:
-        try:
-            activate_agent(agent_id, on_activate=lambda m: _reload_live_pipeline(m.id))
-        except Exception as e:
-            logger.warning("widget message: failed to activate %s: %s", agent_id, e)
+    # Per-agent serving: pin this agent in the request context and serve its
+    # own compiled pipeline from the cache — no copy into a shared slot.
+    from runtime.agent_context import set_active
+
+    set_active(agent_id)
 
     history = [Message(role=m.role, content=m.content) for m in (payload.history or [])]
-    executor = _state["executor"]
+    _, executor = _active_runtime()
     _, exec_record = executor.run(payload.message, history=history)
     trace_id = write_trace(exec_record, channel="web")
     session = payload.session or f"web_{uuid.uuid4().hex[:12]}"
@@ -4222,8 +4321,7 @@ def api_chat_endpoint(
     the agent, return the response synchronously. The token is the one
     minted by /agents/<id>/channels/api/connect."""
     from runtime.agents.channels import load, save
-    from runtime.agents.registry import activate as activate_agent
-    from runtime.agents.registry import get_agent, get_registry
+    from runtime.agents.registry import get_agent
     from runtime.executor.tracing import write_trace
     from runtime.protocols import Message
 
@@ -4255,16 +4353,14 @@ def api_chat_endpoint(
     cfg["last_used_at"] = now_iso
     save(agent_id, "api", cfg)
 
-    # Activate the agent if not already, so /run uses the right pipeline
-    reg = get_registry()
-    if reg.active != agent_id:
-        try:
-            activate_agent(agent_id, on_activate=lambda m: _reload_live_pipeline(m.id))
-        except Exception as e:
-            logger.warning("api chat: failed to activate %s: %s", agent_id, e)
+    # Per-agent serving: pin this agent in the request context; the cache
+    # compiles/serves its own pipeline.
+    from runtime.agent_context import set_active
+
+    set_active(agent_id)
 
     history = [Message(role=m.role, content=m.content) for m in (payload.history or [])]
-    executor = _state["executor"]
+    _, executor = _active_runtime()
     _, exec_record = executor.run(payload.request, history=history)
     trace_id = write_trace(exec_record, channel="api")
 
@@ -4290,25 +4386,23 @@ def internal_run_endpoint(
     Slack-side signature already verified the request came from Slack;
     if the TS gateway is compromised the rest of the system is too.
 
-    Activates the agent if needed, runs the pipeline, returns the result.
+    Serves the pipeline for the requested agent, returns the result.
     """
-    from runtime.agents.registry import activate as activate_agent
-    from runtime.agents.registry import get_agent, get_registry
+    from runtime.agents.registry import get_agent
     from runtime.executor.tracing import write_trace
     from runtime.protocols import Message
 
     if get_agent(agent_id) is None:
         raise HTTPException(status_code=404, detail=f"agent_not_found: {agent_id}")
 
-    reg = get_registry()
-    if reg.active != agent_id:
-        try:
-            activate_agent(agent_id, on_activate=lambda m: _reload_live_pipeline(m.id))
-        except Exception as e:
-            logger.warning("internal_run: failed to activate %s: %s", agent_id, e)
+    # Per-agent serving: pin this agent in the request context; the cache
+    # compiles/serves its own pipeline.
+    from runtime.agent_context import set_active
+
+    set_active(agent_id)
 
     history = [Message(role=m.role, content=m.content) for m in (payload.history or [])]
-    executor = _state["executor"]
+    _, executor = _active_runtime()
     _, exec_record = executor.run(payload.request, history=history)
     trace_id = write_trace(exec_record, channel=payload.channel or "internal")
     return ApiChatResponse(
@@ -4705,6 +4799,12 @@ def evolve_endpoint(
             if pinned_tenant is not None:
                 from runtime.tenant_context import set_active as _set_tenant
                 _set_tenant(pinned_tenant)
+            # Symmetric with the tenant pin: bind the agent too so any code in
+            # this background task that reads get_active() resolves the right
+            # agent instead of falling back to _default (ContextVars don't
+            # propagate into the threadpool).
+            from runtime.agent_context import set_active as _set_agent
+            _set_agent(agent_id)
             kwargs: dict[str, Any] = {
                 "agent_id": agent_id,
                 "tasks": list(payload.tasks),
@@ -4777,6 +4877,9 @@ def explore_endpoint(
             if pinned_tenant is not None:
                 from runtime.tenant_context import set_active as _set_tenant
                 _set_tenant(pinned_tenant)
+            # Bind the agent too (ContextVars don't propagate into the threadpool).
+            from runtime.agent_context import set_active as _set_agent
+            _set_agent(agent_id)
             workspace = get_workspace(agent_id)
             seed_workspace_via_explore(
                 workspace=workspace,
@@ -4857,9 +4960,8 @@ def put_agent_secrets_endpoint(
 @app.patch("/agents/{agent_id}", response_model=AgentSummary)
 def update_agent_endpoint(agent_id: str, payload: AgentUpdateRequest) -> AgentSummary:
     """Mutate an agent's metadata. When ``model`` is provided, propagates
-    to the agent's ``pipeline/route.yaml`` so the next /run uses it. If
-    the agent is currently active, the change is also reflected in the
-    live ``agent/`` dir on the next activate."""
+    to the agent's ``pipeline/route.yaml`` and drops the cached pipeline so
+    the next /run uses it."""
     from runtime.agents.registry import get_registry, update_agent
     try:
         meta = update_agent(
@@ -4870,6 +4972,13 @@ def update_agent_endpoint(agent_id: str, payload: AgentUpdateRequest) -> AgentSu
         )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"agent_not_found: {agent_id}")
+    # The model write changed agents/<id>/route.yaml — drop the cached compiled
+    # pipeline so the next request recompiles with it (otherwise the UI shows
+    # the new model while the runtime keeps serving the old one).
+    if payload.model is not None:
+        from runtime.executor.cache import invalidate as _invalidate_cache
+
+        _invalidate_cache(agent_id)
     return _summarize(meta, active_id=get_registry().active)
 
 

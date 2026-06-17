@@ -1,0 +1,13 @@
+suite: rag_gaps_v0
+description: "Auto-derived from the growing 'rag-gaps' dataset (failed-lookup mining). Eval cases grow as the dataset grows."
+dataset: rag-gaps
+rubrics:
+- name: pipeline_succeeded
+  type: pipeline_success
+- name: response_nonempty
+  type: response_nonempty
+- name: under_budget
+  type: latency_under_budget
+  params:
+    max_ms: 4000
+aggregation: mean
