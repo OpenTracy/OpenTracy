@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.egg-info/
+.ipynb_checkpoints/
+# runtime state — transcripts are per-workspace data, never committed
+sessions/*.db
+sessions/*.db-wal
+sessions/*.db-shm
+# runtime state — job run records (jobs.json itself IS versioned)
+jobs/runs/
+# runtime state — session tree files (ADR-0005)
+sessions/agent/
+# agent version tree (ADR-0007) — its own hidden git repo
+.opentracy/

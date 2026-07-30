@@ -1,0 +1,55 @@
+{
+  "$comment": "Source of truth for scheduled jobs. Re-read on every ticks() — edits apply live. Schedule is 5-field cron: minute hour day-of-month month day-of-week. Runs land in jobs/runs/<job_id>/<run_id>.md.",
+  "jobs": [
+    {
+      "id": "nightly-order-report",
+      "description": "Send me the order report at 11pm",
+      "schedule": "0 23 * * *",
+      "enabled": true,
+      "action": {
+        "type": "prompt",
+        "prompt": "Compile today's orders into a summary report and send it to the user."
+      }
+    },
+    {
+      "id": "self-improve-memory-compaction",
+      "description": "Keep memory/memory.md inside its token budget: move cold facts to memory/archive/ (one fact per file, update archive/index.md), keep hot facts inline",
+      "schedule": "0 3 * * *",
+      "enabled": true,
+      "action": {
+        "type": "prompt",
+        "prompt": "Review memory/memory.md against its 6000-token budget (ADR-0001). If over or near budget, move the coldest facts to memory/archive/ as one-fact-per-file entries, update memory/archive/index.md, and keep the hottest facts inline. Apply the write policies: dedupe, update over duplicate, delete falsified."
+      }
+    },
+    {
+      "id": "self-improve-session-archive",
+      "description": "Roll old entries from sessions/past_sessions.md into sessions/archive/YYYY-MM.md, keeping the newest entries within budget",
+      "schedule": "30 3 * * 0",
+      "enabled": true,
+      "action": {
+        "type": "prompt",
+        "prompt": "Check sessions/past_sessions.md against its 4000-token budget. Move entries that no longer fit into sessions/archive/<YYYY-MM>.md grouped by month, newest first, preserving every entry verbatim."
+      }
+    },
+    {
+      "id": "self-improve-index-regen",
+      "description": "Regenerate tools/descriptions.md and skills/descriptions.md from the packs (enable when Phase 2/3 generators land)",
+      "schedule": "0 4 * * *",
+      "enabled": false,
+      "action": {
+        "type": "prompt",
+        "prompt": "Regenerate tools/descriptions.md from tools/*/*/manifest.yaml and skills/descriptions.md from skills/*/*/SKILL.md, preserving the table format defined in each file."
+      }
+    },
+    {
+      "id": "self-improve-eval-run",
+      "description": "Weekly offline eval run; record baseline drift (enable when the Phase 5 harness lands)",
+      "schedule": "0 5 * * 1",
+      "enabled": false,
+      "action": {
+        "type": "prompt",
+        "prompt": "Run the offline eval suite in tests/evals, compare scores against the recorded baseline, and summarize any regressions."
+      }
+    }
+  ]
+}
