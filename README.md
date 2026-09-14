@@ -1,150 +1,249 @@
 # OpenTracy
 
-Self-improving AI agent harness. You ship a default agent; it learns from real
-usage, proposes its own improvements, and routes them through evals + human
-approval before they go live.
+An agent architecture built on **three core foundations**:
 
-> **Status:** experimental. APIs and the agent DSL move week-to-week. Don't pin
-> to a tag yet.
+| Foundation | What it holds | Content lives in | Runtime lives in |
+|---|---|---|---|
+| **User Tools** | What the agent can *do* | [`tools/`](tools/) | [`src/opentracy/tools/`](src/opentracy/tools/) |
+| **Skills** | How the agent knows *how* | [`skills/`](skills/) | [`src/opentracy/skills/`](src/opentracy/skills/) |
+| **Memory** | What the agent *remembers* | [`memory/`](memory/) | [`src/opentracy/memory/`](src/opentracy/memory/) |
 
-## What it gives you
+The runtime (`src/opentracy/`) is a thin loop that routes between the foundations. All domain
+value — e.g. Sharpi match, perception, automated research — ships as content packs, never
+runtime code. Everything is plain files on disk: diffable, reviewable, versionable.
 
-- A trainable agent surface per agent at `agents/<id>/` (seeded from the
-  committed `templates/agent/` template) — one YAML + a handful of Python files.
-  Mutated by Claude Code (driven by the harness) in response to evidence from
-  real traces.
-- An **autonomous engineering loop** modeled on Lin et al.'s AHE algorithm
-  (arxiv 2604.25850). The harness proposes candidate edits, critiques them,
-  runs evals, and applies the winners — with per-file rollback. An edit can
-  carry a falsifiable prediction graded by a per-change KEEP / IMPROVE /
-  ROLLBACK_AND_PIVOT verdict over per-golden fix/regression sets, plus
-  regression-aware critics, optional k≥2 rollouts for pass@1 stability, and an
-  LLM-vs-tool performance audit.
-- A typed runtime that compiles each agent (`agents/<id>/`) into an executable pipeline and serves
-  requests over HTTP, MCP, **Slack** (Socket Mode — no public URL needed), an
-  **opt-in WhatsApp** channel (see [docs/channels/whatsapp.md](docs/channels/whatsapp.md)),
-  and an embeddable web widget. Every trace records the channel it came from.
-- A guided onboarding that names the agent with a short, stable id, and a trace
-  view that renders agent messages as Markdown.
-- An eval suite with goldens, regression detection, and per-trace attribution
-  so you can see *why* a proposed change is better (or worse).
+**Design deep-dive:** [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md) · decision records in [docs/adr/](docs/adr/)
 
-## Quick start
+The repo also ships the **self-improving harness** — the optimizer that edits an agent's
+trainable surface from real-trace evidence (propose → critique → eval → approve → ship,
+with per-edit rollback). See [Self-improving harness](#self-improving-harness) below.
 
-### Requirements
+## Install
 
-- **Python 3.11+** and [**uv**](https://docs.astral.sh/uv/)
-- **Node 20+** (ships `npm`)
-- An **Anthropic API key**
-
-### Setup
+Requires Python 3.12+.
 
 ```bash
-git clone https://github.com/OpenTracy/OpenTracy
+git clone git@github.com:OpenTracy/OpenTracy.git
 cd OpenTracy
-cp .env.example .env     # then set ANTHROPIC_API_KEY
-make install             # Python (uv) + backend + UI dependencies
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .                 # installs the `opentracy` command (and its `ot` shorthand)
+export ANTHROPIC_API_KEY=sk-...  # without it, a local echo responder answers instead
 ```
 
-`make install` runs `uv sync --extra rag` (the default agent's retrieval stage
-needs it) and `npm install` in `backend/` and `ui/`. For tests/linting use
-`make install-dev`.
+`ot` and `opentracy` are the same command — use whichever you prefer.
 
-### Run
-
-Start everything in the background:
+## Quickstart
 
 ```bash
-make up      # runtime :8001, backend :8002, ui :5174 — logs in .run/
-make down    # stop all three
+ot run "hello"        # one-shot turn: prints the reply and saves the session
+ot chat               # interactive REPL (recommended starting point)
 ```
 
-…or run each in its own terminal:
+Inside `ot chat`:
+
+```
+/help                 all in-chat commands
+/session  /name       inspect / name the current session
+/new  /exit           finalize this session and start fresh / leave
+/versions /rollback   agent version tree (see below)
+/sessions /search     browse and search past conversations
+/context  /ticks      inspect the context stack · run scheduled jobs now
+!<command>            run a shell command; its output joins the conversation
+```
+
+Every command accepts `--root PATH` (default: current directory) — the workspace is
+just a directory, so you can keep several isolated agents side by side.
+
+### Sessions
 
 ```bash
-make runtime    # runtime API   → http://localhost:8001
-make backend    # gateway       → http://localhost:8002
-make ui         # web UI        → http://localhost:5174
+ot run -c "continue that thought"   # -c continues the most recent session
+ot run --name inbox "triage this"   # --name labels the session
+ot run --no-session "throwaway"     # ephemeral: nothing saved
+ot sessions                         # list all sessions in this workspace
+ot search "deploy key"              # full-text search across every transcript
 ```
 
-Then open <http://localhost:5174>. The shell boots straight to Evolution — no
-login, no signup. OSS runs single-tenant on localhost by design.
+Sessions live in `sessions/` as JSONL transcripts, mirrored to SQLite for search.
+When a session ends it is summarized into `sessions/past_sessions.md`, which future
+sessions read — that's how the agent remembers past conversations.
 
-> Prefer raw commands? `make help` lists every target; each just wraps the
-> obvious `uv run` / `npm run` invocation.
+## How it works — the context stack
 
-### Configuration
+Each turn, the [context layer](docs/adr/0001-context-layer.md) assembles what the model
+sees, ordered most-static → most-dynamic for prompt-cache reuse:
 
-- **`ANTHROPIC_API_KEY`** is the only required variable. See
-  [`.env.example`](.env.example) for the rest.
-- **Ports** default to `8001` (runtime), `8002` (backend), `5174` (UI). Override
-  them in `.env` with `OPENTRACY_RUNTIME_PORT` / `OPENTRACY_BACKEND_PORT` /
-  `OPENTRACY_UI_PORT`; `make` wires the services together accordingly.
-- **WhatsApp** is **off by default**. To enable it, install the optional
-  dependency (`cd backend && npm install baileys`) and run the gateway with the
-  flag:
+```
+soul.md → tools/descriptions.md → skills/descriptions.md
+       → memory/user.md → memory/memory.md → sessions/past_sessions.md → live messages
+```
 
-  ```bash
-  make backend WHATSAPP=1      # sets OPENTRACY_ENABLE_BAILEYS=1
-  ```
+Inspect it anytime with `ot context` — a per-source token bar chart of exactly what
+the agent is carrying. When live messages outgrow their budget, older ones are
+[compressed](docs/adr/0002-context-compression.md) into a summary automatically.
 
-  Baileys is GPLv3 and an unofficial WhatsApp Web client — read
-  [docs/channels/whatsapp.md](docs/channels/whatsapp.md) before enabling.
-- **ClickHouse** is optional. The `.env.example` enables it; set
-  `OPENTRACY_CH_ENABLED=false` to use the local store instead.
+## Make it yours
 
-## Architecture
+### 1. Give it a soul
+
+[`soul.md`](soul.md) is the highest-authority document in the context stack: who the
+agent works for, tone, preferences, autonomy level. It is hand-edited only — the
+runtime never writes it. Fill in the four sections and the agent adapts from the
+next turn onward.
+
+### 2. Add a tool (what the agent can *do*)
+
+Drop a pack directory into `tools/` — no runtime changes needed:
+
+```yaml
+# tools/<pack>/<tool_name>/manifest.yaml
+name: match_lookup
+description: Look up candidate matches for a product in the catalog.
+input_schema:  { ... JSON Schema ... }
+output_schema: { ... JSON Schema ... }
+handler: handler.py:run          # local python, or http: / mcp: for remote
+permissions: [read]              # read | write | external
+```
+
+Input and output are schema-validated; validation errors go back to the model for
+retry. MCP servers mount as tool packs under the same contract. See [tools/README.md](tools/README.md).
+
+### 3. Add a skill (how the agent knows *how*)
+
+A skill is a markdown procedure with frontmatter, loaded only when it matches the task
+(progressive disclosure: only name + description sit in context until activation):
+
+```markdown
+# skills/<pack>/<skill-name>/SKILL.md
+---
+name: match-correction-triage
+description: Triage a batch of match corrections and route them to eval datasets.
+triggers: ["correction", "mismatch", "triage"]
+tools: [match_lookup, dataset_append]
+---
+<procedure body — loaded into context only when the skill activates>
+```
+
+See [skills/README.md](skills/README.md).
+
+### 4. Memory (what the agent *remembers*)
+
+Memory is auto-managed — you mostly just watch it work ([ADR-0003](docs/adr/0003-memory-planes.md)):
+
+- `memory/user.md` — evolving profile of who you are
+- `memory/memory.md` — durable working memory: workflows, preferences, facts
+- `memory/archive/` — one-fact-per-file overflow; cold facts compact here on a schedule
+- `sessions/transcripts.db` — verbatim record of everything, queried via `ot search`
+
+Write policies: dedupe before write, update over duplicate, delete falsified facts.
+
+### 5. Scheduled jobs
+
+[`jobs.json`](jobs.json) defines cron-scheduled prompts — the agent's autonomous loop
+([ADR-0004](docs/adr/0004-scheduled-jobs.md)). It is re-read on every tick, so edits apply live:
+
+```json
+{
+  "id": "nightly-order-report",
+  "description": "Send me the order report at 11pm",
+  "schedule": "0 23 * * *",
+  "enabled": true,
+  "action": { "type": "prompt", "prompt": "Compile today's orders into a summary…" }
+}
+```
+
+```bash
+ot ticks              # run everything currently due, once
+ot ticks --watch 60   # keep ticking every 60s (leave running in a terminal)
+```
+
+Run records land in `jobs/runs/<job_id>/<run_id>.md` — the files *are* the scheduler
+state: delete one to make that slot re-run. Missed slots (laptop asleep) fire only the
+most recent, unless the job sets `"catch_up": true`.
+
+### 6. Versioning & rollback
+
+The agent *is* its configuration (`soul.md`, `agent.json`, `jobs.json`, `skills/`).
+Every config change — manual or agent-made — becomes a tagged version in a hidden
+repo (`.opentracy/versions.git`), with a structured changelog ([ADR-0007](docs/adr/0007-agent-versioning.md)):
+
+```bash
+ot versions                  # newest-first version list
+ot versions --show v4        # full changelog of one version
+ot versions --diff v3 v4     # what changed between two versions
+ot rollback v3               # restore v3 — recorded as a NEW version, nothing lost
+```
+
+State (`memory/`, `sessions/`) is deliberately not versioned: rolling back behavior
+never erases what the agent has learned. Workspaces from before the OpenTracy rename
+migrate their legacy `.sar/` version tree automatically on first use.
+
+## Self-improving harness
+
+Alongside the agent runtime, `harness/` holds an autonomous engineering loop modeled on
+Lin et al.'s AHE algorithm (arxiv 2604.25850). Given evidence from real traces it
+**proposes** a candidate edit to an agent's trainable surface (`agents/<id>/`),
+**critiques** it before and after running, **scores** it on an eval suite
+(`evals/`), and **promotes** the winners or **rolls back** the losers — recording a
+falsifiable prediction and a per-edit verdict in the `ledger/` so the loop stays
+auditable. One uniform pipeline: **proposer → critic → approver → executor → ledger**.
+
+```bash
+make install     # Python (uv) + backend + UI deps for the harness stack
+make up          # runtime :8001, backend :8002, ui :5174
+uv run python -m harness sweep --knob 'pipeline/retrieve.yaml:knobs.k' \
+  --values 12,18,24 --suite evals/suites/smoke_v0.yaml --policy-mode review
+```
 
 | Directory | Role |
 |---|---|
-| `templates/agent/` | The committed agent template — seeds the default agent and every new agent. |
-| `agents/<id>/` | Runtime catalog; the sole live trainable surface. Mutated by the harness. (Operator-generated, gitignored.) |
-| `techniques/` | Catalog of layer types (RAG, reranking, routing). Read-only. |
-| `runtime/` | Compiles the active agent (`agents/<id>/`) into a pipeline and serves requests. |
-| `evals/` | The loss function. Goldens, suites, runners, attribution. |
-| `experiments/` | Candidate configs + results. The training workspace. |
-| `harness/` | The optimizer: proposer, critics, approver, executor, rollback. |
-| `ml/` | Models trained on accumulated data. |
-| `ledger/` | Append-only audit trail. |
-| `traces/` | Runtime accumulator (conversations, labels, pins). |
-| `corpora/` | Knowledge accumulator (RAG content with usage stats). |
-| `policies/` | Human-set rules for the harness. |
-| `backend/` | Request-serving layer (API, channels). |
-| `connectors/` | Outbound integrations. |
-| `ui/` | Frontend (React + Vite + TS). |
+| `harness/` | The optimizer: proposer, critics, approver, executor, rollback, brain, wakeup. |
+| `runtime/` | Compiles the active agent (`agents/<id>/`) into a pipeline; serves HTTP, MCP, Slack, WhatsApp. |
+| `evals/` | The loss function: goldens, suites, runners, attribution. |
+| `policies/` | Human-set rules for the loop (`blueprint.yaml`, `auto_approve.yaml`). |
+| `ledger/` · `traces/` · `corpora/` | Audit trail, runtime accumulator, knowledge accumulator. |
+| `router/` · `techniques/` · `ml/` | Routing, layer catalog, models trained on accumulated data. |
+| `backend/` · `ui/` | Request-serving layer (TypeScript) and the web console (React + Vite). |
 
-The loop:
-
-```
-traces/  →  evals/  →  harness/proposer/  →  harness/critics/
-                              ↓
-                     harness/synthesizer/  ↔  experiments/candidates/
-                              ↓                     (iterate)
-                     harness/approver/  →  agents/<id>/ (live)  →  traces/
-```
-
-The harness mutates the active agent (`agents/<id>/`), appends to `traces/` and
-`ledger/` via API, and ingests into `corpora/`. Everything else is framework.
-See `config/claude_code.yaml` for the authoritative allowlist. The committed
-`templates/agent/` template, how agents are seeded + stripped, and the per-agent
-catalog model are documented in [docs/agents.md](docs/agents.md).
-
-Languages: Python (`harness/`, `runtime/`, `evals/`, `ml/`, `techniques/`),
-TypeScript (`backend/`, `ui/`).
-
-## Distribution modes
-
-| Mode | When | What's different |
-|---|---|---|
-| **OSS local** *(default)* | Clone, run for yourself or a single team. | Single-tenant. No login. Everything at the project root. |
-| **Hosted/multi-tenant** | A managed deploy serving multiple orgs. Enable via `OPENTRACY_MULTI_TENANT=1`. | Per-tenant namespacing under `tenants/<id>/…`, Firebase-backed login, per-tenant Bearer tokens, KMS-encrypted BYOK keys. Requires the private `opentracy-infra` sibling repo. |
-
-Hosted-only code is gated behind the env flag and adds zero overhead when off.
+Full guide: [`harness/README.md`](harness/README.md) · setup, channels, multi-tenant
+mode and the original harness README: [`docs/HARNESS.md`](docs/HARNESS.md) ·
+agent template + catalog model: [`docs/agents.md`](docs/agents.md).
 
 ## Configuration
 
-See [`.env.example`](.env.example) for the full list. The minimum to get
-running is `ANTHROPIC_API_KEY`.
+| File | What it controls |
+|---|---|
+| [`agent.json`](agent.json) | model id, `max_tokens`, `max_steps` per turn |
+| [`soul.md`](soul.md) | personality, tone, behavioral profile (hand-edited only) |
+| [`jobs.json`](jobs.json) | scheduled jobs (live-reloaded) |
+| `ANTHROPIC_API_KEY` | credentials; unset → offline echo responder |
+
+## Development
+
+```bash
+pip install -e ".[anthropic]"      # extras: anthropic · langchain
+python -m pytest tests/ -q         # 121 unit tests, no network needed
+```
+
+```
+soul.md         context #1: user personality, tone, behavioral profile (hand-edited)
+src/opentracy/  runtime: core loop, context layer, providers, foundation engines
+tools/          content: tool packs + descriptions.md (generated tools index); also
+                the harness's operator scripts (tools/*.py)
+skills/         content: skill packs + descriptions.md (generated skills index)
+memory/         content: user.md + memory.md (auto-updated) + archive/ overflow
+sessions/       content: past_sessions.md (auto-appended) + archive/
+tests/          unit tests + offline eval harness
+examples/       runnable end-to-end sessions
+docs/           plan + architecture decision records + HARNESS.md
+harness/        self-improving loop (see above) — tests in harness/tests/
+runtime/ evals/ policies/ ledger/ router/ techniques/ ml/ backend/ ui/
+                the harness stack; see docs/HARNESS.md for the full map
+```
+
+Architectural decisions are recorded one-per-file in [docs/adr/](docs/adr/) — start with
+[ADR-0001 (context layer)](docs/adr/0001-context-layer.md) and
+[ADR-0006 (gateway)](docs/adr/0006-gateway.md) to understand the shape of the runtime.
 
 ## Contributing
 

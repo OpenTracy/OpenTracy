@@ -1,8 +1,8 @@
 [project]
-name = "opentracy-new-mode"
-version = "0.0.1"
-description = "Self-improving AI agent harness"
-requires-python = ">=3.11"
+name = "opentracy"
+version = "0.1.0"
+description = "OpenTracy — an agent architecture built on tools, skills, and memory, plus a self-improving agent harness"
+requires-python = ">=3.12"
 dependencies = [
     "pyyaml>=6.0",
     "pydantic>=2.5",
@@ -44,23 +44,30 @@ kms = ["google-cloud-kms>=2.20"]
 # raises at first call so OSS/local installs that never go down the
 # autonomous path don't need the dep installed.
 sandbox = ["e2b>=1.0", "e2b-code-interpreter>=1.0"]
+# Agent runtime (src/opentracy) providers.
+langchain = ["langchain-core>=0.3"]
+anthropic = ["anthropic>=0.116"]
+
+[project.scripts]
+opentracy = "opentracy.gateway.cli:main"
+ot = "opentracy.gateway.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["runtime", "techniques"]
+packages = ["runtime", "techniques", "src/opentracy"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 # The legacy surface is untyped; scope the signal to the modules `make
 # typecheck` passes explicitly and don't drown in third-party stubs.
 ignore_missing_imports = true
